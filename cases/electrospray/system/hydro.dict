@@ -1,0 +1,56 @@
+Hydrodynamics
+{
+    Model
+    {
+        formulation incompressibleTwoPhase
+        coordinateSystem axisymmetricRZ
+        liquidPhase 2
+        gasPhase 3
+    }
+    Initial
+    {
+        model rest
+    }
+    BoundaryConditions
+    {
+        # 给定压力，不指定供液速度或流量。
+        Supply
+        {
+            boundaryId 5
+            pressure 45.2 Pa
+        }
+        # 顶部和外侧均允许环境气体回流；顶部电势另在 electricity.dict 设置。
+        Outlet
+        {
+            boundaryId 9
+            pressure 0 Pa
+            incomingPhase 3
+        }
+        Ambient
+        {
+            Side
+            {
+                boundaryId 8
+                pressure 0 Pa
+            }
+        }
+        solidWallModel noSlip
+        incomingMomentumModel interiorContinuationZeroShear
+    }
+    # 运动液面/接触线配置已按 schema 2 分文件格式移到 interface.dict，Hydro 只读取流体设置。
+    Numerics
+    {
+        # 数值界面力带半宽，以 max(dr,dz) 为单位；不是物理界面厚度。
+        InterfaceForce
+        {
+            halfWidthCells 3
+        }
+        Conservation
+        {
+            momentumBalance 1e-10
+            localContinuity 1e-10
+            outletAdmissibility 1e-10
+            phaseFluxBalance 1e-10
+        }
+    }
+}

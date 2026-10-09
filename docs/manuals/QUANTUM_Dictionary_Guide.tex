@@ -1,0 +1,678 @@
+% !TEX program = xelatex
+\documentclass[a4paper,11pt]{article}
+\usepackage{quantum-manual}
+\begin{document}
+\manualtitle{字典配置指南}{第三册}{按应用入口解释配置文件、物性、模型、边界、单位与输出，并提供真实算例片段。}
+
+\section{先选入口，再选字典格式}
+\subsection{文件名相同不代表内容通用}
+QUANTUM 通过 \code{system/run.dict} 选择应用。当前同时保留正式分文件格式和旧兼容 reader。\code{schemaVersion 2} 只用于 Electrospray；不要为其他 App 统一补上版本 2。
+
+\begin{longtable}{L{.24\linewidth}L{.30\linewidth}L{.38\linewidth}}
+\toprule 工作流 & run 选择 & 主要输入文件 \\\midrule\endhead
+普通 Hydro & \code{app SingleModule}；模块 \code{Hydrodynamics} & run、geometry、mesh、hydro；twoPhase 加 interface \\
+普通 EHD & \code{app Electrohydrodynamics} & 普通 Hydro 的文件加 electricity \\
+独立 Interface & \code{app Interface} & 恰好 run、geometry、mesh、interface、solvers 五份 \\
+独立 Electricity & \code{app Electricity} & 恰好 run、geometry、mesh、electricity 四份 \\
+喷雾 schema 2 & \code{schemaVersion 2; app Electrospray} & run、geometry、mesh、units、normalization、materials、hydro、interface、electricity、solvers 十份 \\
+ExplicitPIC / ImplicitPIC & \code{app SingleModule}；相应 PIC 模块 & 基础 run、geometry、mesh、pic；按实际功能加入其他原有输入 \\
+MeshVerification & \code{app MeshVerification} & run、geometry、mesh 三份 \\
+\bottomrule
+\end{longtable}
+表中短名均带 \code{.dict} 后缀。严格文件集合的入口会拒绝额外文件或子目录；把不使用的字典也复制进去，并不会启用额外模型。喷雾仍兼容原九文件内联 Interface 形式，但不能同时有两处界面设置。
+
+\subsection{语法约定}
+新块语法区分大小写，布尔值用 \code{true/false}，ID 列表用空格分隔的 \code{(2 3)}。标量逐行写，或在支持的新块中用分号分隔。名称可带引号，注释支持 \code{\#} 和 \code{//}。未知项、重复项、缺必填项及错误量纲在严格 reader 中会报错。
+
+\code{geometry.dict}、\code{mesh.dict} 和原 PIC reader 保留其语法。公共几何/网格常用带逗号坐标 \code{(0, 0)}，建议保留样例的逐行写法。不要把所有文件自动压缩为一行，也不要把新 ID 列表的空格规则套到旧坐标解析器。旧 reader 的宽松行为不等于每个未知字段都会被拒绝。
+
+附录给出本机普通 EHD 的完整六文件输入；其余章节的片段均注明适用入口。生产使用从对应 \code{cases/<name>/system} 整套复制，再修改运行副本。
+
+\section{公共运行控制：run.dict}
+\subsection{一个主时钟}
+普通分文件 EHD、独立 Interface/Electricity 和喷雾共享运行控制对象，但各 App 对可选值有限制。下面是普通 EHD 的完整运行块：
+\begin{lstlisting}
+Run { app Electrohydrodynamics; }
+Time { units code; dt 0.001; endTime 0.003; }
+Output
+{
+    prefix hydro;
+    Fields
+    {
+        enabled true; format tecplot; profile physical;
+        writeControl stepInterval; writeInterval 3;
+        writeInitial true; writeFirst false; writeFinal true;
+    }
+}
+Log { everySteps 1; level summary; }
+Restart { model none; }
+\end{lstlisting}
+普通 Hydro 将首行改为下面两行，其余控制保留：
+\begin{lstlisting}
+Run { app SingleModule; }
+SingleModule { modules (Hydrodynamics); }
+\end{lstlisting}
+\begin{longtable}{L{.29\linewidth}L{.63\linewidth}}
+\toprule 字段 & 含义与约束 \\\midrule\endhead
+\code{Time.units} & 普通域和独立模块为 code；喷雾可选 code/SI，SI 时间必须带单位 \\
+\code{dt}, \code{endTime} & 正的固定时间步及结束时间；结束时间须为整数步，不自动补短末步 \\
+\code{Output.prefix} & 文件前缀，不影响模型；不能用它选择验证模式 \\
+\code{Fields.enabled} & 关闭只影响空间场，必要逐步收支与错误仍保存 \\
+\code{format} & 本组入口使用 tecplot \\
+\code{profile} & 普通域和独立模块为 physical；喷雾另有 diagnostic \\
+\code{writeControl} & stepInterval：按步；timeInterval：按运行时间单位的间隔 \\
+\code{writeInterval} & 步间隔为正整数，时间间隔为正数；一次跨多个间隔也只写当前接受步一帧 \\
+\code{writeInitial} & 请求初态输出；普通 EHD 的初始电场在第 1 步求值，保留其额外选择规则 \\
+\code{writeFirst}, \code{writeFinal} & 强制首个/最后接受步；false 不取消定期间隔已选中的帧 \\
+\code{Log.everySteps} & 接受步摘要间隔，首末步/失败仍报告；不减少物理计算 \\
+\code{Log.level} & 普通域使用 summary；喷雾支持 summary/detail \\
+\code{Restart.model} & 当前上述流体/独立入口仅 none；可省略此块 \\
+\bottomrule
+\end{longtable}
+Time/Output/Log 及相应通用必填项应显式提供。普通域最多 \code{INT_MAX-1} 步；喷雾最多 \code{INT_MAX} 步，独立 Electricity 为初始求场保留一个编号。实际研究不宜靠接近整数上限的设置管理长程任务。
+
+喷雾还必须在 run 中放置下列互斥定义之一：
+\begin{lstlisting}
+Electrospray { Coupling { electricUpdate everyStep; } }
+\end{lstlisting}
+或将 Coupling 换成 Verification 块，例如：
+\begin{lstlisting}
+Electrospray { Verification { problem fixedInterfaceDielectric; } }
+\end{lstlisting}
+problem 可为 \code{pressureDriven}、\code{fixedInterfaceCapillary}、\code{fixedInterfaceDielectric}。固定状态模式只推进对应载荷下 NS，要求理想介电 cellHarmonic、零初始面电荷及 SurfaceCharge none；不是运动液面验证。详细用法见第二册与 \code{spray_dielectric_smoke/README.md}。
+
+\section{公共几何与网格}
+\subsection{最小矩形网格}
+下面两段分别属于 geometry 和 mesh 文件：
+\begin{lstlisting}
+Domain
+{
+    min (0, 0)
+    max (1, 1)
+    dimension 2
+}
+\end{lstlisting}
+\begin{lstlisting}
+adaptiveMesh false
+BackgroundMesh
+{
+    divide (16, 16)
+}
+\end{lstlisting}
+几何坐标的尺度由入口和单位设置解释。普通域的双相界面还需要 Point、Line、LevelSet；喷雾还需要 Phase/Boundary。坐标 dimension 2 不决定是否使用 RZ，物理模块另声明坐标系。
+
+\subsection{身份绑定}
+\begin{longtable}{L{.25\linewidth}L{.67\linewidth}}
+\toprule 对象 & 设置时应理解的意义 \\\midrule\endhead
+Point / Line & 点的顺序决定编号；线连接点，弧需保留中心、半径及原 reader 的参数语义 \\
+LevelSet & 指定线链、正负相内部点及是否运动；开放链的 signClosure 辅助定义符号 \\
+Phase & 由水平集约束决定相，编号绑定材料和导体；名称不是唯一绑定依据 \\
+Boundary & 固壁、移动液面和域边界各有实际 ID；液面、电极、供液口分别绑定 \\
+BackgroundMesh & 初始划分；增大 divide 改变网格分辨率，不等价于局部 AMR \\
+QuadtreeMesh & 保留旧容量和初始化迭代等设置；具体 App 可限制或拒绝该块 \\
+\bottomrule
+\end{longtable}
+喷雾样例中相 1 为导体、2 为液体、3 为气体；移动液面是边界 4，钉扎点是 Point 3，供液/顶部/侧边界为 5/6/7。这些数字只适用于该套 geometry。更换几何后必须重新核对，不能把 ID 当作全球约定。
+
+\subsection{只学习网格：MeshVerification}
+该入口的 run 只包含 Run 块，app 指定为 \code{MeshVerification}，不放 Time/Output；geometry 只放 Domain 的 min/max，不填 dimension 或几何对象。mesh 可直接使用以下标准样例：
+\begin{lstlisting}
+adaptiveMesh true
+BackgroundMesh
+{
+    divide (4, 4)
+}
+QuadtreeMesh
+{
+    maxCellNum 2048
+    maxInitialIterations 0
+}
+GeometryRefinement
+{
+    enabled true
+    refineRegion
+    {
+        entry
+        {
+            name center
+            shape box
+            xmin 0.3
+            xmax 0.7
+            ymin 0.3
+            ymax 0.7
+            maxLevel 2
+        }
+    }
+}
+\end{lstlisting}
+该样例域为 $(0,0)$ 到 $(1,1)$，固定执行细化、缓存读回后粗化和再次细化。此 App 只接受一个域内 box，divide 每方向 2--64，maxLevel 为 1--3。最细完整网格单元数不超过 4096，容量还须满足 reader 的节点容量约束。完整范围见现行字典参考第 14 节；这不是一般物理算例的 AMR 调度格式。
+
+\section{普通 Hydro/EHD 的物理设置}
+\subsection{hydro.dict：物性、初态和力}
+当前新分文件格式使用 \code{Hydrodynamics} 块。附录给出完整 EHD 样例，下表解释其中关键设置。
+\begin{longtable}{L{.33\linewidth}L{.59\linewidth}}
+\toprule 键 & 含义与样例 \\\midrule\endhead
+\code{coordinateSystem} & 普通 Hydro 使用 planar2D 或 axisymmetricRZ；注意不是电学 Domain 的 cartesianXY 名称 \\
+\code{materialModel} & constant 为单相，twoPhase 为双相；twoPhase 需匹配 interface 文件 \\
+\code{interfaceLevelSet} & geometry 中实际水平集名称，例如 liquid \\
+\code{densityNegative/Positive} & 两侧质量密度，代码物性 \\
+\code{viscosityNegative/Positive} & 两侧动力黏度，代码物性 \\
+\code{interfaceThickness} & 普通节点路径的界面正则化尺度，代码长度；不是喷雾 halfWidthCells \\
+\code{initialVelocity} & 样例 smooth 使用光滑非零初速；幅值由 velocityAmplitude 给出 \\
+\code{interfaceForceGeometry} & 样例 hermite 使用 Hermite 界面几何 \\
+\code{interfaceForceLayer} & 现有样例使用 geometricPL 或 regularized；改变它是在改加载离散 \\
+\code{surfaceTension} & 表面张力的代码值，普通域在此填写 \\
+\code{linearResidualTolerance} & 线性求解容限，默认 $10^{-8}$，范围 $(0,0.01]$ \\
+\bottomrule
+\end{longtable}
+附录用两相相同密度/黏度，目的是保持精简运动样例；它不代表真实液气物性推荐值。单相与其他初态参数应从相应标准算例复制，不能把表中所有双相键加入单相块。
+
+\subsection{interface.dict：节点界面}
+普通双相的最小块为：
+\begin{lstlisting}
+Interface
+{
+    advectInterface true;
+    reinitializeEvery 0;
+}
+\end{lstlisting}
+advectInterface 必填；reinitializeEvery 默认 0 表示关闭，非零周期要求界面实际运动。constant 材料模型不接受这个文件。
+
+普通 Hydro 的接触样例另有以下输入，必须与真实流入边界成套配置：
+\begin{lstlisting}
+interfaceBoundary
+{
+    model prescribedScalar;
+    fixedContacts ((0.25, 0), (0.75, 0));
+    inflow
+    {
+        leftSupply { offset 0; slope -1; origin 0.25; }
+        rightSupply { offset 0; slope 1; origin 0.75; }
+    }
+}
+\end{lstlisting}
+该块放在 Interface 内，定义入口仿射标量与固定接触位置；它不是接触角模型。\code{hydro_contact_smoke} 的配套边界片为：
+\begin{lstlisting}
+boundaryPatches
+{
+    leftSupply
+    { side south; type normalVelocity; start 0; end 0.5; value -0.01; }
+    rightSupply
+    { side south; type normalVelocity; start 0.5; end 1; value -0.01; }
+    outlet
+    { side north; type pressureOutlet; start 0; end 1; value 0; }
+}
+\end{lstlisting}
+此块放在 Hydrodynamics 内；法向速度负值代表流入。EHD 不因普通 Hydro 支持该输入就自动获得接触壁面电荷输运能力。
+
+\subsection{Hydro 的独立物理容限}
+正式分文件格式中的可选 \code{Conservation} 不随线性容限变化：
+\begin{longtable}{L{.29\linewidth}L{.16\linewidth}L{.47\linewidth}}
+\toprule 键 & 默认值 & 实际用途 \\\midrule\endhead
+\code{momentumBalance} & $10^{-8}$ & 适用路径的完整动量相对残差 \\
+\code{initialContinuity} & $10^{-8}$ & 初始边界相容投影，要求 boundaryPatches \\
+\code{outletAdmissibility} & $10^{-8}$ & 出口回流检查，要求 pressureOutlet \\
+\code{boundaryFluxBalance} & $10^{-8}$ & 全边界流量/常物性质量闭合，要求 boundaryPatches；保持原 16 倍尺度判据 \\
+\bottomrule
+\end{longtable}
+四项有限且在 $(0,1)$；没有对应边界消费者的显式设置会拒绝。闭域只填 momentumBalance 即可。旧扁平格式继续从统一 linearResidualTolerance 展开物理门限；迁移时若原值不同于新默认值，应显式填写适用项保持原判据。
+
+\section{普通 EHD 与独立 Electricity 的电学设置}
+\subsection{Electricity 块}
+\begin{lstlisting}
+Electricity
+{
+    model leakyDielectric
+    interfaceDiscretization sharpHermiteP3
+    permittivityNegative 2
+    permittivityPositive 1
+    electrodeAxis y
+    lowerPotential 0
+    upperPotential 0.01
+    linearResidualTolerance 1e-9
+    Conservation
+    {
+        reconstructedPoisson 1e-9
+        gaussClosure 1e-9
+        chargeClosure 1.6e-8
+    }
+    conductivityNegative 0.1
+    conductivityPositive 0.01
+    initialSurfaceChargeDensity 0.001
+    chargeConvection false
+}
+\end{lstlisting}
+该例取自固定 RZ 充电样例。permittivity、conductivity、potential 和面电荷按普通域代码物性/量解释，不能不经转换替换为 SI 材料表数值。
+
+\begin{longtable}{L{.29\linewidth}L{.63\linewidth}}
+\toprule 选择 & 允许的组合与含义 \\\midrule\endhead
+\code{perfectDielectric} & 不填写导电率/初始面电荷/chargeConvection；普通 XY 可 diffuseTanh 或 sharpHermiteP3 \\
+\code{leakyDielectric} & 使用 sharpHermiteP3，提供导电与面电荷参数；固定独立入口只允许显式推进 \\
+RZ & 使用 sharpHermiteP3；轴起点为 r=0 时电极只沿 y/z 方向 \\
+\code{electrodeAxis x/y} & 低/高端电势分别由 lowerPotential/upperPotential 给定，其余域边界齐次 Neumann \\
+\code{chargeConvection} & 控制已有面电荷对流策略；固定独立电学没有速度来源，必须 false \\
+\bottomrule
+\end{longtable}
+
+\subsection{Domain 只属于正式独立 Electricity 的该组输入}
+独立入口的 electricity 文件还包含：
+\begin{lstlisting}
+Domain
+{
+    coordinateSystem axisymmetricRZ
+    interfaceLevelSet liquid
+    motion fixed
+}
+\end{lstlisting}
+坐标可为 cartesianXY/axisymmetricRZ。仅一个固定水平集，完整矩形域，无 Phase/Boundary/周期/运动固体。mesh 仅接受均匀划分与 \code{adaptiveMesh false}，每方向不少于 8。diffuseTanh 还需正的 \code{interfaceHalfWidth}（代码长度）；sharp 不需要，旧该键只作弃用提示。
+
+选择 \code{Run.app Electricity} 是正式 SuperLU 求解入口。历史 \code{SingleModule.modules (Electricity)} 仍为旧顶点初始化兼容路径，物理模型和输入均不同。正式独立入口不接收 solvers、materials 或 Hydro 字典。
+
+\subsection{电学物理容限}
+\begin{longtable}{L{.29\linewidth}L{.16\linewidth}L{.47\linewidth}}
+\toprule Conservation 键 & 默认值 & 消费者 \\\midrule\endhead
+\code{boundaryFlux} & $10^{-9}$ & 仅 diffuseTanh，全域边界位移通量收支 \\
+\code{reconstructedPoisson} & $10^{-9}$ & 仅 sharp，逐单元重构方程残差 \\
+\code{gaussClosure} & $10^{-9}$ & 仅 sharp，全域 Gauss 闭合，含给定面电荷 \\
+\code{chargeClosure} & $1.6\times10^{-8}$ & 仅 leakyDielectric，电荷增量与实际电极电流闭合 \\
+\bottomrule
+\end{longtable}
+参数在 $(0,1)$，不用的模型项不能填写。正式输入的 chargeClosure 直接使用，不再乘 16；旧扁平 EHD 将线性容限的 16 倍交给电荷消费者。附录 diffuse 样例显式使用 boundaryFlux=$10^{-8}$ 以保留原设置，不是默认值变成了 $10^{-8}$。
+
+\section{独立 Interface：规定速度实验}
+选 \code{Run.app Interface}，公共时间用代码单位；文件集合严格为五份。界面文件如下：
+\begin{lstlisting}
+Interface
+{
+    units code
+    excludedPhase 1
+    Initial { model parabolicCap; pinnedPoint 3; height 0.125; }
+    Transport
+    {
+        model pinnedToAxis
+        halfWidthCells 6
+        Velocity { model axialColumn; peakSpeed 0.05; }
+    }
+    Boundaries
+    {
+        stationaryWall (3 4)
+        symmetry (8)
+        singlePhasePort (5 6 7)
+    }
+}
+\end{lstlisting}
+excludedPhase 排除固定固体，pinnedPoint 绑定真实几何点；height 为代码长度，peakSpeed 为代码速度。三类边界 ID 非空且互斥，symmetry 必须在 r=0。几何只提供固定固体和有效域，不重复定义运动液面。均匀 RZ 网格，不支持该入口的 AMR。
+
+其 solvers 文件只有实际使用的一项：
+\begin{lstlisting}
+Solvers
+{
+    InterfaceVolumeCorrection
+    { backend SuperLU; relativeTolerance 1e-10; }
+}
+\end{lstlisting}
+该容限控制体积修正中的线性子问题；不会替换局部/全局体积守恒准则。可直接复制 \code{interface_prescribed_cap_rz} 的 geometry/mesh 和完整 run。
+
+\section{喷雾 schema 2：材料、流动和界面}
+\subsection{materials.dict：SI 物性}
+\begin{lstlisting}
+Materials
+{
+    Phases
+    {
+        liquid
+        {
+            phaseId 2
+            density 1000 kg/m^3
+            dynamicViscosity 0.001 Pa*s
+            relativePermittivity 10
+            conductivity 0.001 S/m
+        }
+        gas
+        {
+            phaseId 3
+            density 1 kg/m^3
+            dynamicViscosity 0.000018 Pa*s
+            relativePermittivity 1
+            conductivity 0 S/m
+        }
+    }
+    Interfaces
+    {
+        surface { phases (2 3); surfaceTension 0.0452 N/m; }
+    }
+}
+\end{lstlisting}
+当前恰为选中的两个流体相；密度、动力黏度和相对介电常数为正，电导率及表面张力非负。导体固相由电极绑定，不增加第三份流体物性。相对介电常数无量纲，实际介电常数为 $\epsilon_0\epsilon_r$。表面张力按相对设置，不是某相独占属性。
+
+\subsection{hydro.dict：流动模型与压力口}
+\begin{lstlisting}
+Hydrodynamics
+{
+    Model
+    {
+        formulation incompressibleTwoPhase
+        coordinateSystem axisymmetricRZ
+        liquidPhase 2
+        gasPhase 3
+    }
+    Initial { model rest; }
+    BoundaryConditions
+    {
+        Supply { boundaryId 5; pressure 45.2 Pa; }
+        Outlet { boundaryId 6; pressure 0 Pa; incomingPhase 3; }
+        Ambient { side { boundaryId 7; pressure 0 Pa; } }
+        solidWallModel noSlip
+        incomingMomentumModel interiorContinuationZeroShear
+    }
+    Numerics
+    {
+        InterfaceForce { halfWidthCells 3; }
+        Conservation
+        {
+            momentumBalance 1e-10
+            localContinuity 1e-10
+            outletAdmissibility 1e-10
+            phaseFluxBalance 1e-10
+        }
+    }
+}
+\end{lstlisting}
+Supply 指定供液压力，回流材料为液体；Ambient 的回流材料为气体。Outlet 的 incomingPhase 可给气相编号或 none；none 保持未配置回流的拒绝规则。所有压力口已给入流相时，outletAdmissibility 会在报告中标记为该模式未用。
+
+四项 Conservation 均为 $(0,1)$ 内的无量纲数，分别控制动量、局部连续性、出口可接受性和相通量；名称/范数与普通完整域不同，不互相复制。InterfaceForce 半宽为网格单元数，不是米。
+
+\subsection{interface.dict：拟合液面身份}
+\begin{lstlisting}
+Interface
+{
+    levelSet "liquid";
+    movingBoundary 4;
+    transport activeHermiteMaterial;
+    ContactLine { model pinned; points (3); }
+}
+\end{lstlisting}
+五项均必填，接触点列表为无重复的正 ID。钉扎没有接触角参数。旧 schema 2 可把相同块放在 \code{hydro.dict/Hydrodynamics/Interface}；迁移时移出该块，不能两处同时存在。此格式既不接受普通节点的 advectInterface，也不接受独立 Interface 的 prescribed 初态块。
+
+\section{喷雾电学与线性系统}
+\subsection{先确定模型组合}
+\begin{longtable}{L{.30\linewidth}L{.29\linewidth}L{.33\linewidth}}
+\toprule 设置 & 理想介电 & 导电 \\\midrule\endhead
+\code{Model.model} & perfectDielectric & leakyDielectric \\
+\code{interfaceDiscretization} & cellHarmonic & sharpHermiteP3 \\
+\code{SurfaceCharge.model} & none & 显式或隐式材料输运，完整名称见下文 \\
+\code{Initial.surfaceChargeDensity} & $0$，带 C/m$^2$ 单位 & 当前也只接受 $0$ \\
+\code{closureTolerance} & 不允许填写 & 必填，样例 $1.6\times10^{-9}$ \\
+\code{Numerics} & potentialBounds、polarizationConsistency & potentialBounds、reconstructedPoisson、gaussClosure \\
+\bottomrule
+\end{longtable}
+导电的 SurfaceCharge.model 二选一：\code{explicitConductionMaterialTransport}（显式）或 \code{implicitConductionMaterialTransport}（隐式）。Numerics 样例均为 $10^{-10}$。上述组合不可任意交叉。独立固定电学能给非零初始面电荷，不代表喷雾入口也已支持相同初态。
+
+\subsection{电极和域边界}
+下面块放在 Electricity 内，对应本机导电喷雾的 geometry：
+\begin{lstlisting}
+BoundaryConditions
+{
+    Conductor { phaseId 1; potential 5 V; }
+    Domain
+    {
+        supply { boundaryId 5; type homogeneousNeumann; }
+        top { boundaryId 6; type dirichlet; potential 0 V; }
+        side { boundaryId 7; type dirichlet; potential 0 V; }
+        liquidAxis { boundaryId 8; type homogeneousNeumann; }
+        gasAxis { boundaryId 9; type homogeneousNeumann; }
+    }
+}
+\end{lstlisting}
+dirichlet 必须给电势，homogeneousNeumann 不允许附带 potential。流体压力口同时需要独立电学条件，不能因为 Hydro 配了压力就省略电边界。
+
+\subsection{隐式面电荷迭代}
+\begin{lstlisting}
+SurfaceCharge
+{
+    model implicitConductionMaterialTransport
+    closureTolerance 1.6e-9
+    Iteration
+    {
+        underRelaxation 0.1
+        maxIterations 500
+        densityChangeTolerance 4.4270939064e-10 C/m^2
+        relativeEquationTolerance 1e-10
+    }
+}
+\end{lstlisting}
+underRelaxation 在 $(0,1]$，maxIterations 为正整数。densityChangeTolerance 是正的 SI 面电荷密度，relativeEquationTolerance 在 $(0,1)$；相邻变化与完整方程必须同时通过。闭合门限独立于这两个迭代门。显式或 none 模式不能保留 Iteration 块。当前仍有 $\Delta t\max(\sigma/\epsilon)\le0.25$ 约束。
+
+\subsection{solvers.dict：恰好五项}
+\begin{lstlisting}
+Solvers
+{
+    ElectricPotential { backend SuperLU; relativeTolerance 1e-10; }
+    Momentum { backend SuperLU; relativeTolerance 1e-10; }
+    Pressure { backend SuperLU; relativeTolerance 1e-10; }
+    CoupledVelocityPressure { backend SuperLU; relativeTolerance 1e-10; }
+    InterfaceVolumeCorrection { backend SuperLU; relativeTolerance 1e-10; }
+}
+\end{lstlisting}
+它们分别控制电势、动量预测、压力修正、速度--压力联合修正和体积修正中的线性子问题。这里只接受 SuperLU，不支持在此填写 CG/SparseLU 或无消费者的迭代次数。调低这些代数残差，不会自动收紧其他物理收支门限。
+
+\section{喷雾单位与 AMR}
+\subsection{units.dict 与 normalization.dict}
+\begin{lstlisting}
+Units
+{
+    mode SI
+    L0 1e-6 m
+    T0 1.6563100047570824e-7 s
+    Phi0 50 V
+    rho0 1 C/m^3
+    n0 1e20 1/m^3
+    writeSIOutputs true
+}
+\end{lstlisting}
+\begin{lstlisting}
+Normalization { dimension 3; strategy manual; }
+\end{lstlisting}
+这些字段在当前喷雾格式中均需明确提供；writeSIOutputs 必须 true。几何坐标按 $L_0$ 解释，例如样例半径 0.5 对应 $0.5\,\mu$m。输入电极 5 V 与参考电势 Phi0=50 V 是两件事。
+
+\code{rho0} 是保留的体电荷密度参考，\code{n0} 是保留的粒子数密度参考，当前喷雾不消费二者，报告为 used=false。质量密度来自 materials。实际面电荷密度尺度为 $\epsilon_0\Phi_0/L_0$，总 RZ 电荷尺度为 $\epsilon_0\Phi_0L_0$。dimension 3 表示完整旋转体积，不是三维网格。
+
+常用 SI 后缀包括 m/mm/um、s/ms/us/ns、V/kV、Pa/kPa、kg/m$^3$、Pa*s、S/m、N/m、C/m$^2$。具体字段按量纲检查；界面密度容限不能用无单位默认数代替。
+
+\subsection{运行时 AMR 的开关不是通用开关}
+已接通的导电原生 Q4 粗细喷雾可在 mesh 的顶层配置：
+\begin{lstlisting}
+RuntimeAdaptation
+{
+    enabled true
+    everySteps 1
+    maxSweeps 2
+}
+\end{lstlisting}
+同时需要 adaptiveMesh、GeometryRefinement 和恰好一条运动液面 refineBoundary 规则，并满足 Q4/几何支撑/回流物性限制。仅在均匀小样例中加入上面几行，不会自动成为有效 AMR 算例。
+
+everySteps 默认 1，按接受步调度且需还有下一步；maxSweeps 默认 2，范围 1--32。禁用时只填写 enabled false。GeometryRefinement 的距离带参数 \code{C_Gamma} 与 Hydro 载荷半宽不同。
+
+\code{PhysicsRefinement} 可用 Velocity/VelocityGradient，分别配正 SI 速度/速度梯度门限和 maxLevel，上下滞回参数 hysteresis 在 $(0,1)$。相区、边界和指标的层级上限要协调。当前保护液面及必要邻域，不支持液面单元任意分裂/合并与接触线迁移；配置细则见现行字典参考第 5.6 节。
+
+\section{PIC：保留原有逐行输入}
+\code{run.dict} 选择如下；切换隐式时只将 ExplicitPIC 换成 ImplicitPIC，再按该路径的数值与诊断规则解释输入和结果：
+\begin{lstlisting}
+Run { app SingleModule; }
+SingleModule { modules (ExplicitPIC); }
+\end{lstlisting}
+\subsection{基础 pic.dict}
+下面是 \code{pic_smoke} 的完整 pic 字典，和本册前面的 PIC run 选择配套：
+\begin{lstlisting}
+PIC
+{
+    dt 1e-11
+    steps 3
+    randomSeed 12345
+    ompThreads 1
+}
+Species
+{
+    "electron"
+    {
+        charge -1.602176634e-19
+        mass 9.1093837015e-31
+        weight 1
+        numParticles 32
+        temperature 1 eV
+        init uniform
+    }
+}
+Output
+{
+    Fields
+    {
+        every 1
+        list (phi rho n E)
+    }
+    Series
+    {
+        every 1
+    }
+    Console
+    {
+        level info
+        every 1
+    }
+}
+\end{lstlisting}
+保持上面的逐行语义，原样文件见 \code{cases/pic_smoke/system/pic.dict}。dt 的裸数为代码时间；charge 和 mass 的裸数分别对应原物种字段的电荷/质量物理数值。temperature 的 1 eV 是显式能量温度输入。weight 表示宏粒子代表的物理粒子数，不等于 numParticles。
+
+\subsection{输出与诊断}
+\begin{longtable}{L{.30\linewidth}L{.62\linewidth}}
+\toprule 设置 & 用途和差异 \\\midrule\endhead
+\code{Output/Fields/every} & 原 PIC 空间场步间隔；不消费 run.dict/Fields 的 writeControl \\
+\code{Fields/list} & phi、rho、n、E；可选 Te\_e 和 electron\_mean\_energy 等既有字段 \\
+\code{Output/Series/every} & 历史表写出频率；不等于所有内部累计窗口 \\
+\code{Output/Console} & level 与 every 控制原 PIC 日志 \\
+\code{Output/Profile1D} 等 & 原剖面/平均诊断；字段层级与窗口按字典参考第 9 节 \\
+\code{Output/Diagnostics} & 既有周期、电极、反应、能谱报表；不是物理反应模型 \\
+\code{Checkpoint} & 保存/恢复，配置示例见第二册；独立于输出场频率 \\
+\bottomrule
+\end{longtable}
+显式空字段列表使用既有默认集合，且密度有原必写规则；隐式空列表不写场。未知字段名不启用对应场，未必报错。\code{muCell/muFace} 仅隐式；宏粒子数/权重等字段主要属于显式。输出列受实际物种和水平集存在情况影响。
+
+\subsection{物理扩展的来源}
+\begin{longtable}{L{.28\linewidth}L{.64\linewidth}}
+\toprule 块/配置 & 职责 \\\midrule\endhead
+\code{BC/Field} & 电场边界、电极与周期条件；周期条件还需对应几何配对 \\
+\code{BC/Particle} & 原粒子边界和 SEE 策略，显隐路径有保留差异 \\
+\code{Gas} & 背景气体名称、压力/温度等 \\
+\code{CrossSections} & 内建或表格截面来源 \\
+\code{Reactions} & 投射物种、背景目标、碰撞通道和碰撞后模型 \\
+\code{Collisions} & 开启 MCC、反应集绑定、随机数和碰撞调度 \\
+\code{Units/Normalization} & PIC 原尺度策略，不能直接照搬喷雾限制 \\
+\code{Solvers} & 原 PIC Poisson/极化求解配置，不是喷雾五系统格式 \\
+\bottomrule
+\end{longtable}
+碰撞物理块逐块按 mcc.dict 顶层、pic.dict 顶层、对应独立字典的顺序选择。\code{Output/Diagnostics/Reactions} 只是报表，不提供物理反应。内嵌 Units/Normalization/Solvers 必须是 pic 顶层块，与同名独立字典不能重复来源。
+
+基础样例不启用 MCC。要尝试已有碰撞组合，整份复制 \code{tests/fixtures/plasma/mcc.dict}，其中是 Ar、1000 Pa、300 K、内建 ArV1 的电子弹性通道，随机模式 perParticle。不能只复制 Collisions.enabled 而缺少气体/截面/反应定义。
+
+隐式环境选项在输入准备阶段读取一次。已有 TRACE/NOHINT 按变量是否存在启用，设置字符串 0/false 也算存在；关闭应取消变量。日常使用保持样例默认设置，有明确数值目的再使用高级覆盖。
+
+\section{迁移旧输入与避免误配}
+\begin{enumerate}
+\item 从新运行目录开始，保留原 system 副本作为对照。
+\item 普通 Hydro/EHD：把时间/输出/日志移到 run，把界面输运移到 interface；物性和边界留在 hydro，电学留在 electricity。不要保留同名旧控制。
+\item 保留旧物理容限时，按实际消费者显式展开 Conservation；只迁线性容限可能改变物理接受条件。
+\item 喷雾使用 schema 2 的对应十文件样例，几何/网格身份和单位配套；旧 ElectrosprayPhysical、PIC/MCC 块不能混入。
+\item 明确区分三种 interface 格式与两套电学格式。普通电学 Conservation 和喷雾 Numerics/SurfaceCharge 不互换。
+\item 完整修改后统一预检查，再实际跑短程；核对 meta 的生效来源、series 的收支和预期场。配置报告里的 used=false 表示该组合未消费，不代表另一个模型也不需要。
+\end{enumerate}
+本册覆盖常用入口和高频设置，不复制全部旧 PIC 高级键。完整现行规则入口为 \repo{docs/QUANTUM_Dictionary_Reference.md}；具体示例以本机 cases 为准。旧 InputDicts/模型蓝图中的拟议语法不能覆盖现行 reader。
+
+\appendix
+\clearpage
+\section{完整输入：普通介电 EHD 三步样例}
+以下六份内容按 \code{cases/ehd_diffuse_smoke/system} 于 2026-09-19 的文件收录，保存到同一运行目录的 system 下即可。它使用代码单位、16$\times$16 网格、圆液滴、理想介电 diffuseTanh 和三步界面运动。运行方法见第二册。
+% CASE_SNAPSHOT_BEGIN
+\subsection{run.dict}
+\begin{lstlisting}
+Run { app Electrohydrodynamics; }
+Time { units code; dt 0.001; endTime 0.003; }
+Output
+{
+    prefix hydro;
+    Fields
+    {
+        enabled true; format tecplot; profile physical;
+        writeControl stepInterval; writeInterval 3;
+        writeInitial true; writeFirst false; writeFinal true;
+    }
+}
+Log { everySteps 1; level summary; }
+Restart { model none; }
+\end{lstlisting}
+\subsection{geometry.dict}
+\begin{lstlisting}
+Domain { min (0, 0); max (1, 1); dimension 2; }
+Point
+{
+    (0.73, 0.5)
+    (0.5, 0.73)
+    (0.27, 0.5)
+    (0.5, 0.27)
+}
+Line
+{
+    (1, 2) { type arc; center (0.5, 0.5); radius 0.23; radian 0.5; }
+    (2, 3) { type arc; center (0.5, 0.5); radius 0.23; radian 0.5; }
+    (3, 4) { type arc; center (0.5, 0.5); radius 0.23; radian 0.5; }
+    (4, 1) { type arc; center (0.5, 0.5); radius 0.23; radian 0.5; }
+}
+LevelSet { liquid { lines (1, 2, 3, 4); innerPoint (0.5, 0.5); moving true; } }
+\end{lstlisting}
+\subsection{mesh.dict}
+\begin{lstlisting}
+adaptiveMesh false
+BackgroundMesh { divide (16, 16); }
+QuadtreeMesh { maxCellNum 1024; maxInitialIterations 0; }
+\end{lstlisting}
+\subsection{hydro.dict}
+\begin{lstlisting}
+Hydrodynamics
+{
+    coordinateSystem planar2D;
+    materialModel twoPhase;
+    interfaceLevelSet liquid;
+    densityNegative 1;
+    densityPositive 1;
+    viscosityNegative 0.01;
+    viscosityPositive 0.01;
+    interfaceThickness 0.08;
+    initialVelocity smooth;
+    velocityAmplitude 0.05;
+    interfaceForceGeometry hermite;
+    interfaceForceLayer geometricPL;
+    surfaceTension 0.001;
+    linearResidualTolerance 1e-8;
+    Conservation { momentumBalance 1e-8; }
+}
+\end{lstlisting}
+\subsection{interface.dict}
+\begin{lstlisting}
+Interface { advectInterface true; reinitializeEvery 0; }
+\end{lstlisting}
+\subsection{electricity.dict}
+\begin{lstlisting}
+Electricity
+{
+    model perfectDielectric;
+    interfaceDiscretization diffuseTanh;
+    permittivityNegative 2;
+    permittivityPositive 1;
+    electrodeAxis y;
+    lowerPotential 0;
+    upperPotential 0.01;
+    linearResidualTolerance 1e-8;
+    Conservation { boundaryFlux 1e-8; }
+}
+\end{lstlisting}
+% CASE_SNAPSHOT_END
+\end{document}

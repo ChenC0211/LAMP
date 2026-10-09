@@ -1,0 +1,26 @@
+Hydrodynamics
+{
+    coordinateSystem planar2D;
+    timeScheme cchMomentMidpoint;
+    materialModel twoPhase;
+    interfaceLevelSet liquid;
+    densityNegative 1;
+    densityPositive 1;
+    viscosityNegative 0.0816496580927726;
+    viscosityPositive 0.0816496580927726;
+    surfaceTension 1;
+    accelerationX 0;
+    accelerationY 0;
+    interfaceForceGeometry parametric;
+    interfaceForceLayer sharp;
+    initialVelocity zero;
+    linearResidualTolerance 1e-10;
+    Moment { maximumIterations 24; convection central; }
+    boundaryPatches
+    {
+        leftWall { side west; type freeSlip; start -1; end 1; }
+        rightWall { side east; type freeSlip; start -1; end 1; }
+        bottomWall { side south; type freeSlip; start -1; end 1; }
+        topWall { side north; type freeSlip; start -1; end 1; }
+    }
+}

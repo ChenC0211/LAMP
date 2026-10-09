@@ -1,0 +1,154 @@
+\documentclass[UTF8,a4paper,11pt]{ctexart}
+\usepackage[a4paper,margin=2.1cm]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  frame=single,
+  xleftmargin=1em,
+  xrightmargin=1em
+}
+
+\title{\bfseries QUANTUM 开发者说明（架构规则速记）}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\noindent\textbf{2026-09-12 规范更新：}
+本文保留为历史 v2 说明。其中旧应用目录、App 新建路径、计算与 IO 分工及跨层依赖约定，
+已由同目录的 \texttt{QUANTUM\_Code\_Organization\_Standard.md}（A1）替代。
+旧字典白名单和工作流配置限制不再作为当前所有 App 的统一规则；
+现行输入与实际支持范围以 \texttt{QUANTUM\_Dictionary\_Reference.md}
+及算例使用指南为准。新 \texttt{materials.dict}/schema v2 尚未启用。
+下文旧路径和示例用于追溯，不应直接作为新增代码或配置的模板。\par\medskip
+
+\noindent\textbf{名称含义：}
+QUANTUM = \emph{Quadtree Unified Adaptive Numerics for mulTiphysics with eMbedded geometry}.\\
+本说明只覆盖“程序架构与配置规则”，用于提醒与对齐团队实现习惯（非算法文档）。
+
+\section*{1. 分层原则（从底到顶）}
+\begin{itemize}
+\item \textbf{Core}：网格/几何/场/插值/IO 等“基础核”，不包含特定物理流程。
+\item \textbf{Solvers}：FV、IIM/EB、线性求解器封装等可复用数值算子与求解器。
+\item \textbf{Modules}：基础物理能力（Electricity/Hydro/PIC 等）的“可独立运行模块”。每个模块只拥有一个模块字典文件。
+\item \textbf{Apps}：应用工作流（Electrospray、验证回归等）。负责模块串联、宏时间步、重启、耦合开关等。
+\item \textbf{Cases}：发布级算例输入目录；cases 只提供字典与初始文件，不包含脚本逻辑。
+\end{itemize}
+
+\section*{2. 目录规范（用户视角优先）}
+\begin{lstlisting}
+推荐目录（发布级）
+QUANTUM/
+  apps/
+    quantum_main.cpp
+    include/Runtime/...
+    src/Runtime/...
+      Apps/
+        ElectrosprayApp.*
+        PicVerificationApp.*
+        SingleModuleApp.*
+  include/
+    Core/..., Solvers/..., Modules/...
+  src/
+    Core/..., Solvers/..., Modules/...
+  cases/
+    <caseName>/
+      system/   (仅字典文件)
+      output/
+      cache/
+\end{lstlisting}
+规则：运行组织层（RunController/AppRegistry/ModuleRegistry 与 App 实现）统一放在 apps/ 下；算法与数据结构留在 include/src。
+
+\section*{3. system/ 字典文件规则（强约束）}
+每个 case 的 \texttt{cases/<case>/system/} 仅允许出现下列文件：
+\begin{lstlisting}
+允许文件（最小集合）
+  mesh.dict
+  geometry.dict
+  run.dict          # 统一控制文件：选择 app + App 工作流配置（已与 app.dict 合并）
+  electricity.dict  # 可选：当该 case 会用到 ElectricityModule
+  hydro.dict        # 可选：当该 case 会用到 HydrodynamicsModule
+  pic.dict          # 可选：当该 case 会用到 ExplicitPICModule
+\end{lstlisting}
+
+不再使用 \texttt{app.dict}；工作流配置写在同一个 \texttt{run.dict} 中，按“AppName 块”存放。\texttt{run.dict} 不出现 \texttt{module/modules}。
+
+\subsection*{run.dict 合并版示例}
+\begin{lstlisting}
+Run
+{
+  app SingleModule
+}
+
+SingleModule
+{
+  modules ( Hydrodynamics Electricity ExplicitPIC )
+}
+
+Electrospray
+{
+  macroDt     1e-7
+  finalTime   1e-4
+  restart     false
+  couplePIC   true
+}
+\end{lstlisting}
+
+\section*{4. 运行时如何选择 Case 与 App}
+\begin{itemize}
+\item \textbf{Case 选择（优先级）}：优先使用命令行 \texttt{--case <path>}；否则若当前目录存在 \texttt{./system/} 则视为 case 根；再否则回退到 \texttt{./cases/default}。
+\item \textbf{Case 选择（TTY 交互）}：若未使用 \texttt{--case} 且当前目录不是 case 根（无 \texttt{./system/}），并且 stdin 为 TTY，则在 \texttt{./cases/} 下列出可用 case 供选择（回车使用默认 case，例如 \texttt{default}）。非交互运行时不提示，直接回退默认 case。
+\item \textbf{App 选择（由 run.dict 决定）}：进入选定 case 后，读取 \texttt{system/run.dict} 的 \texttt{Run\{ app ... \}}，不再在控制台选择 app。\n\item \textbf{App 工作流}：仅由 App 解释其同名块（如 \texttt{Electrospray\{...\}}）；模块串联顺序等不由 run.dict 的通用字段决定。
+\end{itemize}
+
+\section*{5. 新增 App 的最小步骤}
+\begin{enumerate}
+\item 在 \texttt{apps/src/Runtime/Apps/} 新建 \texttt{<MyApp>App.cpp}，并在 \texttt{apps/include/Runtime/Apps/} 提供对应头文件。
+\item 实现接口：\texttt{name()} 与 \texttt{run(...)}（按当前 IApp 约定）。
+\item 在 AppRegistry 注册别名：建议支持 \texttt{MyApp} 与 \texttt{MyAppApp} 两种名字。
+\item 若需要工作流参数：在 case 的 run.dict 中加入同名块 \texttt{MyApp\{...\}}，并在 app 内解析该块。
+\item App 内部按需调用基础 Modules（Electricity/Hydro/PIC），基础模块仍应可独立运行。
+\end{enumerate}
+
+\section*{6. 新增 Module 的最小步骤}
+\begin{enumerate}
+\item 在 \texttt{include/Modules/<ModuleName>/} 与 \texttt{src/Modules/<ModuleName>/} 添加实现。
+\item 每个模块最多一个模块字典文件：\texttt{system/<module>.dict}（例：electricity.dict/hydro.dict/pic.dict）。
+\item 模块应支持被 \texttt{SingleModule} app 单独运行（便于调试与复用）。
+\item 模块不读 run.dict 的通用字段；模块只读自己的模块 dict。
+\end{enumerate}
+
+\section*{7. 发布卫生（Release Hygiene）}
+\begin{itemize}
+\item cases 目录不包含脚本逻辑；运行切换通过 \texttt{--case} 与 run.dict/TTY 输入完成。
+\item 目录/文件命名不出现 Task/Phase 等对话过程的临时名称。
+\item 输出建议统一写到 case 的 \texttt{output/} 子目录，避免污染仓库根。
+\item 新增功能优先以“新增 App/Module”方式扩展，而不是在 main 中硬编码流程。
+\end{itemize}
+
+\section*{附：常见问题速查表}
+\rowcolors{2}{gray!6}{white}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{0.30\textwidth}X}
+\toprule
+\rowcolor{black!85}\color{white}\textbf{问题} & \color{white}\textbf{规则/建议}\\
+\midrule
+在哪里选择运行哪个 App？ &
+在 case 的 \texttt{system/run.dict} 的 \texttt{Run\{ app ... \}}；运行时 TTY 可临时输入覆盖。\\
+在哪里配置模块串联顺序？ &
+写在 run.dict 的 \texttt{SingleModule\{ modules (...) \}}（或对应 AppName 块）中，由 App 解析。\\
+模块参数放哪里？ &
+放在模块自己的 dict：\texttt{electricity.dict/hydro.dict/pic.dict}。\\
+根目录调试默认用哪个 case？ &
+未给 \texttt{--case} 且当前无 \texttt{./system} 时回退到 \texttt{cases/default}。\\
+\bottomrule
+\end{tabularx}
+
+\end{document}

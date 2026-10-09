@@ -1,0 +1,15 @@
+Run { app SingleModule; }
+SingleModule { modules (Hydrodynamics); }
+Time { units code; dt 0.002; endTime 0.04; }
+Output
+{
+    prefix hydro;
+    Fields
+    {
+        enabled true; format tecplot; profile physical;
+        writeControl stepInterval; writeInterval 5;
+        writeInitial true; writeFirst false; writeFinal true;
+    }
+}
+Log { everySteps 5; level summary; }
+Restart { model none; }

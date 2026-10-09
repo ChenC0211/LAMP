@@ -1,0 +1,3 @@
+adaptiveMesh false
+BackgroundMesh { divide (16, 16); }
+QuadtreeMesh { maxCellNum 1024; maxInitialIterations 0; }

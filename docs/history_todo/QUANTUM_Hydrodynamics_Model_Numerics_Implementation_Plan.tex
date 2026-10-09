@@ -1,0 +1,768 @@
+% !TEX program = xelatex
+% Standalone Chinese design; XeLaTeX + latexmk. All diagrams are native TikZ.
+\documentclass[UTF8,a4paper,11pt,fontset=fandol]{ctexart}
+\usepackage[margin=23mm,headheight=16pt]{geometry}
+\usepackage{amsmath,amssymb,booktabs,longtable,array,tabularx,bm}
+\usepackage{xcolor,fancyhdr,enumitem,needspace,tikz,listings,etoolbox}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage[unicode,colorlinks=true,linkcolor=teal!65!black,urlcolor=teal!65!black]{hyperref}
+\usepackage{xurl}
+\definecolor{ink}{RGB}{28,49,68}\definecolor{accent}{RGB}{0,111,124}
+\definecolor{pale}{RGB}{236,245,246}\definecolor{muted}{RGB}{92,105,116}
+\ctexset{section={format=\Large\bfseries\color{ink}},subsection={format=\large\bfseries\color{ink}}}
+\setlength{\parskip}{4pt}\setlength{\emergencystretch}{4em}
+\setlist{nosep,leftmargin=2em,topsep=4pt}
+\renewcommand{\arraystretch}{1.2}\setlength{\tabcolsep}{4pt}
+\AtBeginEnvironment{longtable}{\small}
+\pretocmd{\section}{\Needspace{11\baselineskip}}{}{}
+\pretocmd{\subsection}{\Needspace{7\baselineskip}}{}{}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\code}[1]{\nolinkurl{#1}}
+\newcommand{\ev}[1]{{\small\color{muted}〔证据 #1〕}}
+\newcommand{\decision}[1]{\par\medskip\noindent\colorbox{pale}{\parbox{\dimexpr\linewidth-2\fboxsep}{\strut #1\strut}}\par\medskip}
+\newcommand{\dd}{\,\mathrm d}\newcommand{\uu}{\bm u}\newcommand{\nn}{\bm n}
+\newcommand{\dt}{\Delta t}\newcommand{\jump}[1]{[\![#1]\!]}
+\lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,columns=fullflexible,keepspaces=true,showstringspaces=false,frame=single,rulecolor=\color{accent!30},backgroundcolor=\color{pale},xleftmargin=3pt,xrightmargin=3pt}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small QUANTUM / 流体模块专项方案}\fancyhead[R]{\small 模型 · 数值方法 · 实现}
+\fancyfoot[C]{\small\thepage}
+\hypersetup{pdftitle={QUANTUM 流体模块：模型、数值方法与实施方案},pdfauthor={QUANTUM 项目代码审计},pdfsubject={基于模块化蓝图 v1.1 与现有 Hydro 求解器的专项方案}}
+\begin{document}
+\hypersetup{pageanchor=false}
+\begin{titlepage}
+\vspace*{12mm}
+{\Large\bfseries\color{accent}QUANTUM\par}\vspace{8mm}
+{\Huge\bfseries\color{ink}流体模块\par}\vspace{5mm}
+{\LARGE\bfseries 模型、数值方法与实施方案\par}\vspace{8mm}
+{\large 从不可压两相模型，到可独立验收的一步流动求解\par}\vspace{12mm}
+\noindent\begin{tabularx}{\textwidth}{@{}P{.20\textwidth}X@{}}
+\toprule
+设计依据 & \code{docs/QUANTUM_Modular_Model_Blueprint.pdf}，v1.1；衔接网格/几何底座与 Interface 专项方案，服从现行代码组织规范。\\
+盘点时点 & 2026-09-14 18:43:21，北京时间。扫描相关源码、测试和依据文件 189 份，其中 Hydro 源码/头文件 60 份；全部保存 SHA-256 与分析快照。\\
+工作范围 & 等温不可压 Newtonian 流动、XY/RZ、单相与两相物性、交错有限体积、CNAB2、压力—速度耦合、界面载荷、边界和网格转移。\\
+方案状态 & 专项设计 v1.0。区分当前实现、结构迁移目标、后续算法改进。文中的新服务和类型是建议接口，不是已发布 API。\\
+本次验证 & 源码与历史结果审读；依赖检查和目录检查通过。未改数值源码、算例输入、门限或历史结果，未新跑物理算例。\\
+交付 & 可独立编译的 LaTeX 与 PDF；公式、职责图、源码证据、分阶段工作包和验收矩阵。\\
+\bottomrule
+\end{tabularx}\vspace{9mm}
+\decision{\textbf{建议定型：Hydro 负责机械模型、动量离散、压力约束及速度/流率输出。}复用现有求解器，以一个 FlowService 收敛入口；先冻结原数值行为完成状态、边界和载荷契约，再单独推进质量—动量一致输运、时间精度及网格转移质量。}
+\vfill
+{\small\color{muted}阅读路径：第 1 节看结论；第 2--6 节从连续方程推到现有矩阵；第 7--9 节说明代码、接口和运行；第 10--11 节用于实施与验收。}
+\end{titlepage}
+\hypersetup{pageanchor=true}
+{\small\setlength{\parskip}{0pt}\tableofcontents}\clearpage
+
+\section{定型结论：保留一套求解器，形成完整流动服务}
+\subsection{流体模块必须独立解决的问题}
+给定固定时段内的流体域、材料、机械边界、已接受的速度/压力历史和外部载荷，Hydro 应返回下一步速度与物理压力，证明实际动量方程及每个控制体的连续性满足要求，并给出可供界面输运使用的速度和面流率。它不自行推进界面、电荷或电势，也不拥有第二个物理时钟。
+
+建议公共入口表达为
+\[
+ (\mathcal D,S_u^n,\mathcal H_u^n,\mathcal P^n,\mathcal F^n,\dt)
+ \longmapsto(\widehat S_u^{n+1},\widehat{\mathcal H}_u^{n+1},\mathcal Q^{n+1},R_u).
+\]
+$\mathcal D$ 为公共域，$\mathcal P$ 为材料视图，$\mathcal F$ 为带来源和时间层的载荷，$\mathcal H_u$ 为时间历史，$\mathcal Q$ 为真实面流率。帽号表示\textbf{候选}；Hydro 局部成功不等于整个电流体时间步已接受。
+
+\subsection{对当前代码的总体判断}
+已有基础相当明确：两个速度分量组成一个隐式黏性矩阵；使用原生面速度、单元压力和有限体积连续性；固定步长主线保留 CN 黏性与 AB2 对流；投影后用同一个动量矩阵作完整速度—压力残差修正。贴体 RZ 主线已支持固定原生 2:1 粗细叶网格，并有 SuperLU、局部连续性和出口可接受性检查。\ev{E02--E08}
+
+主要欠缺是\textbf{能力尚未由统一的状态和契约封装}：大模板头混合旧方程、历史、材料更新与缓存 IO；几何、相通量和界面守恒代码留在 Hydro 目录；App 组装几何/电力并直接改材料和已求解流场；不同入口的失败恢复、压力规范和边界适用范围不同。不能只改目录名或给旧对象加一层空壳服务。
+
+\begin{longtable}{@{}P{.19\textwidth}P{.37\textwidth}P{.38\textwidth}@{}}
+\toprule 工作层 & 本轮应定型 & 后续独立改进\\\midrule\endhead
+模型 & 不可压、等温、Newtonian；XY 与无周向速度 RZ；相侧、应力、载荷单位和边界含义 & 压缩性、温度、相变、湍流、三维和周向运动须另立模型任务。\\
+离散 & 原交错控制体、粗细面模板、CNAB2、投影与完整修正、已有门限 & 质量—动量一致通量、全耦合时间阶、对流精度、网格重映射误差。\\
+实现 & FlowState/History、FlowProblem、载荷准备、纯计算一步候选、统一报告 & 在矩阵身份可靠后评估性能，不能以静默换解法取得“提速”。\\
+运行 & 同一个域、主时钟和接受点；旧 App 逐条接入 & 动态 AMR 全耦合调度、通用重启及新边界逐项验收后发布。\\
+\bottomrule
+\end{longtable}
+
+\subsection{先明确现有三条入口的差别}
+\begin{longtable}{@{}P{.19\textwidth}P{.39\textwidth}P{.36\textwidth}@{}}
+\toprule 入口 & 当前能力 & 必须保留的限制\\\midrule\endhead
+完整域 checked \code{solve/solveRZ} & 固定 dt；完整均匀 XY/RZ 的压力增量与联合修正；均匀域静态 normalVelocity/pressureOutlet patch；封闭固定粗细域有原生投影路径 & 非均匀完整域不执行均匀联合修正；不同路径的 RZ/载荷限制须按入口判断。失败可能已改历史，不能直接重试。\\
+\code{solveFittedRZ} & 实际活动叶域；固壁无滑移、轴线、压力储库/一向出口；规则/边界/粗细行组合；候选在局部检查后写回 & 只支持 RZ；边界模板带同层；每个流体连通分量须压力锚定；没有任意速度入口或任意切单元边界。\\
+旧 geometry-aware \code{solve} & 旧 SharpInterface/ImmersedGeometry、非增量压力及原有蒸发/直接力通路 & 保留参考与调用者；不并入首批模块能力菜单；不把旧物理/AMR 结果等同于新 checked 主线验证。\\
+\bottomrule
+\end{longtable}
+目标是一个服务加明确的内部离散策略，不是长期维持三套完整 NS 实现。迁移时先用能力描述选择旧入口；随后逐行收敛公共装配。不要为了统一签名删除已有拒绝条件。\ev{E02,E03,E05,E09}
+
+\section{连续模型：守恒量、应力与机械边界}
+\subsection{状态、相侧和测度}
+以 $\varphi<0$ 表示负相、$\varphi>0$ 表示正相，$\nn=\nabla\varphi/|\nabla\varphi|$ 由负指向正，$\jump a=a^+-a^-$。喷嘴绑定负相为液体、正相为气体，但模块不写死材料编号。压力为物理机械压力，密度 $\rho>0$，动力黏度 $\mu\ge0$；储库物性还应满足其入口当前更严格的检查。
+
+首批模型取二维平面 XY 与无周向速度的轴对称 RZ。平面量按物理单位厚度 $b=1\,\mathrm m$ 解释，RZ 使用完整旋转测度：
+\begin{equation}
+ \dd V=w\dd A,\qquad\dd S=w\dd s,\qquad
+ w=\begin{cases}b,&\text{XY},\\2\pi r,&\text{RZ}.\end{cases}
+\end{equation}
+RZ 原生边面积、单元体积和速度半对偶体积均使用实际半径与几何；面流率已含旋转测度后，不能再乘 $2\pi r$。平面代码面积、SI 体积和无量纲量之间由同一单位上下文转换，不能靠字段长度推测单位。\ev{E01,E06,E11}
+
+\subsection{两相不可压质量与动量方程}
+无相变、相内密度为材料常数且界面随流体运动时，连续模型为
+\begin{align}
+ \nabla\cdot\uu&=0,\label{eq:incompressible}\\
+ \partial_t\rho+\nabla\cdot(\rho\uu)&=0,\label{eq:mass}\\
+ \partial_t(\rho\uu)+\nabla\cdot(\rho\uu\otimes\uu)
+ &=\nabla\cdot\bm T^H+\rho\bm g+\bm f_b+\bm f_\Gamma,\label{eq:momentum}\\
+ \bm T^H&=-p\bm I+2\mu\bm D(\uu),\qquad
+ \bm D=\tfrac12(\nabla\uu+\nabla\uu^T).
+\end{align}
+其中 $\bm f_b$ 为非重力体力密度，$\bm f_\Gamma$ 表示界面分布力。也可在两相内部求方程，再用界面牵引跳跃闭合；这是同一物理作用的另一表达，不应两次加入。
+
+若式\eqref{eq:mass}严格成立，动量左端可写为 $\rho(\partial_t\uu+\uu\cdot\nabla\uu)$。\textbf{该连续恒等式不能自动移到离散层。}对高密度比两相流，若密度由新界面直接重赋值、动量却用另一套面质量流量，均匀速度也可能产生离散缺陷。当前代码是否严格满足离散质量式，需要专门检验，不能由最终 $\nabla_h\cdot U\approx0$ 推出。
+
+本次建议把守恒模型写清楚，同时将旧冻结物性离散标为第一阶段保留实现。未来一致输运改进应在原装配内部完成，不能另建一套平行求解器。\ev{E01,E04,E13}
+
+\subsection{RZ 必须包含环向应力}
+无周向速度时求解 $(u_r,u_z)$，不假定子午面涡量为零。连续性为
+\[
+ \frac1r\partial_r(ru_r)+\partial_z u_z=0.
+\]
+黏性应力分量及散度写成
+\begin{align}
+ \tau_{rr}&=2\mu\partial_ru_r,&\tau_{zz}&=2\mu\partial_zu_z,\\
+ \tau_{rz}&=\mu(\partial_zu_r+\partial_ru_z),&
+ \tau_{\theta\theta}&=2\mu u_r/r,\\
+ (\nabla\cdot\bm\tau)_r&=\partial_r\tau_{rr}
+   +\partial_z\tau_{rz}+(\tau_{rr}-\tau_{\theta\theta})/r,\label{eq:rzstress}\\
+ (\nabla\cdot\bm\tau)_z&=r^{-1}\partial_r(r\tau_{rz})+\partial_z\tau_{zz}.
+\end{align}
+因此径向方程存在 $-2\mu u_r/r^2$ 的环向贡献。它不是把平面方程乘 $2\pi r$ 就能自动得到的项。当前 checked RZ 和贴体路径已补入相应离散；旧缺项结果只能保留为历史。\ev{E04,E05,E17}
+
+在真正轴线 $r=0$ 处施加 $u_r=0$、$\partial_r u_z=0$，按偶/奇延拓及解析极限构造。不得使用 $r+\epsilon$，也不得把整个“接近轴线的带”裁成零速度。轴线几何与普通固壁是两种不同约束。
+
+\subsection{界面跳跃与毛细、电牵引的符号}
+曲率取 $\kappa=\nabla_s\cdot\nn$，球滴外法向时 $\kappa=2/R>0$。无质量交换、无额外界面动量惯性时，机械和 Maxwell 应力满足
+\begin{equation}
+ \jump{\bm T^H+\bm T^E}\nn
+   =\gamma\kappa\nn-\nabla_s\gamma.
+ \label{eq:traction}
+\end{equation}
+等价的单场界面力为
+\[
+ \bm f_\Gamma=\left[-\gamma\kappa\nn+\nabla_s\gamma
+          +\jump{\bm T^E}\nn\right]\delta_\Gamma.
+\]
+静态无电场圆滴满足 $p^- -p^+=\gamma/R$，球滴为 $2\gamma/R$。压力跨界面允许跳跃；正则化带内的梯度随网格加密增大，不等于发生非物理压力振荡。
+
+首批 $\gamma$ 按当前常表面张力路径处理；式中的 Marangoni 项说明一般模型边界，不代表已发布变表面张力算法。Electricity 提供物理 Maxwell 牵引，Hydro 将其与毛细力映射到同一机械离散位置。将来若启用体电荷力 $\rho_e\bm E$，须按物理分域排除与界面项的重复贡献。\ev{E01,E12,E18}
+
+\subsection{机械边界应从模型落实到当前模板}
+固壁可有 $\uu=\uu_w$；轴线施加正则条件；压力环境一般可表示为指定法向/切向牵引。但\textbf{不能据一般方程开放当前尚无实现的边界组合}。
+
+\begin{longtable}{@{}P{.20\textwidth}P{.39\textwidth}P{.35\textwidth}@{}}
+\toprule 条件 & 当前具体实现 & 模块契约应写明\\\midrule\endhead
+贴体 noSlipWall & 固壁法向速度消元为零，切向速度在真实壁距上施加无滑移；固定唇缘点速度为零 & 首批静止壁；不表示任意运动壁或接触角模型已支持。\\
+RZ symmetry & 真实轴线 $u_r=0$，轴向偶对称 & 轴线必须来自域几何；不是任意边界编号对应的“壁”。\\
+完整均匀域 normalVelocity & 指定向外法向速度，负值供液；切向零剪切 & 当前 App 对 patch 只开放常物性；未指定切向无滑移。\\
+完整均匀域 pressureOutlet & 外部全压力牵引，法向速度由半控制体方程求得 & 当前无外部回流态，真实回流拒绝；保留非零绝对压力。\\
+贴体 pressureReservoir & 给定压力、零剪切延拓和原压力口动量行；入流采用明确材料与内部动量延拓 & 保留 \code{interiorContinuationZeroShear}；不是任意用户牵引函数库。\\
+贴体 PressureOutlet & 同类压力口离散，但缺少储库回流材料 & 一向可接受性必须检查；当前网格转移接口不支持这一类。\\
+\bottomrule
+\end{longtable}
+未配置的完整域边段沿用零法向/自由滑移语义；不得与贴体 no-slip 混用。接触线位置由 Interface 约束，壁面机械速度由 Hydro 约束，两者在同一几何点相容。供压 45.2 Pa、环境 0 Pa 等均为 case 参数。\ev{E09,E13,E17}
+
+\section{空间离散：从控制体到原生矩阵}
+\subsection{压力、速度与两个控制体族}
+每个活动叶单元拥有一个压力自由度，径向/水平 $x$ 速度在垂直边、轴向/竖直 $y$ 速度在水平边。压力单元的体积记 $V_K$，自由速度行的对偶体积记 $V_f^u$，面面积记 $A_f$。贴体固定壁法向速度与固体无效面不进入自由速度向量。
+
+压力与速度的索引映射由当前 \code{HydroFittedDomain} 保存。原生行次序为全体 VEdge 行接 HEdge 行，压缩后的自由行是另一套映射；调用者不能把二者混用，也不能用向量长度相同推断几何身份一致。\ev{E06}
+
+\begin{center}
+\begin{tikzpicture}[>=Latex,font=\small,scale=.88]
+ \draw[thick,ink] (0,0) rectangle (4,3);
+ \draw[accent,dashed] (2,-.7) rectangle (6,3.7);
+ \fill[ink] (2,1.5) circle(2.5pt) node[above left]{$p_K$};
+ \fill[ink] (6,1.5) circle(2.5pt) node[above right]{$p_L$};
+ \draw[->,very thick,accent] (4,1.5)--(5,1.5) node[above]{$U_f$};
+ \node at (1,.4) {$V_K$};\node[accent] at (4.7,3.35) {$V_f^u$};
+ \node[anchor=west] at (7,2.4) {实线：压力控制体};
+ \node[anchor=west,accent] at (7,1.5) {虚线：速度对偶体};
+ \node[anchor=west] at (7,.6) {RZ 度量保留 $2\pi r$};
+\end{tikzpicture}
+\end{center}
+图只表示内部规则面。压力开口是半对偶体，粗细面使用真实子面和原生插值模板，不能按此示意复制统一面积或间距。
+
+\subsection{积分散度 D 与物理流量}
+对全体自由面速度 $U$，以统一正法向定义 $Q_f=A_fU_f$。当前离散的 $U_f$ 在通量重构中应理解为与原生积分相容的面平均值，而非必须等于几何中点的点值。
+\begin{equation}
+ (DU)_K=\sum_{f\subset\partial K}s_{Kf}Q_f,
+ \qquad (\nabla_h\cdot U)_K=(DU)_K/V_K.
+ \label{eq:divergence}
+\end{equation}
+贴体固定壁和轴线法向通量为零，故当前约束 $DU=0$。若未来加入已知非零边界通量，应将消元贡献记入明确的连续性右端 $d_{\rm BC}$，而不是修改一处诊断却忘记投影/联合系统。
+
+同一内部粗细子面必须在相邻控制体中使用同一个 $Q_f$、相反符号。面流率的公共输出应复用装配所用实际度量；用于部分相区间的积分应来自同一面多项式。不能分别在左右单元重构两个“看起来相同”的面值。\ev{E06,E11}
+
+\subsection{压力梯度载荷 C}
+在规则内部面上，压缩速度行的压力梯度积分为
+\[
+ (Cp)_f=A_f(p_{+}-p_{-})=V_f^u(G_hp)_f.
+\]
+当前贴体同层域满足 $C=-D^T$；在原生粗细面，$C$ 复用旧虚子单元压力插值与真实法向梯度，\textbf{一般不能替换成 $-D^T$}。梯度的物理单位为 Pa/m，乘速度对偶体积后为 N。
+
+粗细压力模板来自 \code{HydroNativePressureStencil} 及公共 \code{QuadtreeFaceGradient}；它与电学共用底层几何插值，但压力边界、密度权重和 NS 装配仍属 Hydro。公共 Core 域不能因此拥有压力出口或动量矩阵。\ev{E06,E07}
+
+现版本还对内部 $C$ 行作受限常量模态闭合：保持原列集合和算术顺序，把末项设为前缀和的相反数，改变量限制在原系数绝对和的 $64\epsilon_{\rm mach}$ 内，使实际求值的 $C\bm1$ 精确为零。它修复了恒定相指标在粗细行上生成伪载荷的问题；不表示任意放大常量都能获得逐位零结果，也不修改压力口的物理牵引。迁移须保留该精确浮点边界。\ev{E06,E19}
+
+\subsection{动量对流：实际为原生 donor 通量}
+对速度对偶体某一侧 $e$，定义法向质量流率 $\dot m_e=\rho_e\,U_{n,e}A_e$；输运动量为
+\begin{equation}
+ N_f(U;\rho)=\sum_{e\subset\partial V_f^u}s_e\dot m_e\,U_{\rm donor,e}.
+ \label{eq:advection}
+\end{equation}
+\code{HydroNativeRZRow_impl.h} 明确按流率正负选上游值。对流贡献在当前和上一速度层各计算一次，再作 AB2 组合；两次使用本次传入的物性。横向速度由原交错模板取样，粗细面则使用旧虚单元速度系数。\ev{E04,E05}
+
+此处应诚实写作\textbf{迎风 donor 对流与 AB2 时间组合}。Hermite 界面和高阶速度几何重构不会把该动量通量自动升级成 MUSCL、BCG 或高阶 Godunov。若后续提高对流精度，应在同一个通量接口内引入受限重构，保持物理边界、质量流率和保正/稳定要求一致。
+
+\subsection{黏性：两个分量必须一起装配}
+平面完整应力为
+\begin{align*}
+ (L_\mu\uu)_x&=\partial_x(2\mu\partial_xu)
+    +\partial_y[\mu(\partial_yu+\partial_xv)],\\
+ (L_\mu\uu)_y&=\partial_x[\mu(\partial_yu+\partial_xv)]
+    +\partial_y(2\mu\partial_yv).
+\end{align*}
+隐式处理交叉剪切会产生 $A_{uv}$ 和 $A_{vu}$。当前速度预测是一个向量块系统，不是各分量独立求解后才用压力“耦合”。即便常黏度，预测速度也未必无散，不能不经论证将完整应力替换为两个标量 Laplacian。\ev{E04,E18}
+
+RZ 径向完整对偶体的环向 CN 贡献为
+\[
+ A_{ff}\mathrel{+}=\mu_fV_f^u/r_f^2,\qquad
+ b_f\mathrel{-}=\mu_fV_f^uU_f^n/r_f^2.
+\]
+因 CN 两个半权重，合起来对应式\eqref{eq:rzstress}的 $-2\mu u_r/r^2$。压力口径向半对偶体则按边界/内侧线性 $u_r(r)$ 对 $\int u_r/r\dd r$ 积分，并用 \code{log1p} 保持精度；不能直接套上述完整对偶体点值公式。
+
+\subsection{物性闭合目前有两种，迁移不能偷偷合并}
+完整域两材料路径将水平集转成平滑相指标，在顶点线性混合密度、黏度，再转换到单元。喷嘴贴体路径则按当前单元相别赋液/气材料，在顶点对\textbf{活动邻单元}作算术平均；固体值不参与平均。面密度/黏度再由对应规则、边界或粗细模板取用。\ev{E02,E13}
+
+\decision{物性闭合必须带命名策略、来源几何和单位身份。结构迁移先保持上述两条原规则；不能借“统一物性接口”把二值相别改成体积分数、把算术平均改成调和平均，或顺手改平滑厚度。}
+后续面密度与黏度策略的改变，要用密度跳跃、剪切层、压力口和静滴独立对照来判断；正确性不能仅从平均方式名称推导。
+
+\section{时间推进与压力—速度耦合：逐步还原当前算法}
+\subsection{固定 dt 的 CNAB2 冻结问题}
+先固定本步物性、几何、外力和边界。用 $M=\operatorname{diag}(\rho_fV_f^u)$ 表示速度质量矩阵，$L_\mu$ 表示含交叉剪切、RZ 环向项及相应边界模板的积分黏性算子。省略已消元的固定零速度后，定义
+\begin{align}
+ A&=M/\dt-\tfrac12L_\mu,\label{eq:A}\\
+ b_0&=M U^n/\dt-\tfrac32N(U^n;\rho^n)
+       +\tfrac12N(U^{n-1};\rho^n)
+       +\tfrac12L_\mu U^n+F^n+b_{\rm BC}.\label{eq:b}
+\end{align}
+$F^n$ 是已经映射到速度对偶体的积分载荷，$b_{\rm BC}$ 包含压力口已知牵引等贡献。上述表达用于解释当前固定系数主线；边界行具体系数仍以原模板为准。源代码中的传入面力为力密度，进入 RHS 时乘 $V_f^u$，不可再乘一次 $\dt$。\ev{E03--E05}
+
+当前冻结目标为
+\begin{equation}
+ AU^{n+1}+Cp^{n+1}=b_0,\qquad DU^{n+1}=0.
+ \label{eq:target}
+\end{equation}
+这里 $\rho^n$ 在上一速度层的对流项中仍是同一份本步物性；$M U^n$ 与未知项使用同一质量矩阵。式\eqref{eq:target}是当前实际要闭合的离散方程，不能直接宣称等价于含独立 $M^{n+1},M^n$ 的守恒动量时间差分。
+
+\subsection{第 1 步：含历史压力的速度预测}
+记 $b=b_0-Cp^n$，先求解
+\begin{equation}
+ A U^*=b.
+ \label{eq:predictor}
+\end{equation}
+该步通过一次 SuperLU 求解两个速度分量的耦合矩阵。$U^*$ 是动量预测速度，通常不满足连续性。现有 \code{uxMid/uyMid} 保存的就是此量；\textbf{Mid 这个名字不表示它是 $t^{n+1/2}$ 的已验证速度}。
+
+\subsection{第 2 步：压力增量投影}
+采用原质量度量
+\begin{equation}
+ W=\dt M^{-1},\qquad P=-DWC.
+\end{equation}
+求解压力增量 $\pi$ 并修正速度：
+\begin{align}
+ P\pi&=-DU^*,\label{eq:poisson}\\
+ \overline U&=U^*-WC\pi.\label{eq:project}
+\end{align}
+代入可得 $D\overline U=0$，但只在该离散线性系统、边界处理和数值求解均相容时成立。规则贴体域 $C=-D^T$，故 $P=DWD^T$；原生粗细域使用实际 $C$，$P$ 不能预设对称正定。当前代码使用 SuperLU，不应在模块化时改用要求 SPD 的算法。\ev{E07,E08}
+
+压力口作为自由法向速度行参与投影，保留所有活动单元连续性。封闭域压力规范和带压力储库的绝对压力不是同一处理：当前完整封闭路径固定一个基准并相应处理约束；贴体域要求每个连通分量有正面积压力口锚定，尚无其通用全 Neumann 规范实现。\ev{E02,E06,E09}
+
+\subsection{为什么一次投影还不够}
+由 $AW=I-\tfrac12L_\mu W$，普通投影后的完整动量缺陷为
+\begin{align}
+ A\overline U+C\pi-b
+ &=(-AWC+C)\pi\\
+ &=\tfrac12L_\mu WC\pi.\label{eq:splitting}
+\end{align}
+所以投影可以使连续性很小，却仍不完全满足式\eqref{eq:target}的 CN 黏性动量方程。该缺陷是离散算子组合，不是要求 App 显式计算压力三阶导数。它也解释了为什么“压力 Poisson 残差很小”不是完整机械平衡的充分证据。
+
+当前采用完整残差修正消除这一冻结系统的分裂缺陷。若同一个 $A,C,D,b_0$ 和边界/规范确定了唯一解，最终充分收敛后，结果由式\eqref{eq:target}决定，而不是由预测步是否使用历史压力决定。比较不同时间格式时必须说明是否保留这一步，否则容易把方程改变误归为“增量/非增量”的区别。\ev{E07,E18}
+
+\subsection{第 3 步：完整联合修正与条件细化}
+构造并求解
+\begin{equation}
+ \begin{bmatrix}A&C\\-D&0\end{bmatrix}
+ \begin{bmatrix}\delta U\\\delta\pi\end{bmatrix}
+ =\begin{bmatrix}b-A\overline U-C\pi\\D\overline U\end{bmatrix}.
+ \label{eq:coupled}
+\end{equation}
+更新 $U\leftarrow\overline U+\delta U$、$\pi\leftarrow\pi+\delta\pi$，最终 $p^{n+1}=p^n+\pi$。无论压力是物理压力还是增量，都必须在类型、存储和输出上区分。
+
+贴体路径先作一次联合求解；只有原局部连续性门不通过，才对\textbf{同一个冻结系统}再作至多三次残差细化。因此一个 NS 调用包含 1 次动量预测、1 次压力投影和 1--4 次联合求解，即总共 3--6 次线性求解调用。物性、对流历史、界面、电荷及物理时间在这段细化内不更新；这不是 Picard/Newton 耦合迭代，也不是额外时间子步。\ev{E03,E18}
+
+完整均匀域的 \code{correctCoupledBalance} 只作一次完整修正，并对不满足完整均匀拓扑的路径提前返回。不能把这一保护误读成贴体原生粗细网格没有联合修正。
+
+\subsection{第 4 步：接受条件必须针对实际离散量}
+线性方程的代数残差为
+\[
+ R_{\rm lin}=\begin{cases}
+ \|Kx-r\|_2/\|r\|_2,&\|r\|_2>0,\\
+ \|Kx\|_2,&\|r\|_2=0.
+ \end{cases}
+\]
+当前 SuperLU 接口检查装配值有限、分解/求解状态和真实矩阵残差；零 RHS 分支不擅自添加任意相对尺度。
+
+贴体完整动量验收使用
+\begin{align}
+ e_m&=AU+C\pi-b,\\
+ R_m&=\frac{\|e_m\|_2}{\max(\|b\|_2,\|AU\|_2+\|C\pi\|_2)},
+ \label{eq:mres}
+\end{align}
+分母为零时按原实现使用绝对范数，并额外报告 $\max_f|e_{m,f}/V_f^u|$。物理方程等价于 $AU+Cp^{n+1}=b_0$，但相对残差的尺度选择必须原样保留，不能随意改成另一种分母后仍称同一门限。
+
+局部连续性门为
+\begin{equation}
+ |(DU)_K|\le\epsilon_c\left(|D|[\|U\|_\infty\bm1]\right)_K,
+ \quad\text{对每个活动单元成立}.\label{eq:localgate}
+\end{equation}
+右侧没有绝对速度下限，也不使用预测速度替代最终速度定标；零尺度下只接受零通量缺陷。全局净流量为零不代表每个单元满足式\eqref{eq:localgate}。当前贴体还检查最终压力口流向、有限诊断和域身份，通过后才在 Hydro 对象内发布。\ev{E03,E08}
+
+\subsection{启动、历史和稳定步长}
+固定 dt 首次成功后锁定；后续变化超过原相对容差即拒绝。压力增量/非增量模式也锁定，不允许在同一个历史对象上切换。当前静止初态由零场给出；已存在的完整均匀域 \code{initializeCompatibleVelocity} 对初速度作零物理时间的质量加权最小改动投影，并将 current/previous/predictor 三份速度置为同一个 $U^0$，不把乘子写进物理压力。
+
+此时起步的 AB2 对流退化为单层权重，但黏性仍按原 CN 处理；不能称为单独实现了后退 Euler 起步。贴体首批生产初态为静止，任意非零贴体初态的相容初始化需要明确适配和验收，不能仅复用函数名假定已支持。\ev{E02,E10}
+
+CN 隐式黏性不使显式对流、界面力或跨模块耦合无条件稳定。FlowService 可报告建议尺度，例如
+\[
+ \dt_{\rm adv}\sim C_a\min_f h_f/|U_f|,\qquad
+ \dt_\sigma\sim C_\sigma\sqrt{\rho_{\rm ref}h^3/\gamma},
+\]
+但这些是待标定的稳定性诊断，不是当前已经实现的严格上界。实际系数、界面带宽、密度比及 RZ/粗细网格要经受控试验确定。首批服务发现不满足配置能力时明确失败；不能静默缩小 dt，破坏已锁定的 CNAB2 历史或电荷/体积账本。
+
+\section{边界、界面载荷与速度输出的统一契约}
+\subsection{压力口必须保留半控制体和入流闭合}
+压力口法向速度由方程求解，质量项是实际半对偶体 $\rho_fV_f^u/\dt$；外部压力贡献采用原向外符号进入 RHS。内侧黏性、横向剪切和压力口动量通量同时装配，不能用“边界压力赋给相邻单元”代替这一整套离散。
+
+储库入流时，质量通量仍使用求解所得边界速度；动量 donor 使用首个实际内侧法向速度，切向采用现有零剪切延拓。入流密度来自明确储库材料。当前 \code{incomingViscosity} 是被验证的储库数据，但在已经给定全法向牵引的该边界行上不再额外叠加外侧黏性应力；接口说明必须与真实消费者一致。\ev{E05,E09}
+
+一向出口分别检查历史及最终速度；微小负值容差来自原线性残差尺度和舍入误差，不是允许真实回流的模型。不能把负速度裁成零后再通过连续性。压力储库允许回流仍不表示自由界面可以随意穿越压力口：现有喷嘴要求口附近为明确纯相，且力带/几何保护区不触及口，这一约束须继续由预检查和运行检查保持。\ev{E03,E12,E13}
+
+\subsection{相容载荷：毛细和压力使用同一 C}
+记 $H$ 为与选定标量表示同源的正相指标。常表面张力下，当前相容法向载荷在支持的内部自由面上可概括为
+\begin{equation}
+ F_{\sigma,f}=-\gamma\kappa_f(CH)_f.
+ \label{eq:balanced}
+\end{equation}
+这是\textbf{积分载荷}；现有面力密度对应 $F_{\sigma,f}/V_f^u$。若 $\kappa$ 为常量、几何/压力口相容且 $C$ 保持常量，取 $p=p_0-\gamma\kappa H$ 可在内部形成 $Cp=F_\sigma$，从而检验静态平衡。这一代数夹具不能替代真实数值曲率的静滴验收。
+
+压力口行不能无条件套 $C H$：当前要求受力带远离口，使用纯相/闭合检查并保留已给外压，不能在口引入任意毛细压力。RZ 曲率为子午曲率加 $n_r/r$，真实偶标量极点按解析极限计算；零点投影、接触端点和粗细面求值保持原算法。\ev{E12,E19}
+
+当前载荷几何包含法向/横向梯度及面支撑，Maxwell 法向和切向牵引使用同一来源几何。重构目标是：Core 给同源几何值，Electricity 给公共界面牵引，Hydro 给动量行和对偶体积分。不能让 Electricity 按 Hydro 行号填数组，也不能把“力的空间离散”完全移到不懂动量控制体的 Core。
+
+\subsection{载荷类型、单位与来源}
+\begin{longtable}{@{}P{.24\textwidth}P{.16\textwidth}P{.54\textwidth}@{}}
+\toprule 建议量类型 & SI 单位 & 语义与拥有者\\\midrule\endhead
+\code{BodyForceDensity} & N/m$^3$ & 模型提供体源，Hydro 用实际对偶体及原插值积分。重力由 $\rho\bm g$ 形成。\\
+\code{SurfaceTraction} & Pa & Electricity 等模型在公共界面采样位置给出；包含相侧和几何/电场时间来源。\\
+\code{SurfaceTension} & N/m & Materials 提供参数；Hydro 结合几何和压力算子生成毛细载荷。\\
+\code{MomentumLoad} & N & 仅 Hydro 构造/消费，带 DofMapId、StateStamp、分量和 SourceId；可同时保留总力及各贡献。\\
+\code{CellPressure} & Pa & 物理压力，带规范或绝对压力边界身份；不能装投影乘子。\\
+\code{FaceVolumeRate} & m$^3$/s & 真实原生面有向流率，包含测度；不能再乘面积。\\
+\code{PhaseVolumeTransfer} & m$^3$ & Interface 对时间和负相区间积分的输运量；不能再乘 dt。\\
+\bottomrule
+\end{longtable}
+以上是目标契约。原无量纲内核可以保留，但由单一 UnitsContext 派生 $L_0,T_0,\rho_0$，有 $U_0=L_0/T_0$、$p_0=\rho_0U_0^2$、$\mu_0=\rho_0U_0L_0$、$f_0=p_0/L_0$、$F_0=p_0L_0^2$；跨模块代码量必须具有相同 NormalizationId。不能在 App 和 Hydro 各算一遍不受约束的参考尺度。\ev{E01,E13}
+
+\subsection{速度重构必须同时交付点值与守恒面原函数}
+界面运动需要任意位置速度；有限体积需要面积积分流率。这两者由现有 \code{HydroFittedVelocitySampler} 的 RZFluxCompatible 路径结合，而非用独立双线性插值代替。
+
+当前重构保留实际原生边的端点、中点和局部子四边形，使用带 RZ 度量的映射和流函数修正，保持每条面的积分通量；共享顶点/壁面/轴线迹由 Hydro 的机械边界决定。粗细面仍是实际子面，不虚构一张均匀细网格。\ev{E11}
+
+输出应包含：原生面 $Q_f$；只读速度采样；同一面原函数在区间上的积分；必要的解析散度与边界迹诊断。部分相流率要在 Interface 提供的真实相区间上积分，保持端点锚和方向，不把极薄相区间先舍入成两个相等坐标。
+
+该重构保留原 FV 残差，不强行把所有点上的散度改为零；也不使水平集点输运自动守恒。当前若一个单元内存在两条互相垂直的无滑移壁，RZFluxCompatible 路径会拒绝；压力角点缺少所需单侧模板也会失败。服务能力描述应显式记录这些限制。
+
+\subsection{跨模块时间层必须可核对}
+现有喷嘴循环用第 $n$ 步已接受材料/载荷求 $U^{n+1},p^{n+1}$，再推进界面与电荷，求新电场并生成供下一次 NS 使用的 $F^{n+1}$。因此同编号输出的压力与受力文件未必属于实际同一次动量方程。\ev{E14,E18}
+
+\begin{center}
+\begin{tikzpicture}[node distance=6mm,>=Latex,font=\small,
+ box/.style={draw=accent,rounded corners,fill=pale,text width=12.8cm,align=center,minimum height=10mm}]
+ \node[box](a){已接受 $S^n$：$U^n,U^{n-1},p^n,\Gamma^n$, 材料 $\mathcal P^n$, 载荷 $F^n$};
+ \node[box,below=of a](b){Hydro：冻结材料/载荷，求候选 $U^{n+1},p^{n+1}$；提供新旧速度与总面流率};
+ \node[box,below=of b](c){Interface：输运与体积修正，形成 $\Gamma^{n+1}$ 及相输运台账};
+ \node[box,below=of c](d){Materials / Electricity：新几何物性、电荷/电场；Hydro 准备下一步 $F^{n+1}$};
+ \node[box,below=of d](e){Runtime：核对全部候选、来源与收支，一次提交 $S^{n+1}$，再写接受态输出};
+ \draw[->,thick](a)--(b);\draw[->,thick](b)--(c);\draw[->,thick](c)--(d);\draw[->,thick](d)--(e);
+\end{tikzpicture}
+\end{center}
+图表示目标事务化封装对原先后顺序的保留。当前 App 在后续模块前已把 Hydro 局部结果写进对象，运行失败时采用停止而不重试；还没有图中完整的跨模块原子提交。不要用结构性候选封装悄悄把 $F^n$ 改成半步或预测外推力，那属于另一项时间算法变更。
+
+\section{换网格：已有能力、历史语义和剩余工作}
+\subsection{最新代码已经有流场候选重绑定}
+\code{HydroFittedMeshTransfer} 已在本次盘点时点存在。它从已接受贴体 CNAB2 状态拷贝压力、材料、两层面速度和预测速度；每一级调用原 QuadtreeMesh.adapt 前，将这些 staging 字段共同注册，最终在目标域上准备新的 Hydro 对象。只在最终调用 \code{updateWithMesh} 不能等价替代逐级字段转移。\ev{E15,E20}
+
+支持范围是\textbf{固定物理 RZ 流体域}的网格改变，实际边界面、法向半对偶体及边界数据保持不变，保留同层边界模板带；允许有明确回流物性的压力储库。它拒绝一向 PressureOutlet、改变物理边界、改变供压、无效材料、错误索引和非有限历史。它不调度时间，也不放宽原求解器的固定网格/步长绑定检查。
+
+\subsection{两层速度分别恢复连续性，压力不吸收乘子}
+原场插值后，对当前层 $\widetilde U^n$ 和历史层 $\widetilde U^{n-1}$ 分别求
+\begin{align}
+ K_m&=-D_{\rm new}M_{\rm new}^{-1}C_{\rm new},\\
+ K_m\lambda^j&=-D_{\rm new}\widetilde U^j,
+ &U^j_{\rm new}&=\widetilde U^j-M_{\rm new}^{-1}C_{\rm new}\lambda^j,
+ \quad j=n,n-1.\label{eq:remesh}
+\end{align}
+这里代数时间尺度为 1，物理时间没有推进；两个层使用同一重建后的原生面物性。乘子丢弃，物理压力只采用原单元场插值；不能把它当成一次压力增量更新。已满足原局部连续性门的层不再投影；未满足时复用原算子进行至多四次求解，最终仍按原无绝对下限的门接受。
+
+预测速度仅转移并保持壁/轴零速度，不投影，不当作 $U^{n-2}$。固定 dt 和压力模式保留，旧三套数值矩阵缓存、旧投影势及外力不带入新绑定，必须在目标域重建。候选失败不改源状态，源网格须在准备期存活且不可变。\ev{E15}
+
+\subsection{目前证明了什么，尚未证明什么}
+2026-09-14 动态 AMR 记录的第 7 节包含真实 NS 接续夹具：先接受两步，再做同网格重绑、粗化、重新加密，每次后继续 NS。常物性粗化的两层散度从约 $4.83\times10^{-9},3.23\times10^{-9}$ 降为 $5.52\times10^{-20},2.51\times10^{-20}$；加密后也恢复到约 $10^{-20}$。变物性夹具两层修正后不超过 $8.44\times10^{-20}$。这些是\textbf{代码单位夹具结果}，不是原喷嘴 SI 结果。\ev{E20}
+
+原最小二乘插值\textbf{不是严格守恒动量重映射}。记录同时保留压力体积积分和两层密度加权对偶动量的变化；例如常物性粗化压力积分变化约 $3.50\times10^{-6}$，轴向离散动量变化约 $+6.92\times10^{-7}$，未截零。压力积分不是守恒律，但可暴露转移改变；连续性恢复也不等于动量或能量守恒。
+
+\subsection{模块化方案中的网格事件事务}
+目标 Runtime 在固定物理时刻创建新网格候选，同时准备 Interface、Electricity 和 Hydro 的转移。材料须按新界面重新闭合，再准备式\eqref{eq:remesh}；在新几何上重求同一时刻的电势/牵引和载荷，不额外推进电荷；重建相体积、相流量与边界流量，保留累计收支。
+
+所有模块共同验收后才替换网格与状态、提升 MeshVersion，并使旧借用视图失效。失败应释放新候选并继续保留旧接受态；不能仅替换 Hydro 网格，让界面或电荷留在旧索引上。
+
+截至盘点，相关文档明确仍待 App 联合准备/接受接线，\code{ElectrosprayTimeLoop.cpp} 未接运行时动态 AMR 调度。当前正式 case 的 \code{adaptiveMesh true} 用于初始固定局部加密，不能宣称已能逐步动态适应。此项应作为接线任务；严格守恒重映射则作为另一个数值任务。\ev{E14,E20}
+
+\section{当前代码盘点：每类代码应放到哪里}
+\subsection{规模与核心风险}
+本次相关清单 189 份，含 Hydro 源码/头文件 60 份。单独的 \code{Hydrodynamics_impl.h} 为 6742 行，RZ 实现头为 3750 行；\code{HydrodynamicsModule.cpp} 为 1078 行。贴体一步驱动已缩为 357 行，动量装配 671 行，换网格转移 332 行。行数仅用于定位职责聚集程度，不能据此判断数值代码质量。\ev{E02,E03,E05,E15,E16}
+
+当前 \code{Hydrodynamics} 同时暴露 $p,\rho,\mu$、顶点物性、三组速度、体力、直接力/蒸发速度、散度及梯度诊断，还持有时间模式、固定步长、域身份和数值分解缓存。直接写公共字段很方便，也使外部代码能构造“新几何、旧材料、不同时间速度”的无效组合。迁移首先应封闭这种无校验写入，而不是一开始重写长模板。
+
+\subsection{保留在 Hydro 的计算内核}
+以下名称为当前文件；目标名称是建议的责任划分，不要求第一批一次性全部改名。
+\begin{longtable}{@{}P{.30\textwidth}P{.32\textwidth}P{.32\textwidth}@{}}
+\toprule 当前代码 & 保留的数值含义 & 建议归属/改造\\\midrule\endhead
+\code{Hydrodynamics_impl.h}、\code{HydrodynamicsRZ_impl.h} & 原规则/粗细动量、压力、边界和历史计算 & 分阶段提取到 Hydro 内部装配器；先套受控上下文，避免改算术次序。\\
+\code{HydroNativeRZRow_impl.h} & 已拆出的径向/轴向共享行，含交叉应力和原对流 & 保留唯一权威规则行；完整域和贴体继续复用。\\
+\code{HydroFittedMomentum.cpp} & 规则、边界、原生粗细行以及环向项 & 形成 MomentumAssembler；保留旧 nativeInterior 适配，逐项收敛而不复制全求解器。\\
+\code{HydroFittedProjection.cpp} & $P=-DWC$、投影与联合残差块装配 & Hydro 的 PressureVelocityCoupling；通用线性求解放 Solvers，方程含义不下沉。\\
+\code{HydroBoundary_impl.h}、\code{HydroBoundaryVelocity.cpp} & 机械边界行、零剪切/墙面/轴线速度迹 & Hydro 的 MechanicalBoundary；共享几何查询可以下沉，物理策略保留。\\
+\code{HydroFittedVelocity.cpp}、Adaptive/VertexVelocity、FaceFlux & 速度的物理重构与原生流率相容输出 & Hydro VelocityReconstruction；面多项式若完全物理无关可进一步提取通用数学核。\\
+\code{HydroBalancedForce.h}、\code{HydroFittedCapillary.cpp} & 毛细/牵引到压力梯度兼容面力的映射 & Hydro LoadAssembler；消费公共几何及牵引，负责 N 与 N/m$^3$ 转换。\\
+\code{HydroFittedMeshTransfer.cpp} & 两层历史投影、压力/预测量语义、绑定重建 & Hydro FlowMeshTransfer；调度归 Runtime，基础字段转移归 Core。\\
+\bottomrule
+\end{longtable}
+
+\subsection{从 Hydro 迁出的职责}
+\begin{longtable}{@{}P{.30\textwidth}P{.30\textwidth}P{.34\textwidth}@{}}
+\toprule 当前职责 & 最终拥有者 & 切分原则\\\midrule\endhead
+\code{HydroFittedDomain} 内活动掩膜、实际面、体积、网格身份 & Core DomainView/MeshService & 只提取事实与映射；压力口、自由速度集合、$C/D$ 装配等留 Hydro。先用 adapter 过渡。\\
+\code{HydroFittedInterfaceGeometry}、PhaseMeasure 的纯几何部分 & Core Geometry & 给定标量后的相区间、体积、曲线与积分同源；不包含一步时间更新。\\
+PhaseMeasure 的相流率/时段台账 & Interface & 负相区间与新旧速度的时间配对、局部体积守恒由 Interface 负责；Hydro 输出总面流率和区间原函数。\\
+\code{HydroFittedVolumeCorrection} 与 Step & Interface & 保留原残差、雅可比、约束、回退与收敛门；不得留成 Hydro 私有液面修正。\\
+\code{HydroInterfaceBoundary} 中界面接触/几何约束 & Interface；纯边界几何归 Core & 与 Hydro 的壁面速度、轴线迹使用同一个公共边界身份。\\
+\code{HydroFittedInterfaceLoadGeometry} & Core 几何求值 + Hydro 力离散 & 前者负责帧、根、曲率、几何支持；后者负责行位置、压力梯度和对偶积分，不能整体机械搬家。\\
+\code{DictionaryHydrodynamics}、FittedFlow 字典/输出 & CaseLoader、具名 App 与 IO & 参数由其所有者解析；数值内核只接 FlowProblem，不读文件。\\
+\code{HydrodynamicsModule.cpp} 的建网格、循环、耦合和写场 & 具名 Hydro App / Runtime / IO & 作为存量适配入口逐段变薄；不同 App 的业务顺序不搬进通用服务。\\
+\bottomrule
+\end{longtable}
+这些迁移与前两份专项方案必须使用同一张任务清单，避免三次提取“公共几何”。例如 PhaseMeasure 的几何积分可复用 Core，但决定负相输运目标和历史接受的逻辑只保留在 Interface。
+
+\subsection{App 中应变薄的具体接线}
+\code{ElectrosprayTimeLoop.cpp} 当前创建 Hydro、更新材料、设边界/数值选项、调用 NS、构造新旧速度 sampler、推进界面/电荷、检查体积收支并写输出。目标保留的是\textbf{这些服务的调用顺序和 case 绑定}，而不是界面/载荷算法本身。\ev{E14}
+
+\code{ElectrosprayMaterials.cpp} 的相材料映射与单位转换应归由共享 Materials 视图和 CaseLoader 管理，但首批保留当前活动邻单元平均规则。\code{ElectrosprayForces.cpp} 中对电学结果的物理来源检查保留在电学/接线边界；将最终机械面载荷装配交给 Hydro。其配套诊断应记录源电场、源界面与求解区间，不能删掉原电力/毛细分量。
+
+\subsection{计算、状态、求解器缓存和 IO 四者拆开}
+建议分成以下四层：\textbf{State} 保存物理状态和时间历史；\textbf{Kernel} 装配与求解；\textbf{Workspace} 保存可丢弃中间数组/矩阵分解；\textbf{IO} 输出已接受态及带阶段标签的失败报告。State 不实现文件路径，Kernel 不查 dictionary，缓存失效不会销毁已接受物理状态。
+
+原 \code{readCache/writeCache} 不能继续作为泛化重启协议。新重启需记录表示版本、网格/DofMap 身份、物理时间、压力模式/规范、两层速度、启动状态、材料/边界和归一化；矩阵分解通常重建。旧 cache 按原语义保留只读兼容或显式适配，不允许装到另一压力模式上。
+
+\section{目标接口：从类型到一步候选}
+\subsection{模块依赖与所有权}
+建议的目录层级为：Core 提供网格、几何、FieldView、单位与身份；Solvers 提供稀疏系统/线性后端；Hydro 定义问题、状态、力离散和 NS；App/Runtime 组合服务，IO 独立写场。各物理模块不互相包含实现头。
+
+\begin{center}
+\begin{tikzpicture}[>=Latex,font=\small,node distance=7mm,
+ box/.style={draw=accent,fill=pale,rounded corners,align=center,minimum height=10mm}]
+ \node[box,text width=12.8cm](app){App / Runtime：配置绑定、唯一时钟、整步接受与输出调度};
+ \node[box,text width=3.6cm,below=of app,xshift=-4.4cm](int){InterfaceService};
+ \node[box,text width=3.6cm,below=of app](flow){FlowService};
+ \node[box,text width=3.6cm,below=of app,xshift=4.4cm](ele){ElectricityService};
+ \node[box,text width=12.8cm,below=16mm of flow](base){Core：只读域/几何/场/身份 \quad Solvers：通用算子与 SuperLU};
+ \draw[->](app)--(int);\draw[->](app)--(flow);\draw[->](app)--(ele);
+ \draw[->](int)--(base.north -| int);\draw[->](flow)--(base);\draw[->](ele)--(base.north -| ele);
+\end{tikzpicture}
+\end{center}
+箭头表示允许依赖。模块间的数据经公共契约和 Runtime 注入；不能为了避免 include 依赖，把 Hydro 行号、faceForce 数组或 App 配置原样包进一个 \code{void*}。
+
+\subsection{状态和问题类型：建议草案}
+以下 C++ 风格草图描述契约，不是可直接链接的头文件；项目保持 C++17，视图类型使用项目自有包装，不默认引入 C++20 \code{std::span}。
+\begin{lstlisting}
+struct FlowProblem {
+    DomainView domain;
+    MechanicalBoundarySet boundaries;
+    HydroMaterialPolicy materialPolicy;
+    FlowNumerics numerics;
+    NormalizationId normalization;
+};
+struct FlowState {
+    FaceVelocityField velocity;       // accepted U^n
+    CellPressureField pressure;       // physical p^n
+    StateStamp stamp;
+};
+struct FlowHistory {
+    FaceVelocityField previous;       // U^(n-1), independent
+    StartupMode startup;
+    FixedTimeStep dt;
+    PressureMode pressureMode;
+    PressureGauge gauge;
+};
+struct FlowStepInputs {
+    HydroMaterialView materials;
+    MomentumLoad load;
+    LoadTimePolicy loadTime;          // e.g. frozen-at-step-start
+};
+Result<FlowCandidate> FlowService::advance(
+    const FlowProblem&, const FlowState&, const FlowHistory&,
+    const FlowStepInputs&, const StepContext&);
+\end{lstlisting}
+FlowState/History 的存储最终由统一 AcceptedState 根对象拥有，FlowService 不再持有另一套可变“已接受状态”。求解中若需要复用旧缓存，缓存单独放 Workspace，不成为结果正确性的隐含前提。
+
+首批候选可使用自拥有字段，把旧内核临时绑定到候选存储。不能浅拷贝 \code{unique_ptr} 字段、共享可写数组后再声称失败不会修改源。确认字段读写关系后，再通过不可变共享、移动所有权和工作区复用降低拷贝成本。
+
+\subsection{身份：不仅检查长度，也检查来源关系}
+公共 \code{StateStamp} 至少包含 StateId、MeshVersion、GeometryVersion、NormalizationId、StepId、CodeTime 和 Stage；FieldView 另有 DofMapId、位置和量纲。Hydro 还需明确材料策略、边界版本、压力规范与所选坐标模型。
+
+入口应逐项核对：
+\begin{enumerate}
+ \item 域、材料、速度、压力、载荷使用同一网格版本及对应 DOF 映射；实际字段标签有效、有限，不读固体无效值。
+ \item 当前与历史速度具有正确相邻步关系；压力为当前接受态的物理压力；固定 dt 与启动规则相符。
+ \item 载荷明确声明源几何/电场的时间层和用于哪个求解区间。原先后顺序允许“$t^n$ 载荷用于 $[t^n,t^{n+1}]$”，不能简单要求所有 stamp 完全相等。
+ \item 每项材料和外源均有物理单位或同一归一化身份；SourceId 不重复登记同一作用。
+ \item 能力组合被当前路径覆盖，例如 RZ 贴体压力锚、同层边界带、速度重构支撑和纯相压力口。
+\end{enumerate}
+标签不代替实际数据校验。当前严格 MeshIdentity 比较、边界数据和字段标签检查应保留；迁移后可以用不可变版本减少重复检查，但不能仅凭一个易复用整数绕过原保护。
+
+\subsection{prepareLoads 与 advance 的责任划分}
+\code{prepareLoads} 消费公共 InterfaceView、物性、$\gamma$、表面牵引和体源，构造同位置的毛细/电力/重力贡献、总 MomentumLoad 及来源报告。它不能在内部重新求电势，也不能自行另取一条液面。力半宽等空间支撑要求由 Hydro 输出为 SupportRequirement，Interface/Core 据此保证可求值域。
+
+\code{advance} 只消费冻结输入，完成装配、预测、投影、联合修正、所有门限和速度输出。返回的报告除了成功/失败阶段，还保留原三类线性残差、SuperLU/复用标记、联合修正次数、完整动量与局部连续性，以及实际压力口可接受性。
+
+候选应同时具有：目标 FlowState/History；新速度采样和面流率；必要的预测速度诊断；冻结问题/输入的身份摘要。报告中未计算的量保留 \code{notEvaluated} 或 NaN 标记，不写零。只有 Runtime 统一提交时，目标 stamp 才成为接受态身份。
+
+\subsection{失败与提交的具体实现约束}
+\begin{lstlisting}
+auto flow = flowService.advance(problem, accepted.flow,
+    accepted.flowHistory, frozenInputs, step);
+if (!flow) return fail(flow.report());
+auto interface = interfaceService.advance(
+    accepted.interface, accepted.flow.velocity,
+    flow->velocityView(), flow->faceRates(), step);
+if (!interface) return fail(interface.report());
+auto next = prepareMaterialsElectricityAndLoads(
+    *flow, *interface, accepted, step);
+if (!next) return fail(next.report());
+validateWholeStep(accepted, *flow, *interface, *next);
+auto ready = assembleAcceptedBundle(
+    std::move(*flow), std::move(*interface), std::move(*next));
+accepted.swap(ready);                  // no allocation, noexcept
+writeAcceptedOutput(accepted);
+\end{lstlisting}
+伪代码中的相流量仍在 Interface 内按最终候选几何共同求解，Hydro 不提前提供一份绑定未知新几何的“最终相输运”。初态相体积先绑定几何；初态相流率必须用真实初速度计算，不能因某个算例从静止出发就泛化为零。
+
+所有内存分配、校验和可失败计算应在最后交换前完成。失败日志可保留诊断和候选阶段信息，但不写伪成功接受行。当前完整域求解可能在失败前改历史，因此过渡 adapter 必须让它操作自有候选对象；当前贴体局部事务也须纳入整步事务，才能支持回退、重新准备或网格事件。
+
+\subsection{线性求解与缓存：保留精确矩阵身份}
+当前 \code{Hydrodynamics.cpp} 为 momentum/pressure/coupled 分别保存 SuperLU 数值分解，并持有其对应的压缩矩阵。只有行列维数、列指针、行索引与\textbf{每一个系数值}都完全一致才复用；系数、材料、dt 或边界变化后会重新分解。失败会清除相应缓存，不回退到上一分解。\ev{E08}
+
+迁移到 Solvers 后保留该行为：稀疏模式相同只足以考虑符号分析复用，不能复用旧数值 LU；两个不同矩阵不因 MeshVersion 相同就等价。现有矩阵完整比较可以先不改，待数据不可变与版本传播充分可靠后再研究更省成本的身份机制。
+
+SuperLU 是必需后端，缺失时明确失败。保留对精确几何/载荷/压力常量闭合源文件的 precise/strict FP、禁用相应 LTO/Unity 的边界，不能把 flags 无差别传播到所有模块，也不能在拆目标时丢失。OpenMP 工作线程错误在 join 后传播，不能让异常穿越并行区。\ev{E08,E21}
+
+\section{运行与配置：独立流体问题如何组装}
+\subsection{独立 Hydro App 的最小闭环}
+一个可独立运行的流体 App 应能在没有 Electricity、没有演化 Interface 的情况下完成：读取域/材料/边界/初态；构建公共网格与域；初始化相容速度和明确压力；固定 dt 推进；输出压力、速度、实际流率和方程残差；失败返回非零退出码。两相固定界面可用冻结 InterfaceView，不能为了获取一条几何曲线就启动电学或界面时间循环。
+
+首批保留现有常物性 XY/RZ、封闭/供液出口及固定几何受力用例。演化两相由具名耦合 App 接入 InterfaceService；独立流体 App 不因加载了一个 levelSet 字段，就隐含拥有界面输运和守恒修正能力。
+
+\subsection{现行输入与蓝图输入分开说明}
+现行 schema 2 的正式喷嘴 \code{hydro.dict} 包含 \code{Model.formulation incompressibleTwoPhase}、坐标/相编号、静止初态、压力口、\code{Interface} 输运与接触线块，以及流体/相通量门限。\code{solvers.dict} 分别配置 Momentum、Pressure、CoupledVelocityPressure 等实际线性系统；运行时 Time/Output/Log 归 run。\ev{E22}
+
+蓝图中建议的 \code{incompressibleNewtonian}、独立 \code{interface.dict}、\code{Model.domain} 和通用服务目前是目标设计。不能给用户一段新字典并宣称现代码可直接运行，也不能对其他旧 App 擅自启用喷嘴 schema 2。
+
+\begin{longtable}{@{}P{.23\textwidth}P{.33\textwidth}P{.38\textwidth}@{}}
+\toprule 配置内容 & 目标拥有者 & 迁移要求\\\midrule\endhead
+域、活动材料与边界几何 & mesh/geometry/materials 公共描述 & 由 CaseLoader 绑定一个 DomainView；数值模块不重建网格。\\
+不可压模型、机械边界、流体初态 & hydro & 压力口明确单位、回流策略和材料；静止壁与轴线分别校验。\\
+材料参数与物性闭合 & materials + hydro 数值策略 & 材料常数只有一处；闭合策略保留实际消费者，避免默选另一算法。\\
+界面表示/输运/接触与体积修正 & interface & 从当前 hydro Interface 块显式迁移，提供映射与生效清单。\\
+毛细力带宽、动量/连续性/出口门 & hydro & 保留现有数值及消费链；相流量守恒门最终由 Interface 拥有。\\
+SuperLU、各线性残差门 & solvers & 逐系统注入，不能把所有门缩成一个“solver tolerance”。\\
+dt、终时、输出、日志 & run & 唯一时钟；无隐含子步/缩步，接受帧和失败诊断分清。\\
+\bottomrule
+\end{longtable}
+当前喷嘴四项守恒门为 $10^{-10}$，线性系统的具体容差由当前 solvers 输入决定；旧接口默认 $10^{-8}$ 不能无意覆盖这些值。\code{HydroFittedNumerics} 已将 momentumLinear、pressureLinear、coupledLinear、momentumBalance、localContinuity、outletAdmissibility 分开，应保留这一精度控制基础。
+
+\subsection{能力预检查在建立输出目录前完成}
+预检查应给出选中的坐标、域拓扑、边界策略、压力规范、物性闭合、时间积分、载荷路径和求解后端。明确拒绝不受支持的组合，例如贴体 XY、没有压力锚的贴体连通分量、变 dt、越过固壁的几何支撑、当前速度重构不支持的角点，以及压力口遇到自由界面。
+
+现行输入迁移时输出“键—拥有者—实际消费者—生效值”清单；删掉一个旧键之前先检查兼容路径和所有标准算例。新增 schema 或别名须具有显式版本规则，不能让同名键在不同 App 中静默改变含义。直接相关检查保留 \code{electrospray_versioned_input}、\code{electrospray_versioned_cli} 和实际消费者检查。
+
+\subsection{输出应服务于物理判断}
+接受态写入 \code{output/fields}、\code{output/series}、\code{output/meta}，新运行目录放 \code{runs/}，隔离检查放 \code{runs/checks/}。保存原生单元压力、原生面速度/流率和真实几何位置，显示重构量单独标明；节点插值图不能代替原生梯度/通量数据。
+
+每步机械诊断建议包含：三个线性残差与分解复用标志、联合细化次数、完整动量残差及最大力密度缺陷、逐单元连续性最大值/失败单元、进出总流量/质量流量、最大面速度、载荷来源时间层。静滴另存 $F-Cp$ 与寄生速度；动态问题应保存全部动量项，不能把 $F-Cp$ 本身当误差。
+
+网格事件另写事件前后两层速度散度、修正幅度、动量/压力积分及边界流量变化，注明不推进时间。结果应能区分物理时间演化与网格插值变化，避免在累计账本中将转移误差伪装为边界通量。
+
+\section{实施方案：先结构定型，再单独提高数值质量}
+\subsection{结构迁移的工作包与依赖}
+优先顺序为 H0 $\to$ H1/H2 $\to$ H3/H4 $\to$ H5 $\to$ H6。H1/H2 可分别整理契约和 adapter，但同一个公共域只能实施一份。每包应独立形成可审阅变更，数值改进另列 N 包。
+
+\begin{longtable}{@{}P{.10\textwidth}P{.25\textwidth}P{.32\textwidth}P{.27\textwidth}@{}}
+\toprule 包 & 交付内容 & 完成标志 & 对照要求\\\midrule\endhead
+H0 基线 & 当前入口能力表、源码/程序/输入清单、原生数值基线与未解决失败 & 每条“已支持”能追到源码及相应运行；历史 RZ 缺项版本隔离说明 & 固定原 dt、网格、材料、门限和编译边界；不以文档创建为由重跑所有长算例。\\
+H1 状态 & FlowState/History、候选存储、Workspace、报告；封闭外部可写字段 & 原一步求解在候选上运行；注入失败后所有已接受物理字段/历史不变 & 同输入原生 p/U/残差逐项比较；验证 predictor 不是半步历史。\\
+H2 域/物性 & 公共 DomainView adapter、机械 BC、材料策略和单位来源 & mesh/DofMap/NormalizationId 一致；完整域与贴体能力不混用 & 粗细面 $D/C$、常量指标、半对偶体、压力规范和原平均顺序保持。\\
+H3 一步服务 & FlowService + 内部 Momentum/Coupling/Velocity 组件 & 无字典读取、网格重建、主时钟和写场；原三类求解全部可追踪 & 保留 CNAB2、3--6 次调用语义、门限及各拒绝路径。\\
+H4 载荷/迁出 & prepareLoads；几何迁 Core，输运/体积修正迁 Interface & App 不再填 Hydro 行力；相体积修正不由 Hydro.advance 隐式执行 & 毛细/Maxwell 各分量、总力、源时间与原生载荷逐项对照。\\
+H5 接线/IO & 独立 Hydro App、喷嘴原顺序接入、整步事务、版本化配置与输出 & 所有模块候选一起通过才提交；旧输入兼容与实际消费者清楚 & 原正式输入数值文件对照；故障不能写接受帧或改变源状态。\\
+H6 网格事件 & 复用已有 FlowMeshTransfer，与 Interface/Electricity 联合准备/接受 & 原生逐级字段注册、重建材料和受力、账本连续；失败保留旧网格 & 两层 NS 接续 + 整体转移收支；运行频率实际接通后才发布配置。\\
+\bottomrule
+\end{longtable}
+H0--H5 是流体模块定型的必要工作；H6 可在固定网格首版发布后实施。模板逐行拆分应在 H3 内分小批：优先已有共享 RZ 规则行，然后边界与压力适配，最后旧大模板剩余项；每批保持旧调用入口直到消费者迁完，避免同时失去基线和新入口。
+
+\subsection{N1：质量—动量一致输运，优先级最高的两相算法提升}
+未来应使 Interface 的相体积时间输运量与 Hydro 的密度/动量使用同一质量台账。固定网格下，令负相体积为 $V_K^-$，则
+\begin{align}
+ m_K^n&=\rho^-V_K^{-,n}+\rho^+(V_K-V_K^{-,n}),\\
+ \Delta m_f&=\rho^-\Delta V_f^-+
+       \rho^+(\Delta V_f-\Delta V_f^-),\label{eq:masstransfer}\\
+ m_K^{n+1}-m_K^n+\sum_fs_{Kf}\Delta m_f&=0.
+\end{align}
+$\Delta V$ 为整个时间段内的积分体积输运，单位 m$^3$；$\Delta m$ 为 kg。这个恒等关系需要相体积方程与总连续性采用一致的时段/面规则。它不等于在当前二值相别密度代码里加一个“守恒”标志。
+
+交错动量位于\textbf{另一套对偶控制体}，还需构造由同源台账派生的对偶质量和对偶边界输运，满足离散动量式
+\[
+ M_f^{n+1}U_f^{n+1}-M_f^nU_f^n
+ +\sum_es_e\Delta m_e^u U_{{\rm donor},e}
+ =\text{时段内应力/体力积分}.
+\]
+不能把压力单元的 $\Delta m_f$ 按相同编号直接当速度对偶体的质量通量。推荐先做均匀 XY 的常速度两相平移，再扩展 RZ、原生粗细面和储库回流，最后纳入原喷嘴。当前 CNAB2 冻结质量矩阵和二值物性闭合若改变，必须明确标为算法变更，单独保存旧基线。
+
+此包首要验收是自由流保持：在允许平移的域与相容边界上，给定常向量速度并移动高密度比界面，检验速度/压力误差、总质量和动量收支；不是仅检查全局相体积。需要密度比、网格与 dt 的小型受控矩阵，不以单个温和物性例子代替高对比验收。
+
+\subsection{N2：验证并改进整个耦合过程的时间精度}
+当前 CNAB2 对冻结流体子问题有明确二阶时间构造，但移动物性、毛细/Maxwell 力和电荷的先后更新会改变整体时间误差。先在固定网格上做平滑强迫单相问题、毛细小振幅振荡和适当 EHD 瞬态的 dt/2、dt/4 对照，分开空间误差、启动误差与耦合滞后，才能判定全流程阶数。
+
+若证据表明载荷/物性时间层主导误差，建议在原服务内设计一致的半时间层材料、界面和电牵引，或明确方程的外耦合修正，并重新规定启动/历史及相、电荷积分。不能只把 $F^n$ 改成 $2F^n-F^{n-1}$ 就宣称二阶，也不能把电荷变步能力直接扩给 Hydro。
+
+项目已有时间格式可行性笔记，但没有可以直接切换的已验证新格式。任何替换都要说明最终目标仍是式\eqref{eq:target}，还是另一套分裂方程；若改变方程，就重新建立相应残差含义，不通过放宽旧完整动量门限掩盖差异。\ev{E18,E23}
+
+\subsection{N3：真实曲率下的平衡力与压力质量}
+恒曲率制造夹具主要检验载荷与压力算子相容性；真实数值曲率的静滴还检验标量表示、法向/曲率、投影支撑、力带和求解。已有历史静滴残余速度非零，已有 N32 RZ 曲率 $2.24595\%>1\%$ 的失败仍需保留；不能用更小线性残差替代该几何精度门。\ev{E17--E19}
+
+建议按平面圆滴、接轴球滴及不接轴曲面分别测压差、纯相原生压力/梯度、$F-Cp$、寄生速度/动能和网格收敛，明确比较终时覆盖何种黏性/毛细时间尺度。低黏与高密度比独立扫描，压力口与接触端点另列；动态受迫喷嘴的真实流速不能标为“寄生流”。
+
+本包由 Core/Interface 改进几何质量，Hydro 维护实际力/压力离散和验收接口。不存在“Hydro 再拟合一个圆得到更准曲率”的捷径；必须消费与界面输运相同的标量。
+
+\subsection{N4：转移质量与边界能力扩展}
+已有换网格连续性恢复是起点。下一步定量检查两层动量、动能、压力跳跃和静态力平衡跨网格事件的变化，并研究守恒的对偶动量重映射；若投影修正引入额外变化，要单列投影前/后。几何、电荷和流场累计账本必须同时检查，不以单模块通过替代耦合通过。
+
+边界扩展按需求排序：封闭贴体域的压力规范；非零贴体初态；更广泛角点/壁面布局；给定速度入口及入流相/动量闭合；自由界面穿压力口；运动壁/接触角。每项都需要控制体应力、流量和回流模型设计。不要一次开放所有枚举，再用默认零值掩盖缺失物理条件。
+
+\subsection{N5：性能与可维护性}
+先输出分阶段装配、分解、回代、几何/速度重构和联合细化耗时，区分数值分解次数与求解调用次数。当前每步材料/界面变化可能导致不同矩阵，不能凭拓扑不变断言 LU 可复用。缓存和身份检查需通过真实数据判断。
+
+优先减少重复装配/诊断、保留不可变几何/模板、复用 Workspace 容量，再评估符号分析等后端能力。改求解器、预条件器或容差属于单独数值/性能任务，必须保持 SuperLU 基线和完整物理门。并发负载不同的历史墙钟不能直接用来报加速倍数。
+
+\section{验收与发布：一项结论对应一类证据}
+\subsection{结构性同输入对照}
+纯重构批次应固定可执行程序构建选项、运行线程配置、网格、字典、初态、dt、输出间隔、原生场精度和原门限。优先比较原 DAT/CSV/TSV 逐字节一致；如确因必要重排导致浮点顺序改变，应在变更前说明原因，保留原始差值、原阈值和独立物理验收，不能事后临时设一个宽容差。
+
+比较应覆盖原生压力/速度、物性、面载荷、面流率、残差与接受步数，不能只比较最终图片或 \code{success=1}。测试中有未评估量时按状态比较，不把 NaN 改零；改名/路径迁移可在元数据层规范化，但不得抹去数值变化。
+
+\subsection{最小验收矩阵}
+下表“已有入口”只说明当前存在对应检查；本次未重新执行这些物理/数值测试。结构迁移时按被修改职责选择相关子集，再接回必要的标准算例，不无目的重复全套长跑。
+\begin{longtable}{@{}P{.19\textwidth}P{.34\textwidth}P{.41\textwidth}@{}}
+\toprule 层级 & 判定对象 & 已有入口或需新增的独立量\\\midrule\endhead
+原生算子 & 粗细面通量、压力梯度、常量模态、全域连续性 & \code{hydro_adaptive_pressure}、\code{hydro_fitted_adaptive}、\code{hydro_native_face_flux}；保留当前独立通量装配。\\
+压力/动量 & 物理压力与增量、完整应力、联合系统、压力基准 & \code{hydro_coupled_pressure}、\code{hydro_pressure_planar}、\code{hydro_pressure_rz}；拒绝模式混用。\\
+边界 & 真实半对偶体、非零外压、法向供液、RZ hoop、回流拒绝/储库 & 现有 coupled/fitted 夹具及供液标准 App；扩展边界时增加非零应变和入流 donor 检查。\\
+速度输出 & 原生流率、区间积分、壁/轴迹、粗细兼容重构 & \code{hydro_fitted_flux_velocity}、\code{hydro_adaptive_velocity}、\code{hydro_native_face_flux}。\\
+力平衡 & $C H$ 与毛细力、Maxwell 牵引映射、恒曲率平衡 & \code{hydro_balanced_capillary}、\code{hydro_face_force_balance}、\code{ehd_maxwell_hydro_balance}。\\
+真实几何 & 静滴压差、寄生流、纯相梯度、曲率精度 & 原静滴/球滴基线与未解决曲率失败；明确终时和 h/dt 对照，制造夹具不可替代。\\
+历史/网格 & 两层速度、压力、预测量、dt、目标绑定、接续 NS & \code{hydro_fitted_mesh_transfer}；再增加多模块网格事件和动量/能量变化验收。\\
+失败/缓存 & 非有限输入、缺后端、错误索引、缓存失效、候选丢弃 & \code{hydro_linalg_cache}、\code{hydro_failure} 等；新增在后续模块失败时整步源状态不变的检查。\\
+配置/组织 & 实际消费者、无 App 反向依赖、目录路由 & \code{architecture_dependencies}、\code{architecture_layout}；schema 2 相关版本/CLI 检查。\\
+整体两相 & 质量—动量一致性、时间阶、长时受力与边界收支 & N1 常速度界面平移、N2 时步收敛、N3 真实静滴，再进入原喷嘴原输入对照。\\
+\bottomrule
+\end{longtable}
+
+\subsection{历史证据的使用边界}
+\begin{enumerate}
+ \item 2026-09-11 完整均匀 XY/RZ 供液 App 各完成 20 步，报告包含实际入/出流、非零绝对压力与完整动量残差。它是常物性供液基础，不是任意两相开口验收。该日修复 RZ hoop 前后的运动球滴结果不同，旧缺项结果不能继续当当前物理参考。\ev{E17}
+ \item 固定局部加密喷嘴已有 8/8 步完成及原生数值对照；常量指标修复记录仍保留曲率、时间精度、动态 AMR 和成熟喷射限制。短程充电启动不代表时空收敛或长期稳定性。\ev{E19}
+ \item 2026-09-14 流场转移批次最终 5/5 直接检查通过，常物性/变物性接续 NS 有独立结果；原固定 Hydro 数值控制台与该批修改前一致。没有新增生产喷嘴动态 AMR 结果，也没有因此重跑全部液滴/薄层参数矩阵。\ev{E20}
+\end{enumerate}
+本方案用这些记录界定能力，未将历史通过计为本次新测。当前源码继续演化时，以附录的 18:43 快照为本文证据截止点；新批次需要补充自己的身份和验收，不能用本报告覆盖后来所有分支。
+
+\subsection{第一版发布必须满足的条件}
+第一版固定网格 FlowService 应做到：一个清楚的流动问题描述；一个只读接受态与独立历史；一个包含全部机械检查的一步候选；一个保持原生通量的速度输出；一套统一载荷来源；一个整步接受点；一组可追溯的原输入对照。内部可以暂留兼容 adapter，但不能继续让新数值依赖 App 配置。
+
+同时明确保留限制：固定 dt；首批 XY/RZ 能力按实际路径开放；贴体域需压力锚和受支持边界模板；当前两相物性尚非严格质量—动量一致输运；真实曲率/寄生流及整体时间阶待独立改进；动态 AMR 整体接线与守恒转移分步发布。
+
+模块定型的判据不是文件都搬到新目录，而是\textbf{给定完整输入可以独立完成流动求解，错误输入会明确失败，失败不污染已接受态，别人能凭实际原生方程和来源标签复核结果}。
+
+\clearpage
+\appendix
+\section{源码证据与复核入口}
+\subsection{编号对应}
+路径均相对 \code{D:/Chen/QUANTUM}。行号以本次快照为准，后续修改可能移动；清单中的 SHA-256 用于确认本文所读版本。本文公式来自项目连续模型和实际离散代码的推导，没有用外部算法名称替代实现核对。
+\begin{longtable}{@{}P{.07\textwidth}P{.58\textwidth}P{.29\textwidth}@{}}
+\toprule 编号 & 文件/定位 & 支持的判断\\\midrule\endhead
+E01 & \code{docs/QUANTUM_Modular_Model_Blueprint.tex}；连续模型、模块边界、公共状态与 hydro 字典章节 & 模型首批范围、测度、相侧、单一时钟、服务目标。\\
+E02 & \code{include/Modules/Hydrodynamics/Hydrodynamics.h}；\code{include/Modules/Hydrodynamics/Hydrodynamics_impl.h}，92 行起、449 行起；\code{include/Modules/Hydrodynamics/HydrodynamicsRZ_impl.h} & 公共状态、入口限制、固定 dt、旧/新压力模式、物性更新。\\
+E03 & \code{src/Modules/Hydrodynamics/HydrodynamicsFitted.cpp}，105 行起 & 贴体校验、预测/投影/联合修正、三次细化及末尾发布。\\
+E04 & \code{include/Modules/Hydrodynamics/HydroNativeRZRow_impl.h} & 规则 RZ 速度块、交叉剪切、迎风 donor 和两层速度 AB2。\\
+E05 & \code{src/Modules/Hydrodynamics/HydroFittedMomentum.cpp} & 规则/原生内部行、边界半对偶体、储库 donor、压力牵引、环向项。\\
+E06 & \code{include/Modules/Hydrodynamics/HydroFittedDomain.h}；\code{src/Modules/Hydrodynamics/HydroFittedDomain.cpp}，227 行起 & 原生/压缩索引、真实几何、D/C、常量模态、压力锚、严格身份。\\
+E07 & \code{src/Modules/Hydrodynamics/HydroFittedProjection.cpp}；\code{include/Modules/Hydrodynamics/HydroNativePressureStencil.h}；\code{include/Solvers/Operators/QuadtreeFaceGradient.h} & 原质量度量、实际粗细梯度、压力投影和联合残差块。\\
+E08 & \code{src/Modules/Hydrodynamics/Hydrodynamics.cpp}；\code{include/Modules/Hydrodynamics/HydroSolveReport.h}；\code{include/Modules/Hydrodynamics/HydroFittedNumerics.h} & SuperLU 必需、精确矩阵复用、实际残差、六项独立数值门。\\
+E09 & \code{include/Modules/Hydrodynamics/HydroBoundary.h}；\code{include/Modules/Hydrodynamics/HydroBoundary_impl.h}；\code{include/Modules/Hydrodynamics/HydrodynamicsCoupled_impl.h} & 完整域 patch 与压力基准；联合修正的均匀域保护。\\
+E10 & \code{include/Modules/Hydrodynamics/HydroInitialization_impl.h} & 零时间相容初速度、失败前不发布、压力/历史语义。\\
+E11 & \code{include/Modules/Hydrodynamics/HydroFittedVelocity.h}；\code{include/Modules/Hydrodynamics/HydroFittedFaceFlux.h} 及对应 cpp & 点值与面原函数、RZ 度量、粗细/壁轴约束、采样限制。\\
+E12 & \code{include/Modules/Hydrodynamics/HydroBalancedForce.h}；\code{src/Modules/Hydrodynamics/HydroFittedCapillary.cpp}；\code{src/Modules/Hydrodynamics/HydroFittedInterfaceLoadGeometry.cpp} & 同源界面力/压力梯度、带宽、端点、RZ 曲率、压力口保护。\\
+E13 & \code{src/Apps/Electrospray/Setup/ElectrosprayMaterials.cpp}，143/158 行起；\code{src/Apps/Electrospray/Coupling/ElectrosprayForces.cpp} & 机械尺度、相别物性与顶点平均、电力/毛细接线。\\
+E14 & \code{src/Apps/Electrospray/ElectrosprayTimeLoop.cpp}，40 行起；200/306 行附近 & 旧载荷先 NS，再界面/电学；局部 Hydro 已写回、失败停止。\\
+E15 & \code{include/Modules/Hydrodynamics/HydroFittedMeshTransfer.h}；\code{src/Modules/Hydrodynamics/HydroFittedMeshTransfer.cpp}，181/232 行起 & 逐级字段转移、两层投影、压力与预测量、固定边界和缓存重建。\\
+E16 & \code{src/Modules/Hydrodynamics/HydrodynamicsModule.cpp}；\code{src/Modules/Hydrodynamics/DictionaryHydrodynamics.cpp}；Hydro 下 Interface/Phase/VolumeCorrection 文件族 & 运行适配、配置/输出聚集及几何/演化职责混放。\\
+E17 & \code{docs/validation/hydro/QUANTUM_Hydro_Open_Boundary_20260911.md} & 常物性供液结果、RZ hoop 修复、边界物理和历史结果限制。\\
+E18 & \code{docs/validation/hydro/QUANTUM_NS_Projection_Pressure_Audit_20260913.md} & 分量耦合、求解次数、压力/力时间层、静滴残余与压力后处理边界。\\
+E19 & \code{docs/validation/hydro/QUANTUM_Hydro_Fitted_Adaptive_20260913.md}，第 28--30 节 & 固定局部加密短程、常量指标修复、原生基线及保留失败。\\
+E20 & \code{docs/validation/electrospray/QUANTUM_Electrospray_Dynamic_AMR_20260914.md}，第 7 节 & 已完成 Flow 转移、5/5 模块检查及待完成 App 联合接线。\\
+E21 & \code{CMakeLists.txt}；\code{docs/QUANTUM_Code_Organization_Standard.md}；\code{tests/architecture/check_dependencies.py}；\code{tests/architecture/check_layout.py} & 组织规则、精确浮点/LTO、测试入口与依赖/目录检查。\\
+E22 & \code{docs/QUANTUM_Dictionary_Reference.md} 第 5 节；\code{cases/electrospray_conducting_implicit_short_rz/system/hydro.dict} 和 \code{solvers.dict} & 现行 schema 2、实际模型/边界键和独立数值门。\\
+E23 & \code{docs/validation/hydro/QUANTUM_Popinet2009_Time_Scheme_Feasibility_20260913.md} & 项目已有时间格式研究与尚未实现/验证的改动范围。\\
+\bottomrule
+\end{longtable}
+
+\subsection{本次工作区与验证说明}
+分析快照和文件清单位于
+\begin{quote}\small
+\code{paper/_revision/codex_workspace/hydrodynamics_modular_plan_20260914/source_manifest.json}\\
+\code{paper/_revision/codex_workspace/hydrodynamics_modular_plan_20260914/source_snapshot/}
+\end{quote}
+快照时间为 2026-09-14 18:43:21（UTC+8）。清单逐文件包含路径、字节数、行数与 SHA-256；后续源码若变化，不反向修改这一分析基准。
+
+本次实际执行两项组织检查：\code{check_dependencies.py} 通过，扫描 460 个源码/头文件，保留 8 个精确适配例外及 16 个检查器探针；\code{check_layout.py} 通过，含 6 个自检。检查器自身说明其范围为 include 所有权、限定适配器和驱动 IO，并非完整语义依赖分析或物理验证。
+
+本次工作只新增方案与其分析/编译文件。没有执行 NS 算例，没有以历史数值记录冒充本次新测；本报告中的算法改进、目标类型和阶段工作包均是待实施设计。最终 PDF 由本文源码编译并逐页渲染检查。
+
+\subsection{编译方式}
+源码为单文件，无外部图片或参考文献构建依赖。采用支持中文的 XeLaTeX、ctex/Fandol 和 TikZ，建议运行：
+\begin{lstlisting}
+latexmk -xelatex -interaction=nonstopmode -halt-on-error
+    QUANTUM_Hydrodynamics_Model_Numerics_Implementation_Plan.tex
+\end{lstlisting}
+以上展示为换行便于阅读，终端执行时将文件名与命令写在同一行。工作区 build/render 存放编译与图像检查；正式 LaTeX/PDF 位于 docs 入口，与前两份模块化专项方案配套。
+\end{document}

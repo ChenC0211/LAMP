@@ -1,0 +1,222 @@
+
+\documentclass[11pt,a4paper]{ctexart}
+
+\usepackage{geometry}
+\geometry{margin=2.2cm}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{siunitx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+
+\title{静电等离子体 PIC 的无量纲闭环：建模与实现方案（Step 2.x）}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{背景：为何 Step 1 仍不足以保证物理正确}
+Roadmap 的 Step 1 已经提供了：\textbf{(i)} 字典字段的 \texttt{value+unit} 解析；\textbf{(ii)} \texttt{UnitsContext} 尺度表与 SI/code 输出；
+\textbf{(iii)} SI 输入与 legacy code 输入的一致性回归（同一无量纲设定下数值一致）。
+这些能力解决的是\emph{输入与输出的单位系统}，但\textbf{并不自动形成物理无量纲闭环}。
+
+\paragraph{关键缺口（闭环未完成的根因）}
+若程序内部仍按 legacy 假设去组装 Poisson 的 RHS、推进中的 $q/m$、以及碰撞频率/源项等，而用户只把几何、$\Delta t$、边界电势用 SI 写入，
+就会出现\emph{维度不一致}：形式上离散方程可解，但与真实物理单位系统脱节，导致幅值错误、虚假加速、甚至数值自加热等症状。
+
+因此需要引入 Step 2.x：把\textbf{方程、沉积、推进、碰撞与输出}统一到同一套无量纲规范中。
+
+\section{总体目标与设计原则}
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{广泛性：}覆盖大多数\textbf{静电}等离子体情形：多 species、介质/导体边界、外加电势、碰撞/电离等；并为后续隐式 PIC 或多物理扩展留下接口。
+\item \textbf{兼容性：}不破坏 legacy code 输入；未启用 normalization 时行为与旧版一致。
+\item \textbf{可诊断：}启动即输出关键尺度与无量纲数（如 $\Delta t\,\omega_{pe}$、$\lambda_D/L_0$、每个 species 的推进系数），便于迅速定位量纲问题。
+\item \textbf{小步交付：}工程实现按 Step 2.0--2.4 拆分，每步改动面小、可回滚、可回归。
+\end{enumerate}
+
+\section{无量纲建模：尺度、派生量与无量纲组}
+\subsection{基准尺度（最小且通用）}
+采用四个基准量（其余派生）：
+\[
+L_0\,[\mathrm{m}],\quad T_0\,[\mathrm{s}],\quad \Phi_0\,[\mathrm{V}],\quad n_0\,[\mathrm{m^{-3}}].
+\]
+派生量：
+\[
+v_0=\frac{L_0}{T_0},\qquad E_0=\frac{\Phi_0}{L_0},\qquad \rho_0=\varepsilon_0\frac{\Phi_0}{L_0^2},\qquad J_0=\rho_0 v_0.
+\]
+\paragraph{二维（2D slab）闭合}
+若网格是 2D（面积 $A$），必须引入 slab 厚度 $h_0$ 使体积 $V=A\,h_0$，否则 $\rho\,[\mathrm{C/m^3}]$ 无法自洽。
+因此建议在 \texttt{normalization.dict} 中显式配置 \texttt{slabThickness}（仅 2D 使用）。
+
+\subsection{Normalization 策略（覆盖工程与物理两类需求）}
+为覆盖不同使用习惯，建议提供三类策略：
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{manual：}用户显式给定 $(L_0,T_0,\Phi_0,n_0)$（最通用，最利于对标 legacy）。
+\item \textbf{plasmaFrequency：}给定 $L_0,\Phi_0,n_0$ 及参考 species $(q_{\mathrm{ref}},m_{\mathrm{ref}})$，自动取
+\[
+\omega_{p0}=\sqrt{\frac{n_0 q_{\mathrm{ref}}^2}{\varepsilon_0 m_{\mathrm{ref}}}},\qquad T_0=\omega_{p0}^{-1}.
+\]
+\item \textbf{thermal：}给定 $L_0,n_0$ 及参考温度 $T_{e0}$，常用取法为
+\[
+\Phi_0=\frac{T_{e0}}{e},\qquad v_{th,0}=\sqrt{\frac{T_{e0}}{m_e}},\qquad T_0=\frac{L_0}{v_{th,0}}\quad(\text{可选}).
+\]
+\end{enumerate}
+
+\subsection{方程无量纲化（闭环核心）}
+\subsubsection{Poisson（含介质）}
+SI 形式：
+\[
+-\nabla\cdot(\varepsilon_0\varepsilon_r\nabla \Phi)=\rho.
+\]
+令 $\bm{x}=L_0\tilde{\bm{x}},\ \Phi=\Phi_0\phi$，并\textbf{定义} $\rho_0=\varepsilon_0\Phi_0/L_0^2$，得到无量纲：
+\[
+-\tilde{\nabla}\cdot(\varepsilon_r\tilde{\nabla}\phi)=\tilde{\rho},\qquad \tilde{\rho}=\rho/\rho_0.
+\]
+\paragraph{工程含义}
+代码内部 Poisson 的 RHS 必须是 $\tilde{\rho}$（无量纲），而不是混杂 SI/legacy 的量。
+
+\subsubsection{粒子推进（每个 species 的无量纲系数）}
+SI：
+\[
+\frac{d\bm{v}}{dt}=\frac{q_s}{m_s}\bm{E},\qquad \bm{E}=-\nabla\Phi.
+\]
+令 $\bm{v}=v_0\tilde{\bm{v}},\ t=T_0\tilde{t},\ \bm{E}=E_0\tilde{\bm{E}}$，得到
+\[
+\frac{d\tilde{\bm{v}}}{d\tilde{t}}=\kappa_s\tilde{\bm{E}},\qquad
+\kappa_s=\frac{q_s}{m_s}\frac{E_0T_0}{v_0}=\frac{q_s}{m_s}\frac{\Phi_0T_0^2}{L_0^2}.
+\]
+\paragraph{工程含义}
+推进器（kick/drift）统一使用 $\kappa_s$，可避免隐含 $q/m=1$ 的 legacy 假设。
+
+\subsubsection{碰撞/电离频率}
+任何 SI 频率 $\nu\,[\mathrm{s^{-1}}]$，内部统一使用
+\[
+\tilde{\nu}=\nu T_0,
+\]
+碰撞概率用 $\Delta\tilde t$ 计算：
+\[
+P=1-\exp(-\tilde{\nu}\,\Delta\tilde{t}).
+\]
+
+\subsection{宏粒子权重与沉积闭合（从“数学”到“物理”）}
+建议采用通用定义：每个宏粒子代表 $N_p$ 个真实粒子（纯数）。
+则 cell 内真实电荷密度（SI）为：
+\[
+\rho = \frac{1}{V}\sum_p q_s N_p S(\cdot).
+\]
+无量纲 RHS：
+\[
+\tilde{\rho}=\frac{\rho}{\rho_0}=\frac{1}{\rho_0 V}\sum_p q_s N_p S(\cdot).
+\]
+\paragraph{推荐实现方式}
+沉积阶段优先累计 \textbf{电荷量} $Q_c\,[\mathrm{C}]$，再转为无量纲 RHS：
+\[
+\tilde{\rho}_c=\frac{Q_c}{\rho_0 V_c}.
+\]
+这样能最大程度降低“密度/体积/2D slab”相关的量纲错误风险。
+
+\section{工程架构：NormalizationContext 与字典组织}
+\subsection{新增 NormalizationContext（位于 Units 之上）}
+建议新增：
+\begin{itemize}
+\item \texttt{Core/Units/NormalizationContext.\{h,cpp\}}：持有 \texttt{UnitsContext} 与 normalization 配置，计算并缓存 $E_0,\rho_0,v_0,J_0$ 等派生尺度；
+并提供常用 SI$\leftrightarrow$code 转换函数（尤其是 $\rho$、电荷量与 RHS 的转换）。
+\end{itemize}
+
+\subsection{新增 system/normalization.dict（与 units.dict 解耦）}
+为避免 \texttt{units.dict} 过度膨胀，建议新增 \texttt{system/normalization.dict}（加入严格白名单）。
+示例：
+\begin{verbatim}
+Normalization
+{
+  strategy manual;          // manual | plasmaFrequency | thermal
+  dimension 2;              // 2 or 3
+  slabThickness 1 mm;       // only for 2D (A*h)
+  refSpecies electron;      // for plasmaFrequency/thermal (optional)
+  // Te0 3 eV;              // for thermal (optional)
+}
+\end{verbatim}
+
+\subsection{统一诊断输出}
+启动时写入 \texttt{output/normalization\_report.txt}，包含：
+\begin{itemize}
+\item 尺度表：$L_0,T_0,\Phi_0,n_0,E_0,\rho_0,v_0,J_0$（含 2D slab 厚度）
+\item 关键无量纲数：$\Delta t\,\omega_{pe,0}$、$\lambda_{D,0}/L_0$
+\item 每个 species 的 $\kappa_s$
+\item 碰撞：$\max(\tilde{\nu}\Delta\tilde t)$ 或统计区间
+\end{itemize}
+
+\section{Step 2.x：任务分解与交互指令（小步可交付）}
+\subsection{Step 2.0：建模落盘 + NormalizationContext（不改求解链）}
+\textbf{Deliverables}
+\begin{itemize}
+\item \texttt{NormalizationContext}
+\item \texttt{system/normalization.dict} + \texttt{DictionaryNormalization}
+\item RunController 接线：读取并输出 \texttt{normalization\_report.txt}；更新 system 白名单
+\end{itemize}
+\textbf{指令}
+\begin{verbatim}
+执行指令 2.0：
+“实现 Step 2.0：新增 NormalizationContext + normalization.dict + DictionaryNormalization；
+RunController 接线并输出 normalization_report；更新 system 白名单；给 diff + zip。”
+\end{verbatim}
+
+\subsection{Step 2.1：Poisson RHS 闭环（沉积/ρ0/体积一致）}
+\textbf{目标：}内部 Poisson RHS 必须为 $\tilde{\rho}=\rho/\rho_0$，并在 2D 下使用 $V=A\,h_0$ 闭合体积。
+\textbf{Deliverables}
+\begin{itemize}
+\item 沉积产出 $\tilde{\rho}$ 或（推荐）先产出 $Q_c$ 再统一换算为 $\tilde{\rho}_c=Q_c/(\rho_0 V_c)$
+\item 输出诊断：$\max|\tilde{\rho}|$、以及 $\rho_0$、$V$ 的一致性检查
+\end{itemize}
+\textbf{指令}
+\begin{verbatim}
+执行指令 2.1：
+“实现 Step 2.1：把 PIC 沉积与 Poisson RHS 统一到 rho_code=rho_SI/rho0；
+补齐 2D slabThickness 体积闭合；确保 two_plates 的 phi 幅值合理；给 diff + zip。”
+\end{verbatim}
+
+\subsection{Step 2.2：Species 物理参数 → 无量纲推进系数 κs（q/m 闭环）}
+\textbf{Deliverables}
+\begin{itemize}
+\item 引入 species 参数（建议 \texttt{species.dict} 或扩展 \texttt{pic.dict}）：支持 \texttt{charge 1 e}, \texttt{mass 9.11e-31 kg}, \texttt{temperature 3 eV}
+\item 计算并存储每个 species 的 $\kappa_s=(q_s/m_s)\Phi_0T_0^2/L_0^2$
+\item 推进器统一使用 $\kappa_s\,\tilde{\bm{E}}\,\Delta\tilde t$
+\end{itemize}
+\textbf{指令}
+\begin{verbatim}
+执行指令 2.2：
+“实现 Step 2.2：引入 species 物理参数（q/m/Te/drift）并计算 κs；
+ParticlePusherLeapfrog 使用 κs·E·dt 更新速度；打印每个 species 的 κs；给 diff + zip。”
+\end{verbatim}
+
+\subsection{Step 2.3：碰撞/电离模块量纲闭环（νT0 与概率）}
+\textbf{Deliverables}
+\begin{itemize}
+\item 所有频率统一：$\tilde{\nu}=\nu T_0$
+\item 概率统一用 $\Delta\tilde t$
+\item 诊断输出：$\max(\tilde{\nu}\Delta\tilde t)$ 的量级
+\end{itemize}
+\textbf{指令}
+\begin{verbatim}
+执行指令 2.3：
+“实现 Step 2.3：把碰撞/电离/源项频率统一转为 nu_code=nu_SI*T0；
+概率用 dt_code；增加诊断输出；给 diff + zip。”
+\end{verbatim}
+
+\subsection{Step 2.4：Acceptance（物理闭环回归）}
+\textbf{目标：}同一物理工况下，SI 输入与 code 输入不仅数值一致，还需无量纲组一致：
+$\Delta t\,\omega_{pe}$、$\lambda_D/\Delta x$、$\kappa_s$、以及能量/电荷守恒统计。
+\textbf{指令}
+\begin{verbatim}
+执行指令 2.4：
+“实现 Step 2.4：新增物理闭环的回归算例与对比脚本；
+验收包含无量纲组与场/能量统计；给 diff + zip。”
+\end{verbatim}
+
+\section{建议的落地顺序}
+推荐从 \textbf{Step 2.0 → Step 2.1} 开始：先把 Poisson 与 RHS 的物理缩放闭合（$\rho_0$ + 2D slab 厚度），通常能立刻消除幅值/悬浮电位等数量级灾难；
+再做 \textbf{Step 2.2} 完成 $q/m$ 与推进闭环；最后补齐碰撞与回归。
+
+\end{document}

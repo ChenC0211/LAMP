@@ -1,0 +1,10 @@
+Domain { min (0, 0); max (1, 1); dimension 2; }
+Point { (0.23, 0.5) (0, 0.73) (-0.23, 0.5) (0, 0.27) }
+Line
+{
+    (1, 2) { type arc; center (0, 0.5); radius 0.23; radian 0.5; }
+    (2, 3) { type arc; center (0, 0.5); radius 0.23; radian 0.5; }
+    (3, 4) { type arc; center (0, 0.5); radius 0.23; radian 0.5; }
+    (4, 1) { type arc; center (0, 0.5); radius 0.23; radian 0.5; }
+}
+LevelSet { liquid { lines (1, 2, 3, 4); innerPoint (0.1, 0.5); moving true; } }

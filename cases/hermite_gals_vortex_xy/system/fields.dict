@@ -1,0 +1,5 @@
+Fields
+{
+    Constants { radius .13; cy .53; cx .65; speed 40; period .4; }
+    Velocity { type polynomial; origin (.5 .5); scale (1 1); Coefficients { c03 { x "-(speed*cos(pi*t/period))"; y "0"; } c21 { x "-(speed*cos(pi*t/period))"; y "0"; } c30 { x "0"; y "speed*cos(pi*t/period)"; } c12 { x "0"; y "speed*cos(pi*t/period)"; } } }
+}

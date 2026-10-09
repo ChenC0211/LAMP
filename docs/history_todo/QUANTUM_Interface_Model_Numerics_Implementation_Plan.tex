@@ -1,0 +1,762 @@
+% !TEX program = xelatex
+% Standalone Chinese design document; XeLaTeX + latexmk, no external figures.
+\documentclass[UTF8,a4paper,11pt,fontset=fandol]{ctexart}
+\usepackage[margin=23mm,headheight=16pt]{geometry}
+\usepackage{amsmath,amssymb,booktabs,longtable,array,tabularx,bm}
+\usepackage{xcolor,fancyhdr,enumitem,needspace,tikz,listings,etoolbox}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage[unicode,colorlinks=true,linkcolor=teal!65!black,urlcolor=teal!65!black]{hyperref}
+\usepackage{xurl}
+\definecolor{ink}{RGB}{28,49,68}
+\definecolor{accent}{RGB}{0,111,124}
+\definecolor{pale}{RGB}{236,245,246}
+\definecolor{muted}{RGB}{92,105,116}
+\ctexset{section={format=\Large\bfseries\color{ink}},subsection={format=\large\bfseries\color{ink}}}
+\setlength{\parskip}{4pt}\setlength{\emergencystretch}{4em}
+\setlist{nosep,leftmargin=2em,topsep=4pt}
+\renewcommand{\arraystretch}{1.2}\setlength{\tabcolsep}{4pt}
+\AtBeginEnvironment{longtable}{\small}
+\pretocmd{\section}{\Needspace{11\baselineskip}}{}{}
+\pretocmd{\subsection}{\Needspace{7\baselineskip}}{}{}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\code}[1]{\nolinkurl{#1}}
+\newcommand{\ev}[1]{{\small\color{muted}〔证据 #1〕}}
+\newcommand{\decision}[1]{\par\medskip\noindent\colorbox{pale}{\parbox{\dimexpr\linewidth-2\fboxsep}{\strut #1\strut}}\par\medskip}
+\newcommand{\dd}{\,\mathrm d}
+\newcommand{\uu}{\bm u}\newcommand{\nn}{\bm n}\newcommand{\xx}{\bm x}
+\newcommand{\ph}{\varphi}\newcommand{\dt}{\Delta t}
+\lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,columns=fullflexible,keepspaces=true,showstringspaces=false,frame=single,rulecolor=\color{accent!30},backgroundcolor=\color{pale},xleftmargin=3pt,xrightmargin=3pt}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small QUANTUM / Interface 专项方案}
+\fancyhead[R]{\small 模型 · 数值方法 · 实现}
+\fancyfoot[C]{\small\thepage}
+\hypersetup{pdftitle={QUANTUM Interface 模块：模型、数值方法与实施方案},pdfauthor={QUANTUM 项目代码审计},pdfsubject={基于模块化蓝图 v1.1 与当前代码的 Interface 专项设计}}
+\begin{document}
+\hypersetup{pageanchor=false}
+\begin{titlepage}
+\vspace*{12mm}
+{\Large\bfseries\color{accent}QUANTUM\par}
+\vspace{8mm}
+{\Huge\bfseries\color{ink}Interface 模块\par}
+\vspace{5mm}
+{\LARGE\bfseries 模型、数值方法与实施方案\par}
+\vspace{8mm}
+{\large 从一个运动水平集，到可独立运行的守恒界面模块\par}
+\vspace{12mm}
+\noindent\begin{tabularx}{\textwidth}{@{}P{.20\textwidth}X@{}}
+\toprule
+设计依据 & \code{docs/QUANTUM_Modular_Model_Blueprint.pdf}，v1.1；同时衔接网格与几何公共底座专项方案和现行代码组织规范。\\
+盘点时点 & 2026-09-14 17:03:35，北京时间。扫描相关目录及依据文件共 224 份；源码清单以 SHA-256 标识，关键文件另存只读分析快照。\\
+工作范围 & 演化界面的模型、Hermite 表示、特征线输运、局部相体积约束、接触/轴线条件、材料运动契约、模块接口与迁移验收。\\
+方案状态 & 专项设计 v1.0。全文区分“当前实现”“结构迁移目标”“后续数值改进”；目标 API 和新字典不是当前已经支持的功能。\\
+本次验证 & 阅读当前源码、测试入口及既有运行记录；依赖与目录检查均通过。未修改数值源码、标准输入或历史结果，未新跑物理算例。\\
+交付 & 可独立编译的 LaTeX 源码和 PDF。正文按模型、离散、耦合、实现和实施顺序展开，附源码证据索引。\\
+\bottomrule
+\end{tabularx}
+\vspace{9mm}
+\decision{\textbf{建议定型：Interface 负责界面状态及其守恒推进，Core 负责同源几何求值。}先复用现有 Q3/Q4、轨迹与体积修正形成完整模块；再以独立证据推进曲率质量、求解条件数和动态网格适应。}
+\vfill
+{\small\color{muted}阅读路径：第 1 节看建议；第 2--5 节解释模型与算法；第 6--8 节说明耦合和实现；第 9--11 节用于任务拆分、验收与能力发布。}
+\end{titlepage}
+\hypersetup{pageanchor=true}
+{\small\setlength{\parskip}{0pt}\tableofcontents}
+\clearpage
+
+\section{先定型什么：一个完整的界面推进问题}
+\subsection{模块应回答的四个问题}
+给定第 $n$ 步界面及同一网格上的新旧速度，Interface 应完整回答：下一步界面在哪里；每个控制体的液相体积是否满足离散输运收支；接触点、轴线和有效域约束是否仍成立；其他模块应如何识别从旧界面到新界面的材料运动与几何变化。
+
+当前这些能力分散在三处：\code{Core/Geometry/ActiveLevelSetTransport} 计算输运预测；\code{Modules/Hydrodynamics/HydroFittedVolumeCorrection} 计算局部守恒修正；\code{Apps/Electrospray} 持有界面状态并组合支撑带、接触约束、相通量和下游电学。\textbf{数值能力已有基础，缺的是与职责一致的模块边界和可检查的状态契约。}\ev{E02,E07--E11}
+
+建议最终只提供一个生产级推进入口：
+\[
+  (S_\Gamma^n,\,\uu^n,\uu^{n+1},\,\mathcal M,\dt,\text{constraints})
+  \longmapsto (\widehat S_\Gamma^{n+1},\text{transfer},\text{report}).
+\]
+帽号表示候选，不是已提交状态。它内部包括输运、几何重建、局部体积修正和全部界面验收。单独返回“输运已算完”不能等同于 Interface.advance 成功。
+
+\subsection{职责边界}
+\begin{longtable}{@{}P{.15\textwidth}P{.43\textwidth}P{.36\textwidth}@{}}
+\toprule 拥有者 & 负责 & 给 Interface 的关系\\\midrule\endhead
+Core & 网格/有效域、标量表示、根与曲线、法向/曲率、相区间和几何积分、几何灵敏度 & 接受一份明确的标量；返回带来源的只读几何。\\
+Interface & 演化标量独立 DOF、输运、几何边界约束、相通量时间积分、体积修正与必要历史 & 拥有状态定义；输出最终候选几何和输运台账。\\
+Hydro & NS、机械边界、速度重构的物理条件、压力与相容载荷离散 & 提供冻结的新旧速度、实际面流率和载荷采样支撑需求。\\
+Electricity & 电势/电流、表面电荷及其历史、Maxwell 牵引、守恒电荷重映射 & 消费保留的材料轨迹和最终几何，内部转移积分电荷。\\
+Materials & 相材料参数与面/单元物性视图 & 从最终几何派生物性；不回写液面。\\
+App/Runtime & case 绑定、唯一时钟、跨模块阶段、统一接受与输出 & 注入输入和调用服务；不再实现界面修正迭代。\\
+\bottomrule
+\end{longtable}
+“Core 有 InterfaceView”与“Modules 有 InterfaceService”不矛盾：前者描述某时刻的几何事实，后者计算界面如何随时间演化。通用等式约束线性求解可由 Solvers 承担；相体积残差和修正方向选择仍归 Interface。
+
+\subsection{三条路径必须区分}
+\begin{enumerate}
+\item \textbf{当前正式接线：}移动喷嘴为 RZ、单条唇缘钉扎到轴线的开链；同层网格用 Q3，原生粗细叶网格用完整 Q4，App 明确核对表示与网格匹配。
+\item \textbf{底层已存在的其他能力：}有固定原生叶 Q3 输运入口、平面/闭链几何与若干独立检查；它们不自动构成完整生产 Interface 的任意组合。
+\item \textbf{目标扩展：}平面局部守恒完整推进、多开链/闭链运动、接触角模型、断裂合并、相变和通用动态 AMR 逐项验收后开放。
+\end{enumerate}
+当前 \code{electrospray_conducting_implicit_short_rz/system/mesh.dict} 已配置固定局部加密。较早 AMR 记录仍写“标准 case 为同层”，本报告以当前字典和分派代码为准。\texttt{adaptiveMesh true} 在这里用于初始建网格，不等于时间步间动态适应已经接通。历史短程结果还须与当次程序哈希对应，不能覆盖后来新增的所有完整 Q4 路径。\ev{E10,E17,E18}
+
+\section{模型：界面是什么，守恒什么，边界约束什么}
+\subsection{几何定义、相侧与测度}
+用连续标量 $\ph(\xx,t)$ 表示两相界面：
+\begin{equation}
+\Omega^-(t)=\{\ph<0\},\quad\Omega^+(t)=\{\ph>0\},\quad
+\Gamma(t)=\{\ph=0\},\qquad \nn=\frac{\nabla\ph}{|\nabla\ph|}.
+\label{eq:definition}
+\end{equation}
+喷嘴绑定中负相为液体、正相为气体；这由几何相对与材料映射核对，不能在公共算法中写死 phaseId。法向由负相指向正相。界面附近必须有可解析的非零梯度，否则法向和曲率不能成立，应明确拒绝或进入已验证的专门处理。
+
+\begin{longtable}{@{}P{.20\textwidth}P{.35\textwidth}P{.39\textwidth}@{}}
+\toprule 量 & 平面 XY & 轴对称 RZ\\\midrule\endhead
+坐标 & $(x,y)$ & $(r,z)$，$r\ge0$；本项目 $x=r$。\\
+体积测度 & $b\dd x\dd y$，物理单位厚度 $b=1\,\mathrm m$ & $2\pi r\dd r\dd z$。\\
+界面面积 & $b\dd s$ & $2\pi r\dd s$。\\
+体积流率 & $\int_f\uu\cdot\nn_f\dd S$，SI 为 $\mathrm{m^3/s}$ & 同式，必须包含旋转面积。\\
+曲率 & 平面曲线的 $+\nabla\cdot\nn$ & 子午曲率加环向曲率；不能只用二维值。\\
+\bottomrule
+\end{longtable}
+上述是目标统一测度约定。当前完整局部体积修正入口显式要求 RZ；XY 扩展必须实现相应体积/容量/通量积分并验证，不能只增加一个枚举。代码内部归一化尺度保持现有 UnitsContext：RZ 体积乘 $L_0^3$，面积乘 $L_0^2$，流率乘 $L_0^3/T_0$，曲率除 $L_0$。
+
+\subsection{运动学方程与适用范围}
+首批采用无相变、无穿越的材料界面模型：
+\begin{equation}
+ \partial_t\ph+\uu\cdot\nabla\ph=0,
+ \qquad V_\Gamma=\uu\cdot\nn.
+ \label{eq:transport}
+\end{equation}
+式中速度来自已求得的流动阶段，也可来自独立验证的规定速度场。几何形状只由法向速度决定，但表面电荷等材料量还需要完整材料轨迹，包含切向运动。因此“只有法向运动就足够”仅适用于零面位置，不适用于下游材料输运。
+
+两侧不可压缩速度具有相容法向迹；Interface 不解速度连续条件或应力平衡，而是核对输入采样器与面流率的身份、边界约束及离散一致性。若以后引入相变，则一般有 $V_\Gamma\ne\uu^\pm\cdot\nn$，需显式质量通量闭合；不能沿用本式并把体积变化藏在几何修正中。
+
+\subsection{为什么还需要相体积守恒}
+定义固定控制体 $K$ 中的负相体积和体积分数：
+\begin{equation}
+ V_K^-(t)=\int_K {\bf1}_{\ph<0}\dd V,\qquad
+ \alpha_K^-=V_K^-/C_K,
+ \label{eq:volume}
+\end{equation}
+其中 $C_K$ 为\emph{实际活动控制体}的容量。无相变、不可压缩条件下，指示函数守恒给出
+\begin{equation}
+ \frac{\mathrm dV_K^-}{\mathrm dt}+q_K^-=0,
+ \qquad q_K^-=\sum_{f\subset\partial K}s_{Kf}F_f^-,\quad
+ F_f^-=\int_{f\cap\Omega^-}\uu\cdot\nn_f\dd S.
+ \label{eq:balance}
+\end{equation}
+同一内部面只定义一次 $F_f^-$，两个属主取相反符号；由此求和后内部流率抵消，得到全域边界收支。开放供液时液体总体积可以增长，故正确目标是“体积变化与边界流入相符”，不是“总液体体积恒定”。
+
+连续方程\eqref{eq:transport}与\eqref{eq:balance}在这些假设下相容；但离散的点值特征线更新不自动满足有限体积积分收支。现有修正正是同时满足这两个离散要求的补充。$\alpha$ 始终从同一最终水平集积分得到，\textbf{不另行推进一套 VOF 作为第二个界面权威。}受力用平滑指标 $H_h$ 是另一种具名派生量，既非 $\alpha$，也非新的物理厚度。
+
+\subsection{法向、曲率与力的分工}
+设 $g=|\nabla\ph|$。几何需要返回
+\begin{align}
+ \kappa_m&=\frac{\ph_z^2\ph_{rr}-2\ph_r\ph_z\ph_{rz}+\ph_r^2\ph_{zz}}{g^3},
+ \label{eq:km}\\
+ \kappa_{RZ}&=\kappa_m+\frac{n_r}{r},\qquad r>0.
+ \label{eq:krz}
+\end{align}
+平滑轴极点满足偶标量正则性；当前实现的合法轴端极限为 $\kappa_{RZ}=2\kappa_m$，并核验轴上 $n_r=0$。不能令 $n_r/r=0$，也不能用一个任意小半径代替极限。曲率切向导数还需同一局部标量的三阶导数。
+
+以式\eqref{eq:definition}的外法向，常表面张力的单流体毛细力为 $-\gamma\kappa\nn\delta_\Gamma$。Interface/Core 输出几何；Hydro 以压力相容的梯度与对偶体权重装配毛细和电牵引。$\gamma$ 归 Materials，Maxwell 牵引归 Electricity。Interface 不接受电势求解器、压力矩阵或“电压力开关”。\ev{E13}
+
+迁移时应增加\textbf{唯一符号适配检查}：\code{LevelSetHermiteGeometry::Frame} 明确使用 $+\mathrm{div}(n)$；旧 \code{LevelSetCurvature::Reconstruction} 的独立曲率量有相反符号表达。不能只因成员都叫 curvature 就直接替换。几何服务使用球面外法向、$\kappa=2/R$ 的独立例子固定约定，不篡改旧数值策略。
+
+\subsection{钉扎、固壁与轴线不是同一种条件}
+\begin{enumerate}
+\item \textbf{钉扎：}接触点 $\xx_c=\xx_{c,0}$ 且 $\ph(\xx_c)=0$。首批要求精确的独立原生顶点，并要求实际新旧无滑移速度在该点为零；不自动吸附到附近网格点。
+\item \textbf{接触斜率：}位置固定仍允许自由侧的切向导数演化，从而改变接触角。当前修正显式释放一个沿湿壁切向的一阶导数；不是指定一个新的接触角。
+\item \textbf{固壁延拓：}角点 sector 为固体附近的单侧数值表示，保持声明的相别与固定零点。自由侧和湿壁延拓侧的 jet 不必相同，不能把 sector 延拓条件当成物理接触角条件。
+\item \textbf{轴线：}$\ph_r=\ph_{rz}=0$ 与 $u_r=0$；轴向端点可运动，轴上的 $\ph$ 值不能普遍钉死。
+\item \textbf{压力口：}当前完整推进要求界面及其支撑带远离压力口，口所在单元经完整闭单元判相。真实液面进入口时，需显式输入相/标量闭合；不能取最近值或截断轨迹。
+\end{enumerate}
+
+\subsection{水平集不再是精确距离函数}
+初态可由带符号距离构造；输运和局部修正后通常 $|\nabla\ph|\ne1$。因此窄带实际按标量幅值而非总是精确的几何距离判定，距离解释必须谨慎。重初始化属于辅助数值过程，可用伪时间形式解释
+\[
+ \partial_\tau\psi+S(\ph)(|\nabla\psi|-1)=0,
+ \quad\psi(\tau=0)=\ph,
+\]
+但该式\textbf{不是本次启用方案}。当前移动喷嘴保持 \texttt{none}；若未来启用，必须给出零面、体积、接触、曲率和材料电荷历史的保持方案，独立评价其误差，禁止在失败时静默重距离化。
+
+\section{空间离散：只允许一份标量产生所有几何}
+\subsection{Q3 与完整 Q4 的独立自由度}
+每个矩形叶单元采用本地无量纲坐标 $(\xi,\eta)\in[0,1]^2$。Q3 表示为双三次多项式
+\[
+ \ph_K(\xi,\eta)=\sum_{i=0}^{3}\sum_{j=0}^{3}a_{ij}\xi^i\eta^j.
+\]
+其 16 个局部数据来自四角的 $\ph,\ph_x,\ph_y,\ph_{xy}$。输入导数具有物理单位，组装局部多项式时只乘一次实际单元边长。
+
+完整 Q4 为双四次多项式，共 25 个局部条件：四角各四个数据共 16 个；四条边的中点值和法向导数共 8 个；单元中心值 1 个。\code{ActiveQuarticHermitePatch} 显式保存这些数据，不能把仅有顶点 jet 的 Q3 对象改一个 order 字段就变成完整 Q4。\ev{E03}
+
+特别区分三个名称相近的事实：
+\begin{longtable}{@{}P{.31\textwidth}P{.63\textwidth}@{}}
+\toprule 路径 & 权威标量与求导操作\\\midrule\endhead
+同层 \code{advance} & 权威状态是 Q3；对标量\emph{增量}用四次模板重构导数，再加回旧 jet。使用 Q4 求导模板不等于状态是 Q4。\\
+原生 \code{advanceNative} & 独立规则顶点的 Q3 jet；在真实局部叶网格上用 25 点查询模板生成增量导数。底层验证入口保留。\\
+原生 \code{advanceQuarticNative} & 权威状态是完整 Q4；推进独立顶点、最大边中点和单元中心值；导数增量由既有递归延拓生成，使用完整的 7/8 点支撑。\\
+\bottomrule
+\end{longtable}
+正式喷嘴当前分派第一和第三条。三条的离散不应在纯结构迁移中被合并成同一条隐式选择。
+
+\subsection{共享约束比数组布局更重要}
+原生粗细叶的悬挂顶点和细子边中点不是独立未知量，它们由同一粗边多项式限制得到；值与法向导数迹必须服从共同约束。局部形式的灵敏度也须通过链式法则回拉到\emph{独立} DOF，不能拿 16/25 个形式系数直接当全局求解列。
+
+常规共享边的相容性按原表示保证；接触角区 sector 允许明确声明的单侧导数差异。即使常规边具有相容的一阶迹，也不自动获得跨单元的二阶/三阶连续性。后续曲率及曲率切向导数必须标明源单元、局部 chart 和侧别，不把两个局部二阶导数平均成一个未定义的“权威曲率”。
+
+显示用 \code{freeLevelSet} 与悬挂点缓存是派生数据。未用条目可以为零或 NaN，不得因此推断固体内的 $\ph=0$，也不能从显示数组重新构造未带活动掩膜的全域界面。
+
+\subsection{从标量到相体积的唯一生成链}
+\begin{center}
+\begin{tikzpicture}[node distance=5mm,>=Latex,
+ box/.style={draw=accent!65,rounded corners,fill=pale,minimum width=11.8cm,text width=11.2cm,align=center,inner sep=6pt,font=\small}]
+\node[box] (a) {独立标量 DOF + 活动域 + 挂点/角区约束};
+\node[box,below=of a] (b) {不可变 Snapshot：同源多项式、梯度、零点与严格判相};
+\node[box,below=of b] (c) {Panels / NativeGraphChain + 实际公共面分段};
+\node[box,below=of c] (d) {按原生控制体归属细化公共根与曲线子弧};
+\node[box,below=of d] (e) {相体积、面积、曲率、相流率及其灵敏度};
+\draw[->] (a)--(b);\draw[->] (b)--(c);\draw[->] (c)--(d);\draw[->] (d)--(e);
+\end{tikzpicture}
+\end{center}
+如果细化公共面根使分段对象更新，以前由该分段计算的积分必须失效并重算。当前修正先完成体积所需的根细化，再计算相通量；目标接口应保留这个顺序和来源身份。\ev{E05--E08}
+
+\subsection{真实控制体、局部参数与积分}
+RZ 体积可用散度定理求得：取 $\bm F=z\bm e_z$，则 $\nabla\cdot\bm F=1$，因此
+\begin{equation}
+ V_K^-=\int_{\partial(K\cap\Omega^-)}z\,n_z\dd S.
+ \label{eq:moment}
+\end{equation}
+边界包括自由界面和实际被负相润湿的固定控制体面，不能只算自由帽面。代码复用自由弧 GL8 积分、固定面矩和实际容量；共享面矩以相反符号抵消。
+
+旧同层路径须将规范曲线叠加到实际顶点--中点控制体；不能直接把 panel 的源单元号当积分属主。原生叶路径使用实际叶单元及拆分粗细面，仍逐项核对源多项式和弧归属。\code{HydroFittedInterfaceGeometry} 的 16/25 灵敏度类型也不能互转丢列。
+
+微小弧段可能存在于局部参数中，却在显示的全局坐标里舍入成同一个点。必须保留“锚点、端点相对偏移、独立正长度、chart 身份”，不能重新用两个显示坐标相减恢复长度。严格根隔离与判相并不意味着最终 GL8 体积是精确值或区间包围；独立积分误差、收支和有界性检查仍必需。
+
+\section{时间推进：保留当前特征线与增量重构}
+\subsection{第一步：准备冻结的速度历史}
+流动阶段给出实际 $\uu^{n+1}$ 和 $\uu^n$。当前 App 分别从 \code{hydro.ux/uy} 与 \code{hydro.uxPre/uyPre} 创建不可变的 \code{HydroFittedVelocitySampler}，使用原 RZ 通量相容重构。\ev{E11}
+
+目标 \code{VelocityHistoryView} 必须同时记录：两份速度的 StateId、实际时间、MeshVersion、DofMapId、坐标/单位，以及对应的实际面体积流率。采样器与流率必须来自同一速度状态；不能一份取新投影后的速度、另一份取投影前通量。独立 Interface 运行由规定速度提供者同时满足这两类输入。
+
+物理壁面、压力口和轴线的速度重构继续复用已有服务。把纯采样/重构部分提为只依赖公共域和明确边界迹的适配服务，Hydro 提供这些迹；Interface 不通过包含 Hydro 实现来获取速度，也不另造一套壁面外推。
+
+\subsection{第二步：以旧标量控制远场延拓}
+令 $a=|\ph^n|$。数值延拓权重满足
+\[
+ \chi(a)=1\;(a\le w_f),\qquad \chi(a)=0\;(a\ge w_0),
+ \quad 0\le\chi\le1.
+\]
+中间区复用当前尾部因式化的 $C^2$ 五次函数；不用直接多项式替换其浮点求值顺序。回溯采样使用 $\widetilde{\uu}^m=\chi(|\ph^n|)\uu^m$，$m=n,n+1$。这是远离自由面处的标量数值延拓；真实界面及全部物理采样支撑须被证实处于 $\chi=1$ 带内。
+
+当前初始宽度为
+\begin{equation}
+ w_f=(b_{\rm force}+h_{\rm halo})h,\quad w_0=w_f+4h,
+ \quad w_{\rm port}=w_0+2h,
+\end{equation}
+其中 Q3 的 $h_{\rm halo}=4$，完整 Q4 为 7；同层 $h=\max(h_x,h_y)$，原生路径取 chain 的最小活动间距向量后再取最大分量。必要时按原规则扩大 fullWidth 并复核压力口分离，不能只截小带宽来省计算。目标以 \code{SupportRequirement} 汇合几何、载荷等消费者需求，不读取 Hydro 配置。\ev{E09}
+
+\subsection{第三步：双时层显式中点回溯}
+无边界事件的完整步对应当前算式
+\begin{align}
+ \xx_{1/2}&=\xx-\frac{\dt}{2}\widetilde{\uu}^{n+1}(\xx),\\
+ B_n(\xx)&=\xx-\dt\,
+ \frac{\widetilde{\uu}^{n+1}(\xx_{1/2})+
+       \widetilde{\uu}^{n}(\xx_{1/2})}{2}.
+ \label{eq:backtrace}
+\end{align}
+$B_n$ 把新时刻采样点映到旧时刻脚点。发生边界附近缩短子步时，代码按已回溯时间在两份速度之间插值；不能对每个子步重复使用全步中点平均。轨迹核有有界子步和边界事件定位；当前 ActiveLevelSetTransport 对物理流入事件明确拒绝，等待显式标量闭合。
+
+现行采样速度的 $\dt|\widetilde{\uu}|\le h_{\min}/2$ 是轨迹可接受限制。原生入口仍采用全局最细活动单元的保守界限。这里的显式中点不等于整体耦合已证实二阶，也不意味着半拉格朗日方法可以无限放大步长；供液、电荷和毛细动力学仍有各自限制。\ev{E02,E04}
+
+\subsection{第四步：推进增量，不重新拟合整个标量}
+计算
+\begin{equation}
+ \delta\ph(\xx)=\ph_h^n(B_n(\xx))-\ph_h^n(\xx).
+ \label{eq:increment}
+\end{equation}
+独立值更新为 $d_j^*=d_j^n+\delta\ph(\xx_j)$，导数数据增加由同一增量重构得到的相应导数。Q3 用现有四次导数模板；完整 Q4 对独立顶点、边中点、中心取实际点值增量，并用既有递归延拓给出导数增量。\textbf{不把全部 $\ph^*$ 重新拟合一遍。}
+
+这个形式解决两个实际问题：静止点 $B_n(\xx)=\xx$ 时增量严格为零，避免“采样再赋值”因坐标舍入改变初态；已有相容的接触 jet 可以被保留，而不是在零速度时被新拟合改变。完整 Q4 静止边中点的值也直接由其点值增量保持，不能由跨越运动区域的导数模板代替。
+
+模板选择只依据活动域、单侧区域和实际尺度；不按所得曲率好不好改变模板。不可取固体值补模板；悬挂/细边依赖载荷不能作为被推进的独立值。完成后构造严格 Snapshot/Chain，再检查接触、轴线、支撑和压力口。
+
+\subsection{第五步：保留与回溯相同的材料映射}
+对旧材料点 $\xx$，正向映射由反解同一个 $B_n$ 定义：
+\begin{equation}
+ B_n(T_n(\xx))=\xx,
+ \qquad \xx^{(k+1)}=\xx^{(k)}+\xx-B_n(\xx^{(k)}).
+ \label{eq:forward}
+\end{equation}
+当前最多 32 次求值，位移不超过半单元；容限为
+\[
+ \max\{128\epsilon_{\rm mach}L_{\rm coord},10^{-12}h_{\min}\},
+\]
+并要求相对网格尺度可解析。停滞、不收敛、负半径或越出活动域都失败。不另写正向 RK2 公式，也不裁剪到壁面。最终候选持有此材料映射及不可变源/速度的寿命，供 Electricity 使用。
+
+\subsection{初始化单独成为完整事务}
+目标 initialize 依次完成：解析 movingBoundary 与相对；从已有直线/圆弧/离散样条取初始无符号距离；由完整相闭合判符号；准备独立 Q3/Q4 数据与接触单侧 jet；构造 Snapshot/Chain 和相体积。初始相流率必须等初始速度就绪后才能建立，不能由几何单独推断为零。Runtime 可先用初始几何候选准备流动初态，再调用 Interface 的具名初始输运绑定步骤，将同源速度/面流率加入历史；全部完成后统一发布初态。第一次 advance 明确核验这份历史已准备，任何一步失败都不发布部分初态。
+
+当前初始几何 sampler 只在 $t=0$ 使用。后续运动绝不重新调用解析喷嘴形状来“修正”液面。初始接触 jet 是初态的测量/构造信息，不是以后每步都重新指定的接触角。\ev{E10}
+
+\section{局部守恒：把输运预测修成可接受的界面}
+\subsection{离散残差与两个独立门限}
+对预测/试探标量 $\ph(d)$，当前梯形相体积收支为
+\begin{equation}
+ R_K(d)=V_K^-(d)-V_K^{-,n}
+       +\frac{\dt}{2}\big(q_K^{-,n}+q_K^-(d;\uu^{n+1})\big).
+ \label{eq:residual}
+\end{equation}
+旧体积、旧相流率和新速度在修正期间固定；新相流率仍随界面分段变化。定义
+\begin{align}
+ E_1&=\sum_{K\in\mathcal A}|R_K|,\qquad
+ T_1=\sum_{K\in\mathcal A}\frac{\dt}{2}(|q_K^{-,n}|+|q_K^{-,n+1}|),\\
+ e_{\rm balance}&=E_1/T_1,\qquad
+ e_{\rm cell}=\max_{K\in\mathcal A}\frac{|R_K|}{C_K}.
+ \label{eq:gates}
+\end{align}
+$\mathcal A$ 包括全部活动单元，含纯相和无自由弧单元。$T_1$ 使用\emph{各控制体净向外相流率的绝对值}；不能换成所有面绝对流率，也不能用 $|\sum_KR_K|$ 抵消局部误差。$T_1=0$ 时必须 $E_1=0$。
+
+当前喷嘴工作迭代准则为 $e_{\rm balance}\le10^{-3}$ 和 $e_{\rm cell}\le10^{-10}$，两者同时满足；实际体积和最终梯形目标均须在 $[0,C_K]$。这些是现有求解停止准则，不是整个电喷雾的物理验收证明。
+
+\subsection{为什么只修全局体积不够：一个例子}
+设两个相邻单元的残差为 $+10^{-5}$ 和 $-10^{-5}$。全局残差为零，但局部体积仍错；共享面的错误相输运可以在求和中完全隐藏。因此一个统一平移 $\ph\leftarrow\ph+\delta$ 即便修复全域体积，也不能代替当前逐单元约束。
+
+再看候选步：固定 $\uu^{n+1}$ 并不固定 $f\cap\Omega^-$。当零点沿面移动时，液相占据的面区间改变，$F_f^-$ 改变。若体积修正后还沿用预测相通量，便是在不同几何上拼接式\eqref{eq:residual}，会得到假的收敛。
+
+\subsection{体积与相通量灵敏度}
+对于简单、可解析的界面，在固定控制体内，小标量扰动对应法向位移
+\[
+ \delta s_n=-\frac{\delta\ph}{|\nabla\ph|},\qquad
+ \delta V_K^-=-\int_{\Gamma\cap K}\frac{\delta\ph}{|\nabla\ph|}\dd S.
+\]
+设独立变量缩放后为 $z_j$，$\delta d=S\delta z$，则 $J_V=\partial V/\partial z$ 由同一弧积分和挂点约束回拉得到。固定面上的简单零点也随 $d$ 变化，产生 $J_q=\partial q/\partial z$。
+
+原生路径对一个公共面只计算一次相流率导数，再以相反符号进入两个属主。恰好位于半面端点的根使用当前对截断相区间的对称广义斜率；切触、重合和不可解析根继续按原能力拒绝，不声称这里是任意拓扑下的光滑 Jacobian。\ev{E06--E08}
+
+\subsection{Q3 与原生 Q4 线性化的真实差别}
+\begin{longtable}{@{}P{.27\textwidth}P{.30\textwidth}P{.37\textwidth}@{}}
+\toprule 当前入口 & 线性修正方程 & 应如何称呼\\\midrule\endhead
+同层 Q3：\code{correct} & $J_V\delta z=-R$ & 仅体积灵敏度的滞后通量/Picard 型修正；每次试探重新计算相通量。\\
+原生 Q3：\code{correctNative} & $(J_V+\dt J_q/2)\delta z=-R$ & 包含新相通量变化的平衡线性化；底层能力，非当前喷嘴默认原生表示。\\
+原生 Q4：\code{correctQuarticNative} & $(J_V+\dt J_q/2)\delta z=-R$，保持完整 Q4 独立列 & 平衡 Jacobian 修正；端点使用既有广义斜率，仍需阻尼和几何验收。\\
+\bottomrule
+\end{longtable}
+不能根据同一个模板函数名字就把三者都写成完整牛顿法；也不能按较早报告把原生 Q4 描述成尚无 $J_q$。迁移保留这项明确策略分派。是否让同层 Q3 也使用完整平衡 Jacobian，是单独的数值替换任务。\ev{E08}
+
+\subsection{当前线性问题：等式约束最小范数}
+现行线性核求
+\begin{equation}
+ \min_{\delta z}\frac12\|\delta z\|_2^2,
+ \qquad J\delta z=-R.
+ \label{eq:minnorm}
+\end{equation}
+将物理梯度修正写成 $\delta(\partial_x\ph)=\delta z/h_x$（另一方向同理），使求解所用 $\delta z$ 与节点值修正具有相同的 $\ph$ 等效单位。这里的欧氏范数最小化的是被声明 DOF 的增量，不是界面位移、表面积或曲率变化。
+
+每行除以其二范数，得到 $A=D^{-1}J$、$b=-D^{-1}R$。可行集不变。在满行秩前提下，
+\begin{equation}
+ (AA^T)\lambda=b,\qquad \delta z=A^T\lambda.
+ \label{eq:gram}
+\end{equation}
+代码用 SuperLU 求 Gram 系统，然后分别核验完整 Gram 残差和按返回物理增量计算的原灵敏度残差。零自由行、秩不足、不可表示数值、分解失败和超容限均明确失败；没有伪逆截断、删除小行、添加 pin 或 SparseLU 回退。\ev{E07}
+
+Gram 形式会使二范数条件数平方，因此行缩放解决量级问题，不保证消除病态。现有最大归一化缺陷、行范数、线性最大修正和最终回退原因应保留，以判断失败来自可用方向、几何非线性还是线性条件数。
+
+\subsection{自由度选择：必须从约束生成，不能靠经验删行}
+\begin{longtable}{@{}P{.25\textwidth}P{.69\textwidth}@{}}
+\toprule 数据 & 当前喷嘴的处理与模块化要求\\\midrule\endhead
+固壁、钉扎值 & 固定。压力口关联的标量值也固定；不能让修正移动口的相别。\\
+轴线值/导数 & 轴线值可自由改变以移动极点；径向与混合正则性保持，不能误当钉扎。\\
+自由接触斜率 & 只追加沿实际湿壁切向的一阶导数，尺度 $1/h_{\rm contact}$；湿壁 sector 自身 jet 保持。\\
+Q3 & 自由独立节点值加明确追加的一阶导数；混合导数及其他导数保持，不在修正中重拟合。\\
+完整 Q4 & 自由独立顶点值、最大边中点值、活动中心值和上述接触导数；其他导数按既定策略保持。压力单元还固定边中点/中心相关值。\\
+挂点/细子边 & 非独立未知量。固定依赖值时递归约束真实粗侧支撑；不能把未使用 payload 当列。\\
+\bottomrule
+\end{longtable}
+迁移后将以上生成逻辑从喷嘴函数提为具名 Contact/BoundaryConstraint 策略；App 只提供接触点与边界身份。首批保持原自由度集合、排列与缩放。不能为使矩阵可解临时释放壁面值，也不向用户开放“忽略小约束”的选项。\ev{E09}
+
+\subsection{非线性迭代与候选验收的精确顺序}
+\begin{enumerate}
+\item 从输运预测 $d^*$ 构造完整几何、公共分段、体积及新相通量；得到所有活动单元的残差与目标 $V_K^{-,n}-\dt(q_K^{-,n}+q_K^-)/2$。
+\item 若两个收支门限通过且所有目标有界，返回最终候选；否则最多进行 12 轮线性修正。
+\item 每轮解式\eqref{eq:minnorm}，按 $\lambda_{\rm damp}=1,1/2,\ldots,1/256$ 试探，即全步加最多 8 次二分回退。每次只改允许的 DOF，然后重新走完整同源几何链。
+\item 实际体积始终有界、压力口相别不变。内部试探的梯形目标暂可越界，使新切割单元进入下一轮；该状态不能作为接受步。
+\item 最终完全可行的试探优先。否则在收支门限尚未通过时严格降低完整 $E_1$；通过后必须保持两个门限并严格降低目标越界总量。两条进展条件不能用 OR 混合。
+\item 回退耗尽、无可表示增量、几何拒绝或迭代上限到达则失败。只读观察回调失败应直接中止，不作为一次几何回退重试。
+\end{enumerate}
+这一流程保证“线性求解通过”“内部试探有进展”“最终界面可接受”是三个不同状态。最终接受仍不代表空间/时间精度和曲率质量已验收。
+
+\subsection{为什么下一项数值重点应是曲率质量}
+历史实证曾出现仅修节点值时，一条小灵敏度行迫使最大值修正达到约 $3.05$ code，而网格宽约 $0.05$；该候选确实破坏拓扑。追加允许的接触斜率是针对修正方向的有证据补充，不应以放宽拓扑检查替代。\ev{E16}
+
+即使式\eqref{eq:residual}完全收敛，最小 DOF 范数也可能把误差集中在对高阶导数敏感的位置。应分别观测旧、输运后、修正后的 $\kappa$、$\partial_s\kappa$、法向位移及相体积，区分“输运误差”与“修正引入的几何扰动”。第 9 节给出改进路线；\textbf{首批不更换修正范数、不增加曲率平滑、不调整原门限。}
+
+\section{耦合：用最终几何接线，但保留真实时层}
+\subsection{一步的输入、输出与接受时序}
+\begin{longtable}{@{}P{.20\textwidth}P{.35\textwidth}P{.39\textwidth}@{}}
+\toprule 阶段 & 实际输入 & 输出/约束\\\midrule\endhead
+Flow.advance & 已接受 $\Gamma^n$、材料、旧载荷和速度历史 & 候选 $\uu^{n+1},p^{n+1}$；已有时间分裂保持。\\
+Interface.advance & $S_\Gamma^n$、旧体积/相流率，新旧速度，$\dt$ & 经输运和体积修正的最终 $\widehat S_\Gamma^{n+1}$；材料映射、几何修正记录和相体积台账。\\
+Materials.evaluate & 最终候选几何与材料参数 & 给下游的单元/面物性；保留原相别和平均方式。\\
+Electricity.advance & 最终几何、同一材料映射、旧积分电荷及历史 & 守恒重映射后的电荷候选和与之匹配的电场/电流。\\
+Flow.prepareLoads & 最终曲率、材料和电牵引 & 下一次 NS 所需的毛细/Maxwell 载荷；不倒改本步已用载荷。\\
+Runtime.commit & 全部候选、身份及守恒报告 & 一次发布新的 AcceptedState 根；随后输出。\\
+\bottomrule
+\end{longtable}
+上述目标保留当前“NS $\to$ 界面/体积 $\to$ 电学/电荷 $\to$ 下一步力”的分裂。当前 Hydro 仍在求解时就地修改；仅把界面函数改名不能保证全步回滚。初期须用隔离的流动工作状态适配，最终以共同候选发布消除部分提交。
+
+\subsection{材料运动与数值几何修正分开表达}
+将总过程写成
+\[
+ \Gamma^n\xrightarrow[\text{保留 }T_n]{\text{材料输运}}
+ \Gamma^*\xrightarrow[\Delta d_{\rm corr}]{\text{数值约束修正}}
+ \Gamma^{n+1}.
+\]
+第一个箭头是式\eqref{eq:forward}定义的材料运动；第二个是为使离散收支可行而调整标量 DOF。修正通常没有唯一、全局可逆的材料轨迹。目标候选分别返回：
+\begin{enumerate}
+\item \code{MaterialMotionMap}：保留旧几何、两份速度和回溯算式；具有明确起止时刻和寿命。
+\item \code{GeometryCorrectionRecord}：输运预测与最终几何的身份、被改动独立 DOF、接触约束保持情况，以及映射/投影所需的来源信息。它不是一份额外物理速度。
+\end{enumerate}
+Electricity 在自己的 \code{SurfaceChargeField::remapMoving} 中复用当前做法：用 $T_n$ 搬运旧材料分片，再对最终几何进行守恒重分片/投影，核对最终面元与 Interface 的面元一致。App 不再自行重映射一次，Interface 也不读取或修改电荷。\ev{E12}
+
+表面状态首选积分电荷 $Q_a=\int_{\Sigma_a}q_s\dd S$；面积变化后 $q_s=Q_a/A_a$ 是派生密度。在纯材料搬运阶段无电流源时，应保持总积分电荷，而非各面元密度。当前值及需要的历史必须映到同一最终面元序；若每层各自投影，会破坏时间差分的材料对应。
+
+\subsection{相体积台账的公共契约}
+目标 \code{PhaseVolumeTransfer} 返回每个原生面本步的\emph{积分相体积}，而不是仅叫 flux 的裸数组：
+\begin{equation}
+ \Delta V_f^- =\frac{\dt}{2}(F_f^{-,n}+F_f^{-,n+1}),\quad
+ V_K^{-,n+1}-V_K^{-,n}+\sum_fs_{Kf}\Delta V_f^-=R_K.
+\end{equation}
+共享面身份、方向、单位和时间积分规则都要可读。正相由同一总面流率扣除负相流率得到，验证 $\Delta V_f^-+\Delta V_f^+=\Delta V_f$；不能独立算两次面切割而留下不一致缝隙。相补关系成立不替代各相与总流动的守恒验收。
+
+当前 \code{positiveFluxByNativeFace} 的 positive 表示 $+r/+z$ 的\emph{面方向}，不是正相；其中保存的仍是负相流率。目标命名应消除这类歧义，如 \code{negativePhaseVolumeRateByFace}，另有 \code{FaceOrientation}。首批转换必须保留原浮点值，不因重命名反转两次符号。\ev{E06}
+
+旧体积与旧相流率应放进 InterfaceState 的时间离散历史中，记录它们对应的几何和速度来源。它们不是可以随意删掉重算的性能缓存：旧流率参与式\eqref{eq:residual}，应在状态提交时一起替换，失败时一起保留。
+
+\subsection{零时间 AMR 与物理 advance 分开}
+AMR 是接受步边界的 $t\mapsto t$ 状态变换。Interface 的 \code{prepareTransfer} 复用当前 \code{ActiveQuarticHermiteTransfer::prepare}，首批允许保护界面与支撑层、仅改变已严格证明为纯相的区域；重建约束后要求受保护单元完整 Q4 多项式不变。\ev{E14}
+
+对应 \code{SurfaceChargeField::rebindMesh} 已提供保持面元一一对应时的积分电荷及额外历史重绑定；原生索引改变不应造成额外运动、电流或体积修正。它不能处理切割面元拆分/合并，也不能代替材料运动重映射。\ev{E15}
+
+还需接 Interface 接触点原生身份重绑定、当前/历史相台账重建，并与 Hydro 的速度/压力/时间历史转移一起接受。只完成 Q4 与电荷两个组件，不代表动态喷嘴已支持。任何未来允许界面单元改变的转移策略都须另行给出零面/曲率/相体积与电荷误差预算，不能借用当前“完整多项式保持”的零误差声明。
+
+\section{代码盘点：哪些保留，哪些提取，哪些补齐}
+\subsection{主要实现及职责去向}
+下面为盘点时点的实际文件，不是目标空壳目录清单。行数用于估计审阅范围，不用于评价代码质量；头文件与间接支撑另见附录。
+\begin{longtable}{@{}P{.42\textwidth}P{.09\textwidth}P{.43\textwidth}@{}}
+\toprule 现有源文件（相对项目根） & 行数 & 处理建议\\\midrule\endhead
+\code{src/Core/Geometry/ActiveLevelSetTransport.cpp} & 668 & 先原样适配，后将时间推进和材料映射提入 Interface/Transport；纯空间重构仍调 Core。\\
+\code{src/Modules/Hydrodynamics/HydroFittedVolumeCorrection.cpp} & 405 & 相残差列装配归 Interface；通用最小范数线性核在保持算式后提给 Solvers，或先作私有实现。\\
+\code{src/Modules/Hydrodynamics/HydroFittedVolumeCorrectionStep.cpp} & 678 & 非线性迭代、试探和收支接受完整移入 Interface/Conservation；去掉 HydroDomain 和 HydroVelocity 具体类型。\\
+\code{src/Modules/Hydrodynamics/HydroFittedPhaseMeasure.cpp} & 575 & 分拆静态公共面分段/边界矩与相速度积分。前者归 Core，后者由 Interface 消费公共速度视图。\\
+\code{src/Modules/Interface/InterfaceCellMeasure.cpp} & 514 & 同源曲线--控制体叠加、体积及灵敏度归 Core/Geometry；去除 Hydro 域宿主，不改变积分。\\
+\code{src/Apps/Electrospray/Setup/ElectrosprayInterface.cpp} & 570 & 保留喷嘴相/线/点绑定；提取通用初态建构、接触约束与 Q3/Q4 状态准备。\\
+\code{src/Apps/Electrospray/Coupling/ElectrosprayInterfaceMotion.cpp} & 591 & 支撑生成、约束 DOF、推进/修正组合进入 Interface；App 收敛为一次调用及结果交接。\\
+\code{src/Apps/Electrospray/ElectrosprayTimeLoop.cpp} & 465 & 保留工作流；更换为共同候选和来源核验，去掉接口内部知识及分散的接受状态。\\
+\bottomrule
+\end{longtable}
+上面八个实现文件合计 4,466 行，是首批重点审阅范围，\textbf{不是全部都要搬走}。Core 原多项式、根、mapped chart、GL8 积分和重构内核继续复用；Hydro 的力投影、压力相容面梯度和机械边界继续留在 Hydro。
+
+\subsection{最需要解决的八个结构问题}
+\begin{longtable}{@{}P{.07\textwidth}P{.35\textwidth}P{.52\textwidth}@{}}
+\toprule 编号 & 当前证据 & 改造后的完成标志\\\midrule\endhead
+P1 & 演化状态命名/定义在 Electrospray & InterfaceState 自持独立 DOF 和历史；App 仅存绑定。\\
+P2 & 几何体积与相通量依赖 HydroFittedDomain & 只消费公共 DomainView、测度与明确边界相输入；可独立运行。\\
+P3 & 修正入口依赖 HydroFittedVelocitySampler & 注入不可变公共 VelocityHistory/FaceVolumeRate，保留相容速度重构。\\
+P4 & 模块相关策略散落在 591 行运动函数 & 统一 Service 生命周期；Contact、Support、Conservation 为内部明确组件。\\
+P5 & 体积/相流率历史与状态分开提交 & InterfaceCandidate 包含所有下一层状态，失败不改变任一历史。\\
+P6 & 两个速度 callback 与 currentVelocity 可被误接到不同状态 & 构造时验证统一来源；公共 API 不允许三份无关输入分别传入。\\
+P7 & 几何缓存多靠尺寸、指针和调用约定保持同源 & 强身份和不可变所有权联合约束；根分段修订使全部派生积分显式失效。\\
+P8 & 已有许多组件测试，但无独立 Interface.advance 完整契约 & 规定速度驱动运行全过程且不实例化 Hydro；同输入集成结果对照。\\
+\bottomrule
+\end{longtable}
+现行架构检查通过只说明所覆盖的字面 include/目录规则满足要求。它没有证明“同一个速度 callback 被绑定正确”或“候选失败后 Hydro 没变”；这些必须补语义级检查，不能扩大现有例外名单掩盖依赖。
+
+\subsection{旧路径的退出方式}
+\code{ImmersedGeometry::updateLevelSets}、旧重新距离化和 \code{Core/Lagrangian/SharpInterface} 等仍有历史消费者。第一批不删除整个类，也不把所有旧求解器强制迁到当前 active Hermite。为每个入口登记实际调用者、状态表示和保留原因，迁移一条消费链后再移除无人调用的旧入口。
+
+最终把时间核移出 Core 时，要在同一批更新其全部调用者。\textbf{不能保留一个 Core 旧头，转发包含 Modules/Interface 的实现头}，否则会形成 Core 反向依赖。过渡可先让新 InterfaceService 调用现有 Core 核，再进行实现归位；过渡适配必须有明确删除条件，不复制第二套算法。
+
+\section{实现：服务、状态、接口及文件组织}
+\subsection{状态只有一个拥有者}
+目标采用蓝图的 Config / Problem / State / Candidate / Report：
+\begin{longtable}{@{}P{.21\textwidth}P{.73\textwidth}@{}}
+\toprule 对象 & 内容与寿命\\\midrule\endhead
+InterfaceConfig & 表示、运动策略、重初始化、体积约束与检查门；只含本模块消费的参数，不含 run 时间循环/输出路径。\\
+InterfaceProblem & 几何绑定、相对、域、接触条件、支撑需求与能力请求；不含可写接受态。\\
+InterfaceState & 唯一独立标量数据、约束身份、几何版本、相体积/相流率历史及时间标签；类型归模块，AcceptedState 根持有其唯一接受实例。\\
+InterfaceCandidate & move-only、自持下一状态及几何、材料映射、修正记录、相台账和报告；失败无部分结果。\\
+InterfaceReport & 几何合法性、守恒/有界性、轨迹/修正诊断、阶段失败原因和耗时；耗时不参与物理接受。\\
+InterfaceService & 无物理时钟、无权威状态；可拥有有明确键和寿命的派生缓存及数值工作区。\\
+\bottomrule
+\end{longtable}
+state 内的 Snapshot/面元可以共享不可变数据以降低复制；显示场是只读派生物。候选持有源/目标几何的必要寿命，避免返回捕获临时对象的裸 callback。借用视图应在类型/文档中声明有效期，不能默认所有调用者都理解 App 的局部变量作用域。
+
+\subsection{建议的公共接口草图}
+下列为\textbf{拟新增契约示意}，类型成员需在公共底座阶段落实；不作为当前能编译的头文件。公开声明不暴露 Eigen、SuperLU 或原生 patch 模板。
+\begin{lstlisting}[language=C++]
+class InterfaceService {
+public:
+  CapabilityReport preflight(const InterfaceProblem&) const;
+
+  InterfaceInitialCandidate initialize(
+      const InterfaceProblem&, const DomainView&,
+      const InitialInterfaceInput&, const StepContext&);
+
+  InterfaceCandidate advance(
+      const InterfaceProblem&, const InterfaceState& accepted,
+      const VelocityHistoryView&, const StepContext&);
+
+  InterfaceTransferCandidate prepareTransfer(
+      const InterfaceProblem&, const InterfaceState& accepted,
+      const MeshTransferView&, const StepContext&);
+};
+\end{lstlisting}
+\Needspace{11\baselineskip}
+\begin{lstlisting}[language=C++]
+class InterfaceCandidate {
+public:
+  InterfaceCandidate(const InterfaceCandidate&) = delete;
+  InterfaceCandidate(InterfaceCandidate&&) noexcept;
+  const InterfaceView& geometry() const;
+  const MaterialMotionMap& materialMotion() const;
+  const GeometryCorrectionRecord& correction() const;
+  const PhaseVolumeTransfer& phaseTransfer() const;
+  const InterfaceReport& report() const;
+  // Runtime consumes the candidate during the common commit.
+};
+\end{lstlisting}
+\code{InterfaceView} 是 Core 的只读几何接口；初始化与转移候选不能冒充一个非零时间物理步。固定界面任务可以 initialize/evaluate，不提供假的零速度 advance 来凑接口。模块功能枚举只开放已实现能力。
+
+\subsection{身份检查的最小集合}
+\begin{enumerate}
+\item StateStamp 至少包含 StateId、MeshVersion、GeometryVersion、NormalizationId、StepId、CodeTime、Stage；不同数值层不能仅比较时间浮点数。
+\item 场视图包含 DofMapId、位置和量纲。面流率是面积积分；不能因为长度等于面数就接受一份面速度数组。
+\item MaterialMotionMap 标明 sourceGeometry、transportedGeometry、起止时刻与两层速度来源；GeometryCorrectionRecord 连接 transportedGeometry 和 finalGeometry。
+\item 相体积/相流率的来源包含几何、速度、面方向与积分规则。根细化的分段修订只属于派生几何缓存，不表示物理时间前进。
+\item 候选的所有几何消费者须引用同一 finalGeometry；Q3 与 Q4、原生与逻辑位置显式区分。不能靠数组长度猜表示。
+\end{enumerate}
+版本号必须建立在受控修改和不可变快照上；若外部仍能通过 const 网格拿到可写实体，单加一个计数器不能检测所有越权修改。相关底座修复与本模块的公共 DomainView 共同实施。
+
+\subsection{内部执行骨架}
+\begin{lstlisting}
+advance(problem, accepted, velocity, step):
+  validate identities, supported capabilities and time interval
+  keep immutable accepted geometry and required histories alive
+  constraints = prepare admissible DOFs from boundary/contact IDs
+  support = combine declared sampling requirements using old rules
+  predictor = existing characteristic transport(accepted, velocity)
+  validate predictor geometry, contacts, support and port separation
+  corrected = existing local balance iteration(predictor, histories)
+  validate final geometry, all-cell balance and bounded targets
+  transfer = build phase ledger from final shared-face cuts
+  return owned candidate(corrected, predictor.materialMap, transfer)
+  // No accepted-state mutation, charge solve, clock advance or file IO.
+\end{lstlisting}
+App 获得候选后仍需完成电学和载荷等跨模块阶段。Runtime 的发布只交换已准备好的所有权，不执行可能失败的几何重建或文件写入；发布前完成必要分配。输出失败应报告 acceptedStep 与 lastCompleteFrame，不把缺少完整帧的部分文件作为成功结果。
+
+\subsection{目标目录与现有实现对应}
+以下路径为\textbf{目标}，按实际职责创建，避免先造一批空壳：
+\begin{longtable}{@{}P{.43\textwidth}P{.51\textwidth}@{}}
+\toprule 目标位置 & 内容和来源\\\midrule\endhead
+\code{include/Modules/Interface/InterfaceService.h} & 唯一公共推进服务；对应原 App 运动组合逻辑。\\
+\code{include/Modules/Interface/InterfaceState.h}、\code{InterfaceConfig.h} & 只暴露需要的稳定类型；原 patch 存储用私有实现保存。\\
+\code{src/Modules/Interface/Transport/} & 原特征线输运和材料映射，保持 Q3/原生策略分派。\\
+\code{src/Modules/Interface/Conservation/} & 相流率/收支、自由度装配与非线性修正；当前 Hydro 代码的模块归位。\\
+\code{src/Modules/Interface/Boundary/} & 接触与轴线约束编译、支撑检查；不含喷嘴尺寸、相 ID 或材料值。\\
+\code{src/Modules/Interface/IO/} & 独立字典解析和模块报告写出；数值路径不含 IO 依赖。\\
+\code{include/Core/Geometry/InterfaceView.h} & 复用底座定义，统一只读零面/法向/曲率/测度；不另建同名公共视图。\\
+\code{Core/Geometry} 的具名组件 & 保留 patch/重构/根/曲线；从 Hydro 提取实际域几何体积与灵敏度。\\
+\code{Solvers} 的公共服务 & 复用线性后端；只有真正无相/界面语义的等式约束求解核才提取为通用工具。\\
+\code{Apps/SingleModule} & 规定速度驱动的 Interface 运行接线；与集成 App 使用同一 Service。\\
+\bottomrule
+\end{longtable}
+依赖方向为 Interface $\to$ Core/Solvers；Interface 不依赖 Hydro/Electricity 实现或 App 配置。Hydro/Electricity 通过公共只读几何与输运类型交换信息。每批同步更新 CMake、职责说明、实际消费者及架构检查；严格/精确浮点和相关禁用 LTO 边界随实现保留。
+
+\section{需要提升什么：结构迁移后的数值工作}
+\subsection{优先级 N1：建立几何质量的独立诊断}
+先建立观测，不先加平滑参数。对于接受前的旧、输运预测、体积修正后几何，输出相同定义下的：界面位置误差/法向位移、面积、真实曲率、曲率切向导数、梯度幅值、最坏单元残差及其旧体积/通量/容量。对移动面元的比较采用共同来源/材料对应或明确重采样规则，不能随意比较两个不同点集的峰值。
+
+曲率精度至少分三层核验：静态几何重构误差；规定速度输运后的几何误差；局部修正额外引入的变化。真实曲率静滴再检验寄生流，解析常曲率仅作为算子平衡对照。历史 N32 RZ 环面误差 $0.0224595>0.01$ 保持未通过，不能被二次球面或高阶多项式再现测试替代。\ev{E17}
+
+\subsection{优先级 N2：改善修正的几何分布}
+在保留局部约束的前提下，研究
+\begin{equation}
+ \min_{\delta z}\frac12\delta z^TW\delta z,
+ \qquad J\delta z=-R,
+ \quad W=I+\lambda L^T W_s L\succ0.
+ \label{eq:weighted}
+\end{equation}
+这里 $L$ 应基于同源几何给出无量纲化的法向位移变化或其沿界面变化率，$W_s$ 为相应面积权重；$\lambda$ 必须注明尺度含义。原问题对应 $W=I$。目标是控制没有物理依据的高频修正，同时保留所有局部守恒等式及壁面/接触约束。
+
+这只是\textbf{候选研究方向}，当前代码没有这项权重。不要直接把最终曲率“压小”：真实物理尖端本来就可能有高曲率。应比较修正增量的几何扰动，并核验对真实曲率、相体积、材料电荷和动力学的影响。若权重使可行方向消失或收敛恶化，报告失败，不用加权残差取代原完整残差。
+
+首个实验可限于已知失败/高扰动夹具，使用预先固定的尺度选择和原验收门限；不得在生产喷嘴失败后自动扫描 $\lambda$ 并挑选最容易通过的值。只有证明收益后才替换默认策略，并规定旧策略退出条件。
+
+\subsection{优先级 N3：避免 Gram 条件数的额外放大}
+先在不改数学目标的条件下比较 $W=I$ 的增广系统，再研究式\eqref{eq:weighted}：
+\begin{equation}
+ \begin{bmatrix}W&A^T\\A&0\end{bmatrix}
+ \begin{bmatrix}\delta z\\\lambda\end{bmatrix}
+ =\begin{bmatrix}0\\b\end{bmatrix}.
+\end{equation}
+仍使用允许的 SuperLU 后端，保持完整约束与残差核验。增广矩阵更大，稀疏性、分解代价和尺度可能不同；不能保证一定更稳或更快。即便 $W=I$ 与原法在精确算术下等价，浮点运算不同，也属于数值变更而非文件移动。
+
+保留原归一化行范数和最大修正诊断，比较病态小弧/接触夹具、已知最小范数解、最终物理结果与失败类别。秩不足表示当前约束或自由度不相容，不能自动用伪逆丢约束、静默增加正则项到残差方程。
+
+\subsection{优先级 N4：再评估时间离散与真实流入能力}
+当前完整流程尚无充分时间/网格收敛证据。先在固定网格和光滑规定速度下，分别测轨迹、预测、修正与最终曲率的误差；再在原耦合短程比较时间步收敛。解析速度和界面真值是独立验证输入，不进入生产求解核。
+
+若证据表明梯形局部收支在新湿/新干单元上造成不可行性，应先记录完整旧/新体积和通量来源，再单独研究时间积分/通量构造替换。不能在结构批次把目标裁剪回容量，或改成不同时间公式隐藏问题。允许界面流入压力口还需输入相、标量和接触边界闭合，当前带宽分离限制继续有效。
+
+\subsection{性能优化：按阶段计时，保持数学对象不变}
+当前已在部分原生输运模板中复用完全相同坐标的成功采样，历史记录表明有收益；新完整 Q4 路径是否同样收益必须按其自己的实现和程序身份测量。建议优先统计 Snapshot、根分段、体积、相流率、线性解和材料映射耗时，定位重复构造。
+
+可复用不可变几何、精确坐标查询及已验证的拓扑定位；不可跨几何试探沿用相分段/相通量，不能用容差合并采样点、改变小弧保留规则或删去远场微小非零力来提速。全步速度受 NS、电荷迭代和输出共同影响，不以局部计时直接宣称总体加速倍数。
+
+\section{实施顺序与验收：每批有明确退出条件}
+\subsection{建议任务包 I0--I8}
+\begin{longtable}{@{}P{.07\textwidth}P{.24\textwidth}P{.39\textwidth}P{.24\textwidth}@{}}
+\toprule 批次 & 交付 & 实施内容 & 退出条件\\\midrule\endhead
+I0 & 现状基线与能力表 & 固定输入/程序/源码；列 Q3/Q4、RZ/XY、开闭链实际支持；保留失败和检查门限。 & 可复现原合法/拒绝结果；不同程序记录不混用。\\
+I1 & 公共域与输入视图 & 接底座 DomainView、StateStamp、速度/面流率和 SupportRequirement；从 Hydro 去除公共几何宿主。 & 视图独立构造，来源/方向/单位不匹配明确拒绝。\\
+I2 & InterfaceState 与初态 & 提取状态和完整 initialize；App 保留几何/相/接触绑定；Q3/Q4 权威只存一份。 & 初始 DOF、面元、真实曲率、相体积与原入口对照；失败无部分发布。\\
+I3 & Transport 与 Contact & 包装后迁出原 Core 时间核；提取单侧支撑与固定/自由 DOF 生成，保持分派。 & 静止、运动、接触、轴线和半单元限制原值不变；所有旧调用者迁完。\\
+I4 & Conservation & 提取原非线性修正与相台账；保留 Q3/Picard 与 native 平衡 Jacobian。 & 完整残差、目标范围、自由度集、回退/拒绝与原路径对照。\\
+I5 & 集成候选与材料契约 & 用完整 Interface.advance 替换 App 内部组合；与 Electricity 交接两种映射信息；Runtime 统一接受。 & 界面失败或电学失败均保留整步旧态；无重复材料/电荷搬运。\\
+I6 & 独立运行与字典 & SingleModule 规定速度入口、新 interface 配置和消费者报告；不实例化 Hydro。 & 独立运行与集成调用同一实现；未知/未支持组合启动前拒绝。\\
+I7 & 受限动态 AMR & 包装已存在 Q4/electric 转移，补接触/相历史重绑定；与 Hydro 转移共同接受。 & 仅在支持范围内零时间变换；完整步与全部历史、收支一致。\\
+I8 & 数值质量提升 & 按 N1--N4 分批实施，独立选择曲率诊断、修正范数、线性形式或时间策略。 & 每次数值变更有专门对照、原物理基准及明确替换决定。\\
+\bottomrule
+\end{longtable}
+主链为 I0 $\to$ I1 $\to$ I2 $\to$ I3/I4 $\to$ I5 $\to$ I6；I7 依赖完整公共网格/流动转移，不能只由 Interface 独立宣布完成。N1 的只读诊断可早做；改范数、换线性系统和时间公式放 I8。首个模块定型里程碑是 I6，不必等待任意 AMR、断裂合并和相变。
+
+不以“搬了多少文件”验收。每批只做一类可比较改变；若提取过程中发现有证据的数值缺陷，单独建立修复批次及修改前后结果。代码规模和现有测试较大，具体工期应在 I0/I1 明确公共底座接口后估算，不用未经验证的人日承诺替代任务边界。
+
+\subsection{复用的现有检查入口}
+下表的名称均在当前 CMake 注册；“复用”是未来实现批次的验收要求，不表示本次文档任务重新运行了它们。
+\begin{longtable}{@{}P{.42\textwidth}P{.52\textwidth}@{}}
+\toprule 现有 CTest 名称 & 核心保护对象\\\midrule\endhead
+\code{ehd_hermite_scalar_contract}、\code{ehd_leaf_scalar_contract} & 标量同源、活动掩膜、原生寻址及约束。\\
+\code{core_quartic_native_constraints}、\code{core_quartic_native_sectors} & 完整 Q4 独立数据、挂点/细边和接触角区。\\
+\code{core_quartic_native_geometry}、\code{core_quartic_native_variation} & 同源原生几何、体积/通量相关灵敏度的基础。\\
+\code{core_quartic_native_reconstruction} & 完整重构支撑、独立数据及单侧规则。\\
+\code{hydro_native_levelset_transport}、\code{hydro_native_quartic_transport} & 规定运动、保留轨迹、Q3 与完整 Q4 的不同路径。\\
+\code{hydro_adaptive_volume_correction}、\code{hydro_native_quartic_balance} & 线性最小范数、局部平衡修正、边界及失败条件。\\
+\code{ehd_native_surface_charge_remap}、\code{ehd_surface_charge_transport} & 材料映射、积分电荷与历史的守恒接线。\\
+\code{core_quartic_mesh_transfer}、\code{ehd_surface_charge_mesh_transfer} & 受保护几何不变的零时间跨网格转移。\\
+\code{architecture_dependencies}、\code{architecture_layout} & include 归属、精确例外和现行目录规则。\\
+\bottomrule
+\end{longtable}
+迁移测试位置时可以暂保留历史 CTest 名以保持基线可追踪，但测试内容应直接覆盖新的生产调用链，不另维护一套只供测试的界面算法。独立 Interface 测试不应仍必须链接整个 Hydro 实现。
+
+\subsection{需要补齐的完整契约测试}
+\begin{longtable}{@{}P{.09\textwidth}P{.29\textwidth}P{.56\textwidth}@{}}
+\toprule 编号 & 输入/扰动 & 应检查的独立结果\\\midrule\endhead
+T1 & 规定零速度，合法 Q3/Q4 初态 & 独立值及原相容 jet 保持；无额外重初始化、材料运动或体积变化。\\
+T2 & 光滑平移/形变，固定网格 & 对独立参考核验轨迹与最终零面误差；分别统计预测和修正，不只读 solver.success。\\
+T3 & 钉扎到轴线的开链 & 接触点精确不动、接触斜率可变；轴端能移动且法向/曲率极限成立。\\
+T4 & 有流入的相体积收支 & 逐单元完整残差、全域边界收支、正负相互补、实际体积和目标均有界。\\
+T5 & 新湿单元、微小弧、小灵敏度行 & 不删行/弧，不裁剪目标；记录回退与失败；合法试探满足原完整门限。\\
+T6 & 修正过程中共享根细化 & 最终体积、流率及 Jacobian 同源；旧分段派生积分不可复用。\\
+T7 & 注入几何/电学阶段失败 & 接受态网格、界面、流动、电荷和各历史均不变；无半步发布。\\
+T8 & 候选返回后释放调用方局部对象 & 材料映射仍有效，旧快照可读；未发生悬空 callback 或意外采样新速度。\\
+T9 & 错误版本、单位、DOF 位置或速度来源 & 启动/调用前明确拒绝；相同数组长度不能绕过身份检查。\\
+T10 & 同轨迹上非均匀积分电荷及时间历史 & 每层守恒并进入同一最终面元序；几何修正不造成第二次物理搬运。\\
+T11 & AMR 纯相改变、索引置换及受保护区扰动 & 合法重绑定保持几何/历史；变动界面多项式、面元拆并或约束不相容则拒绝。\\
+T12 & 实际曲率静态/输运/修正三组 & 独立曲率误差、寄生流与局部收支分别检查；原 N32 环面失败保持可见。\\
+\bottomrule
+\end{longtable}
+T2 的解析平移例子只用于其合法拓扑/边界范围；不能让移动闭链夹具默默绕过当前生产开链限制。T1 也不意味着零速度入口能修复本来不满足容量/几何约束的坏初态。
+
+\subsection{结构对照与物理验收分开}
+纯提取批次固定源码/程序、输入字典、数值输出集合及物理门限；原生数值文件优先逐字节比较，日志耗时单独处理。若编译环境或不可避免的顺序变化导致差异，应逐项解释来源，并使用原参考、掩膜与门限验收；不把“不是逐字节”笼统归于浮点。
+
+完整物理验收应包含逐单元/全局体积收支、真实曲率、表面电荷/电极收支、NS 动量/连续性、网格与时间收敛。原短程 8 步通过仅证明该输入/程序的启动阶段；不能证明成熟射流、断裂、发射反馈或所有分辨率。\code{smoke}、可视化加载成功和 C++ 接口编译都不能替代这些项目。
+
+\subsection{本次实际完成的检查与证据限度}
+本次运行了两项现行结构脚本：依赖检查返回 PASS，覆盖 459 个 source/header、8 个精确适配例外、16 个 checker probes；目录检查通过，含 6 个自检。两者退出码均为 0。另执行本文 LaTeX 编译、排版检查和 PDF 渲染核验；没有新跑数值/物理算例。
+
+阅读的既有记录包括：固定局部加密短程完成 8/8 步、实际退出 0；受限 Q4/电荷 AMR 组件 8/8 检查通过。前者和后者对应不同范围与程序身份，不推导出“动态网格上的完整喷嘴已通过”。本报告不改变任何历史失败状态。\ev{E17,E18}
+
+\section{配置、能力发布与完成定义}
+\subsection{面向用户的 Interface 配置}
+沿用蓝图新增 \code{interface.dict} 的设计；首批在完整消费者接通前不修改现行输入格式。关键归属如下：
+\begin{longtable}{@{}P{.40\textwidth}P{.54\textwidth}@{}}
+\toprule 目标条目 & 语义与初期约束\\\midrule\endhead
+\code{Interfaces.<name>.boundaryId} & 引用 geometry 中的移动边界；初始形状、相对和标量源由绑定解析，不重复定义。\\
+\code{motion} & fixed/material；material 需要真实 Time 与速度来源，fixed 不接受无效 Transport 参数。\\
+\code{Representation.family/polynomialOrder} & activeHermite、3/4；只接受已验证的网格/表示组合，迁移报告明确旧表示。\\
+\code{Transport.scheme/bandPolicy} & materialCharacteristic/supportEnvelope；复用当前特征线与带宽。\\
+\code{Reinitialization.model} & 移动喷嘴首批只接受 none。\\
+\code{ContactLine.model/points} & 首批 pinned + PointId；不让用户输入原生顶点号或相反侧重复接触角。\\
+\code{VolumeConstraint.model} & localConservative；首批不开放 production none 绕过失败。\\
+\code{VolumeConstraint.relativeBalance/maxCellRelative} & 旧喷嘴 $10^{-3}/10^{-10}$，归一化语义固定；线性容限来自 solvers 的本模块命名项。\\
+\code{VolumeConstraint.maxIterations/maxBacktracks} & 旧缺省 12/8。输入约束与蓝图一致；内部 kernel 能接受零回退不自动成为对用户开放的配置能力。\\
+\code{Checks.phaseFluxBalance} & 旧喷嘴 $10^{-10}$；消费共享面与边界相流率收支。\\
+\bottomrule
+\end{longtable}
+Time/Output/Log 留在 run；密度、黏度、表面张力和电学材料参数留在材料所属文件；载荷半宽归 Hydro 的力离散，但其空间支撑需求通过公共对象传入。新的 Run schema 与现行 geometry 字典版本不能混为一谈；迁移输出必须展示每个旧键的实际消费者、等效 code 值和未使用项。
+
+\subsection{能力表要描述组合，不能只列功能名称}
+预检查至少核对坐标系、域、表示/网格、拓扑、接触、运动/流入、相约束、材料历史映射、AMR 和续算。例如“原生 Q4 几何”与“原生 Q4 开链材料重映射”是两条能力；某个闭环初始化通过，不能推导闭环运动重映射通过。拒绝应发生在覆盖运行输出之前。
+
+首个可发布范围建议写为：RZ 固定网格上的已验证同层 Q3 或粗细叶完整 Q4；单条钉扎到轴线开链；材料输运、现有局部守恒、无自动重初始化、无物理界面流入。固定几何及独立几何求值可以按已有能力另列。受限动态 AMR 完整联调通过后再提升相应组合的支持状态。
+
+\subsection{何时可以称为 Interface 已定型}
+\begin{enumerate}
+\item 独立规定速度任务与电喷雾集成任务使用同一个 InterfaceService 和同一配置/状态定义。
+\item Service 一次调用返回通过全部界面门限的完整候选，App 不再拼装输运、自由 DOF 和体积迭代。
+\item 所有消费者使用同一最终几何；材料轨迹与数值修正分开，电荷历史只映射一次。
+\item 公共依赖方向明确，无 Interface 对 Hydro/App 实现的依赖；旧 Core 时间入口有可执行的退出路径。
+\item 状态、历史、缓存、失败回滚和输出时序均有直接检查；原数值基线和未解决物理失败保留。
+\end{enumerate}
+达到这些条件后，模块结构即可稳定。曲率误差、长期界面质量、通用拓扑变化和时间精度仍按各自物理验收推进，不借“结构定型”宣称它们已经解决。
+
+\clearpage
+\appendix
+\section{源码证据索引与审计复核}
+\subsection{源文件与定位点}
+以下相对路径均以 \code{D:/Chen/QUANTUM} 为根；行号对应本次盘点时点，用于定位关键声明/逻辑起点。文件后续变动时以工作区 manifest 和快照为准。
+\begin{longtable}{@{}P{.07\textwidth}P{.58\textwidth}P{.29\textwidth}@{}}
+\toprule 编号 & 实际路径 / 定位 & 支持本文的事实\\\midrule\endhead
+E01 & \code{docs/QUANTUM_Modular_Model_Blueprint.tex}：界面模型、模块契约与 interface.dict 小节；\code{docs/QUANTUM_Code_Organization_Standard.md}：第 1--3 节 & 本文目标边界、符号、所有权和未来输入依据。\\
+E02 & \code{src/Core/Geometry/ActiveLevelSetTransport.cpp}：34、48、382、574 行 & 带函数、保留轨迹、Q3 与完整 Q4 输运。\\
+E03 & \code{include/Core/Geometry/ActiveHermitePatch.h}：15 行；\code{include/Core/Geometry/ActiveQuarticHermitePatch.h}：12 行 & 16/25 局部数据、独立/依赖 payload、角区语义。\\
+E04 & \code{include/Core/Geometry/LevelSetBoundaryTrace.h}：26 行起 Domain，140 行附近 velocity/trial & 双时层中点、边界事件、半单元及轴线限制。\\
+E05 & \code{include/Core/Geometry/LevelSetHermiteGeometry.h}：80、137、198 行；\code{src/Core/Geometry/LevelSetInterfacePanels.cpp} & 正法向曲率、不可变快照、局部 chart、同源面元。\\
+E06 & \code{include/Modules/Hydrodynamics/HydroFittedPhaseMeasure.h}；\code{src/Modules/Hydrodynamics/HydroFittedPhaseMeasure.cpp}：272、557 行 & 公共面分段、负相流率、方向、边界矩与灵敏度。\\
+E07 & \code{src/Modules/Hydrodynamics/HydroFittedVolumeCorrection.cpp}：44、107、135 行 & 最小范数、SuperLU Gram 解与两种完整残差。\\
+E08 & \code{src/Modules/Hydrodynamics/HydroFittedVolumeCorrectionStep.cpp}：245 行起 correctImpl；\code{include/Modules/Hydrodynamics/HydroFittedVolumeCorrection.h} & 残差、试探、原生 Jacobian/同层 Picard 分派、自由 DOF 及有界目标。\\
+E09 & \code{src/Apps/Electrospray/Coupling/ElectrosprayInterfaceMotion.cpp}：82、132、346、435、563 行 & 当前表示绑定、带宽、固定/自由 DOF、最终几何与材料轨迹。\\
+E10 & \code{include/Apps/Electrospray/Setup/ElectrosprayInterface.h}；\code{src/Apps/Electrospray/Setup/ElectrosprayInterface.cpp}：269、464 行 & App 状态权威、初态与相/接触绑定、完整 Q4 分派。\\
+E11 & \code{src/Apps/Electrospray/ElectrosprayTimeLoop.cpp}：196、223、234、310、350 行 & 实际 NS/速度时层、候选接线和分散提交。\\
+E12 & \code{src/Apps/Electrospray/Coupling/ElectrosprayConducting.cpp}：135、152 行；\code{include/Modules/Electricity/SurfaceChargeField.h}：190 行 & 最终几何、材料映射与积分电荷历史重映射。\\
+E13 & \code{src/Modules/Hydrodynamics/HydroFittedInterfaceLoadGeometry.cpp}：454--472 行；\code{include/Core/Geometry/LevelSetCurvature.h}：269 行 & RZ 环向项/轴极限、局部曲率导数与旧重构符号。\\
+E14 & \code{include/Core/Geometry/ActiveQuarticHermiteTransfer.h}；\code{src/Core/Geometry/ActiveQuarticHermiteTransfer.cpp} & 受保护完整多项式及纯相转移，非通用液面重网格。\\
+E15 & \code{src/Modules/Electricity/SurfaceChargeMeshTransfer.cpp}；\code{include/Modules/Electricity/SurfaceChargeField.h}：206 行 & 面元一一对应的当前/历史积分电荷重绑定。\\
+E16 & \code{docs/validation/electrospray/QUANTUM_Electrospray_Volume_Correction_20260912.md} & 初版守恒式、接触斜率、数值失败及停止策略演进。\\
+E17 & \code{docs/validation/hydro/QUANTUM_Hydro_Fitted_Adaptive_20260913.md}：第 24--30 节；\code{cases/electrospray_conducting_implicit_short_rz/system/mesh.dict} & 固定局部加密实际接线/短程、当前标准网格；原曲率失败保留。\\
+E18 & \code{docs/validation/electrospray/QUANTUM_Electrospray_Dynamic_AMR_20260914.md}：第 6 节 & Q4/电荷转移组件 8/8；全动态 NS 历史与 App 提交尚待接入。\\
+E19 & \code{CMakeLists.txt}：582--596、948--1010、1110--1117 行附近 & 实际回归注册及结构脚本；检查运行范围可追溯。\\
+E20 & \code{src/Modules/Interface/InterfaceCellMeasure.cpp}：447、506 行；对应头文件 & 真实控制体叠加、16/25 类型、共享根细化及浮点积分限度。\\
+\bottomrule
+\end{longtable}
+
+\subsection{关键审计身份}
+本次工作目录为 \code{paper/_revision/codex_workspace/interface_modular_plan_20260914/}。其中 \code{source_manifest.json} 保存 224 个文件的路径、长度、行数及 SHA-256；\code{source_snapshot/} 保留所选关键实现和依据。工作目录不是版本控制提交，不能用本文日期代替后续程序与输入身份。
+\begin{longtable}{@{}P{.34\textwidth}P{.60\textwidth}@{}}
+\toprule 文件简称 & SHA-256（完整值）\\\midrule\endhead
+\code{ActiveLevelSetTransport.cpp} & \code{abe44f29d83b5f8e95b29add1593babcd03ed6a249b439654c19786e7715ed91}\\
+\code{HydroFittedVolumeCorrectionStep.cpp} & \code{f2495f8453e2fbb7d0c98eb651b1435dcbbe7c0147bcca326695d711cbb24cef}\\
+\code{ElectrosprayInterfaceMotion.cpp} & \code{328efaf9f3f5e4b0cdb87b8b8a94c963ccbebf63a629e4f8e843c7b782a7dcd6}\\
+\code{ElectrosprayInterface.cpp} & \code{09c2de92f732e210161ea1601d5ff5383382c0d55d38401d92887e60d71e0168}\\
+\bottomrule
+\end{longtable}
+数学公式来自蓝图与本次直接核对的实现，并在正文说明连续模型与离散策略的区别。本文未新增外部文献结论；既有文献引用和更大范围的多物理模型见蓝图。历史报告中的中间结果按对应阶段理解，当前能力以实际代码、输入与指定程序的验证证据共同判断。
+
+\subsection{交付的编译方式}
+最终 \texttt{.tex} 无外部图片依赖，可用安装了中文宏包与 Fandol 字体的 XeLaTeX/latexmk 编译：
+\begin{lstlisting}
+latexmk -xelatex -interaction=nonstopmode -halt-on-error \
+  QUANTUM_Interface_Model_Numerics_Implementation_Plan.tex
+\end{lstlisting}
+本次编译中间文件及 PDF 渲染检查放在同一 D: 工作目录的 build/render 下；发布的 TeX 与 PDF 放在 docs 入口。后续若执行 I0--I8，实施报告按现行规范归入 \code{docs/validation/} 相应主题，不覆盖本设计稿中的审计时点。
+\end{document}

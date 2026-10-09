@@ -1,0 +1,835 @@
+﻿% !TEX program = xelatex
+\documentclass[UTF8, a4paper, 11pt]{ctexart}
+
+\usepackage{geometry}
+\geometry{left=24mm,right=24mm,top=22mm,bottom=24mm}
+
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage{multicol}
+\usepackage{tabularx}
+\usepackage{float}
+
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+
+\pagestyle{fancy}
+\setlength{\headheight}{14pt}
+\fancyhf{}
+\lhead{QUANTUM 杈撳叆瀛楀吀瑙勮寖涓庡疄鐜版柟妗坿
+\rhead{\thepage}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  frame=single,
+  breaklines=true,
+  postbreak=\mbox{\textcolor{gray}{$\hookrightarrow$}\space},
+  commentstyle=\itshape\color{gray!70},
+  keywordstyle=\bfseries,
+  showstringspaces=false
+}
+
+\title{QUANTUM 杈撳叆瀛楀吀瑙勮寖涓庡疄鐜版柟妗圽\
+\large geometry.dict / mesh.dict / pic.dict / mcc.dict锛圗xplicitPIC 妯″潡锛墋
+\author{闈㈠悜瀹炵幇鐨勮璁℃姤鍛婏紙鏂规硶 + 浠ｇ爜钀藉湴锛墋
+\date{2026-01-29}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{6mm}
+
+\section{鑳屾櫙涓庣洰鏍噠
+
+褰撳墠 QUANTUM 鐨?ExplicitPIC 妯″潡宸插叿澶?paperA 鎵€闇€鐨勪富瑕佺畻娉曢摼璺紙leaf-based quadtree銆丗V Poisson銆丒B cut-cell 浠ュ強 matched deposit/gather锛夈€備絾鍦?\textbf{杈撳叆瀛楀吀} 灞傞潰锛屽瓨鍦ㄥ涓嬮棶棰橈細
+
+\begin{itemize}[leftmargin=2.2em]
+  \item \textbf{鍚屼竴鐗╃悊/鍑犱綍姒傚康鍦ㄥ涓湴鏂归噸澶嶅畾涔墋锛堜緥濡?domain 杈圭晫鏃㈠彲鑳介殣鍚负鍥涙潯杈癸紝涔熷彲鑳介儴鍒嗗嚭鐜板湪 geometry.dict锛夈€?  \item \textbf{杈圭晫锛坆oundary锛夌己涔忕粺涓€鐨勨€滃熀纭€璁炬柦鈥濆畾涔墋锛氬綋鍓?pic.dict 鐨?BC 浠嶄互 left/right/top/bottom 杩欑闅愬惈渚ч潰涓轰富锛孍B 涔熷彧鏈夊崟涓€ Embedded BC锛岄毦浠ヨ鐩栧瀵间綋/澶氫粙璐?绉诲姩杈圭晫绛変竴鑸棶棰樸€?  \item \textbf{鍑犱綍銆佺綉鏍笺€佺墿鐞嗚绠楀畾涔夋湭涓ユ牸鍒嗙}锛氬嚑浣曠粏鍒嗗噯鍒欍€佺墿鐞嗛噺椹卞姩鑷€傚簲涓?PIC 妯″潡绛栫暐鐨勫鎺ヤ笉澶熸竻鏅般€?  \item \textbf{閲忕翰杈撳叆涓嶇粺涓€}锛歮esh.dict 宸叉敮鎸佸甫鍗曚綅鍧愭爣锛屼絾 geometry.dict 鐨勭偣/绾?innerPoint 绛変粛涓烘棤閲忕翰褰㈠紡銆?\end{itemize}
+
+鏈姤鍛婄粰鍑轰竴濂?\textbf{鍥哄畾骞跺彲鎵╁睍} 鐨勮緭鍏ュ瓧鍏歌鑼冿紝骞剁粰鍑哄搴旂殑 \textbf{浠ｇ爜瀹炵幇鏂规}銆傝璁￠伒寰綘缁欏嚭鐨勪笁鍒嗘硶锛?
+\begin{center}
+\begin{tabularx}{\linewidth}{l l X}
+\toprule
+绫诲埆 & 瀛楀吀鏂囦欢 & 鑱岃矗锛堝崟涓€鏉ユ簮锛塡\
+\midrule
+鍑犱綍瀹氫箟 & geometry.dict & 鐐?绾?姘村钩闆?鐩?杈圭晫锛圔C 鏂藉姞鐨勫熀纭€璁炬柦锛塡\
+缃戞牸瀹氫箟 & mesh.dict & 鑳屾櫙缃戞牸 + 鍥涘弶鏍?+ 鑷€傚簲椹卞姩澹版槑锛堜笉鍚墿鐞嗗弬鏁帮級\\
+鐗╃悊璁＄畻锛圥IC锛?& pic.dict & 鐗╃悊鍙傛暟 + BC锛堝紩鐢?geometry 鐨勮竟鐣岀紪鍙凤級+ 鐗╃悊閲忛┍鍔ㄥ弬鏁癨\
+纰版挒/鍙嶅簲锛圡CC锛?& mcc.dict & 纰版挒鎴潰/鍙嶅簲缃戠粶/鏁板€肩瓥鐣ワ紙涓?PIC 瑙ｈ€︼紝渚?MCC 瀛愭ā鍧椾娇鐢級\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+run.dict 浠呰礋璐ｈ繍琛屽櫒閫夋嫨涓庣畝鍗曟帶鍒讹紝鏈姤鍛婁笉璁ㄨ run.dict銆?
+\section{鎬讳綋璁捐鍘熷垯锛堝繀椤诲浐瀹氱殑瑙勫垯锛墋
+
+\subsection{缂栧彿涓庡紩鐢ㄨ鍒檥
+\begin{itemize}[leftmargin=2.2em]
+  \item geometry.dict 涓?\textbf{鎵€鏈夋樉寮忕紪鍙蜂粠 1 寮€濮媫锛堢偣銆佺嚎銆佹按骞抽泦銆佺浉銆佽竟鐣屽潎濡傛锛夈€備唬鐮佽鍙栧悗缁熶竴杞崲涓?0-based 绱㈠紩銆?  \item pic.dict 涓?mesh.dict 涓紩鐢?geometry 瀹炰綋鏃讹紝\textbf{鍙紩鐢?geometry 鐨勨€滆竟鐣岀紪鍙?/ 鐩哥紪鍙?/ 姘村钩闆嗙紪鍙封€潁锛屼笉鐩存帴寮曠敤鐐圭紪鍙枫€?\end{itemize}
+
+\subsection{閲忕翰涓庡崟浣峿
+\begin{itemize}[leftmargin=2.2em]
+  \item 鎵€鏈夐暱搴﹀潗鏍囧厑璁镐娇鐢?\textbf{(x unit, y unit)} 鎴?\textbf{(x, y) unit} 褰㈠紡锛屼緥濡?\texttt{(3 cm, 0 cm)} 鎴?\texttt{(3, 0) cm}銆?  \item 鍗曚綅鎹㈢畻鐢?pic.dict 鐨?\texttt{Units\{...\}} 鍐冲畾锛圲nitsContext锛夈€傚綋 \texttt{mode=SI} 鏃讹紝鍑犱綍/缃戞牸杈撳叆鐨勯暱搴︾粺涓€浠?SI 杞崲鍒?code units銆?  \item 鑻?\texttt{mode=CodeUnits}锛屽垯鍗曚綅鍚庣紑鍙渷鐣ワ紙榛樿宸叉槸 code units锛夈€?\end{itemize}
+
+\subsection{domain锛堣绠楀煙鏂规锛夌殑鍞竴鏉ユ簮}
+\begin{itemize}[leftmargin=2.2em]
+  \item \textbf{domain 鍙湪 geometry.dict 涓畾涔墋锛圽texttt{Domain\{min/max\}}锛夈€?  \item mesh.dict 鍙粰鍑鸿儗鏅綉鏍肩殑 \texttt{divide} 涓庡洓鍙夋爲鎺у埗鍙傛暟锛汢ackgroundMesh 鐨勬柟妗嗚寖鍥寸洿鎺ョ户鎵?geometry.dict 鐨?Domain銆?  \item 浠ｇ爜鍚姩鏃朵粎妫€鏌ワ細geometry.dict 鐨?Domain 鏄惁瀛樺湪锛涜嫢涓嶅瓨鍦ㄥ垯鎶ラ敊锛圗xplicitPIC 涓?Poisson/FV 蹇呴渶锛夈€?\end{itemize}
+
+\section{geometry.dict 瑙勮寖锛堝浐瀹氭牸寮忥級}
+
+\subsection{鏍稿績鐞嗗康涓庢暟鎹粨鏋剗
+geometry.dict 浠?\textbf{鐐?绾?姘村钩闆?鐩?杈圭晫} 涓轰富绾匡細
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{Point锛殅 璁＄畻鍩熷洓涓鐐?+ 鎵€鏈夊祵鍏ュ嚑浣曚笌 domain 鐨勪氦鐐?+ 绾夸箣闂寸殑浜ょ偣鍧囬渶鏄惧紡鍒楀嚭骞剁紪鍙枫€?  \item \textbf{Line锛殅 鐢辩偣缂栧彿瀹氫箟鐨勬湁鍚戠嚎娈碉紙straight/arc/spline锛夈€侺ine 鏃㈡槸鍑犱綍鏋勯€犲厓锛屼篃鏄竟鐣?姘村钩闆嗙殑鈥滄嫇鎵戦鏋垛€濄€?  \item \textbf{LevelSet锛殅 鐢变竴缁?Line锛堝彲甯︽柟鍚戠鍙凤級缁勬垚锛岃姹傝绾块泦鍚?\textbf{闂悎} 鎴?\textbf{杩炴帴 domain 杈圭晫浠庤€屽垎鍓?domain}锛屼粠鑰屽湪鏁翠釜 domain 涓婁骇鐢熷崟鍊兼按骞抽泦鍑芥暟 \(\psi(x)\)銆?  \item \textbf{Phase锛殅 涓嶇洿鎺ョ瓑鍚屼簬姘村钩闆嗐€侾hase 鐢变竴涓垨澶氫釜姘村钩闆嗙粡甯冨皵杩愮畻锛堜氦/骞?宸?琛ワ級寰楀埌锛屽苟瑕佹眰 \textbf{鎵€鏈?phase 鐨勯泦鍚堝～婊?domain 涓旂浉浜掍笉浜銆?  \item \textbf{Boundary锛殅 杩欐槸 BC 鏂藉姞鐨勫敮涓€鍩虹璁炬柦銆傝竟鐣屽垎涓夌被锛歞omainBoundary / fixedBoundary / movingBoundary銆?\end{enumerate}
+
+\subsection{鎺ㄨ崘鐨勬枃浠堕鏋讹紙甯﹁鏄庣殑妯℃澘锛墋
+
+\begin{lstlisting}
+# geometry.dict (v3) - GEOMETRY + PHASE + BOUNDARY INFRASTRUCTURE
+# All IDs start from 1.
+# All coordinates may carry length units. If Units.mode=SI, they will be
+# converted to code units using L0.
+
+Domain
+{
+    # Rectangular computational domain.
+    min (0 cm, 0 cm)
+    max (3 cm, 6 cm)
+}
+
+Point
+{
+    # --- Domain corners (must be included) ---
+    (0 cm, 0 cm)      # id=1
+    (3 cm, 0 cm)      # id=2
+    (3 cm, 6 cm)      # id=3
+    (0 cm, 6 cm)      # id=4
+
+    # --- Intersections on domain boundary (if any) ---
+    # (x ?, y ?)       # id=...
+
+    # --- Embedded geometry key points ---
+    # ...
+}
+
+Line
+{
+    # Each line is defined by two point IDs (start,end).
+    # Optional: name for readability.
+
+    (1, 2)  # id=1  bottom edge of domain
+    {
+        name bottom
+        type straight
+    }
+
+    (2, 3)  # id=2  right edge
+    {
+        name right
+        type straight
+    }
+
+    (3, 4)  # id=3  top edge
+    {
+        name top
+        type straight
+    }
+
+    (4, 1)  # id=4  left edge
+    {
+        name left
+        type straight
+    }
+
+    # --- Embedded boundaries (example) ---
+    (5, 6)  # id=5
+    {
+        name electrode_segment_1
+        type straight
+    }
+
+    # arc:
+    # (pA, pB)
+    # {
+    #     type   arc
+    #     center (xc cm, yc cm)
+    #     radius 1 mm
+    #     radian 0.5   # times pi
+    # }
+
+    # spline:
+    # (pA, pB)
+    # {
+    #     type spline
+    #     featurePoints ( ... )   # each point may carry units
+    # }
+}
+
+LevelSet
+{
+    # A level set is built from a set of oriented lines.
+    # A negative sign flips the line orientation (endpoints swapped).
+
+    "LS_conductor"
+    {
+        lines ( +5, +6, -7, ... )
+        innerPoint (x cm, y cm)  # a point that must lie in the psi<0 side
+        moving false
+    }
+
+    "LS_dielectric"
+    {
+        lines ( ... )
+        innerPoint (x cm, y cm)
+        moving false
+    }
+}
+
+Phase
+{
+    # Phases are defined by boolean constraints on level sets.
+    # A phase is an intersection of half-spaces by default.
+    # Example: (LS_conductor < 0) AND (LS_dielectric > 0)
+
+    "conductor"  # id=1
+    {
+        type conductor
+        constraints
+        {
+            ("LS_conductor" < 0)
+        }
+        boundaries ( 5, 6, 7 )   # OPTIONAL: boundary IDs that belong to this phase
+    }
+
+    "plasma"     # id=2
+    {
+        type plasma
+        constraints
+        {
+            ("LS_conductor" > 0)
+            ("LS_dielectric" > 0)
+        }
+    }
+
+    "dielectric" # id=3
+    {
+        type dielectric
+        constraints
+        {
+            ("LS_dielectric" < 0)
+            ("LS_conductor" > 0)
+        }
+        material
+        {
+            epsilon_r 4.0
+        }
+    }
+}
+
+Boundary
+{
+    # Boundary entities are the ONLY objects referenced by pic.dict for BC.
+    # Each boundary has an ID and is defined by a set of Lines.
+    # For fixed/moving boundaries, we must also specify which level set it
+    # belongs to, and the phase on each side.
+
+    domainBoundary
+    {
+        boundary 1
+        {
+            name left
+            lines (4)
+            adjacentPhase 2   # inside-domain phase ID
+        }
+        boundary 2
+        {
+            name right
+            lines (2)
+            adjacentPhase 2
+        }
+        boundary 3
+        {
+            name bottom
+            lines (1)
+            adjacentPhase 2
+        }
+        boundary 4
+        {
+            name top
+            lines (3)
+            adjacentPhase 2
+        }
+    }
+
+    fixedBoundary
+    {
+        boundary 10
+        {
+            name cathode
+            lines (5, 6, 7)
+
+            # The geometric location is represented by the referenced level set.
+            levelSetIndex 1      # refers to "LS_conductor" (1-based)
+
+            # psi<0 side and psi>0 side phases
+            phase 1
+            opposedPhase 2
+
+            immersed true
+            ignored false
+        }
+    }
+
+    movingBoundary
+    {
+        boundary 20
+        {
+            name moving_meniscus
+            lines (12, 13)
+            levelSetIndex 2
+            phase 2
+            opposedPhase 3
+
+            immersed true
+            motion
+            {
+                model prescribed
+                # example: translation in y
+                velocity (0 mm/s, 1 mm/s)
+            }
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{鍏抽敭璇箟璇存槑}
+
+\paragraph{(1) LevelSet 鐨勭鍙峰畾涔墋
+瀵规瘡涓?LevelSet锛?\begin{itemize}[leftmargin=2.2em]
+  \item \texttt{innerPoint} 蹇呴』澶勪簬 \(\psi<0\) 涓€渚с€?  \item 鑻ョ嚎闆嗗悎闂悎锛孿(\psi<0\) 渚у彲瑙ｉ噴涓衡€滃唴閮ㄢ€濄€傝嫢绾块泦鍚堣繛鎺?domain 杈圭晫骞跺垎鍓?domain锛屽垯 \texttt{innerPoint} 鐢ㄤ簬閫夊畾鍒嗗壊鍚庣殑鍝竴渚т负 \(\psi<0\)銆?\end{itemize}
+
+\paragraph{(2) Phase 鐨勫畾涔変笌妫€鏌
+Phase 浣跨敤 \texttt{constraints} 瀹氫箟涓哄涓崐绌洪棿鐨勪氦闆嗭細
+\[
+\Omega_{\text{phase}} = \bigcap_i \{x: s_i\,\psi_{k_i}(x) < 0\},\quad s_i\in\{+1,-1\}.
+\]
+\texttt{("LS" > 0)} 绛変环浜?\(s=-1\)銆傝褰㈠紡瑕嗙洊甯歌鐨勪氦/宸瀯閫狅紙宸細鍔犱竴鏉?\(\psi_B>0\) 绾︽潫锛夈€傚苟闆嗗纭湁闇€瑕侊紝鍙€氳繃 \texttt{subregions} 鎵╁睍锛堣 \S\ref{sec:phase_union}锛夈€?
+鍚姩鏃惰繘琛?\textbf{partition 妫€鏌锛氬湪 BackgroundMesh 椤剁偣閲囨牱锛堝彲閫夊湪 quadtree leaf 椤剁偣閲囨牱锛夛紝瑕佹眰姣忎釜閲囨牱鐐?\textbf{鎭板ソ} 灞炰簬涓€涓?phase锛涘惁鍒欐姤閿欏苟杈撳嚭鍐茬獊浣嶇疆銆?
+\paragraph{(3) Boundary 鐨勫敮涓€鎬
+\textbf{pic.dict 鍙兘寮曠敤 Boundary ID}銆侭oundary 鐢?Lines 瀹氫箟锛屼絾 BC 涓嶅啀鐩存帴鐢?line index锛涜繖鏍峰彲閬垮厤 line 涓?BC 鐨勮€﹀悎銆?
+\subsection{Phase 骞堕泦鎵╁睍锛堝彲閫夛級}
+\label{sec:phase_union}
+鑻ラ渶瑕佸苟闆嗭紙渚嬪涓€涓?phase 鐢卞涓笉杩為€氬瓙鍩熺粍鎴愶級锛屽湪 Phase 涓鍔狅細
+\begin{lstlisting}
+subregions
+{
+    region { constraints { ("LS1" < 0) ("LS2" > 0) } }
+    region { constraints { ("LS3" < 0) } }
+}
+# overall region is UNION over all regions
+\end{lstlisting}
+瀹炵幇涓婏細姣忎釜 region 鐢熸垚涓€涓?signed indicator \(\phi_r\)锛堜氦闆嗙敤 max锛夛紝鎬荤殑骞堕泦鐢?\(\phi = \min_r \phi_r\)銆?
+\section{mesh.dict 瑙勮寖锛圔ackgroundMesh + QuadtreeMesh + 鑷€傚簲椹卞姩澹版槑锛墋
+
+\subsection{鐩爣}
+mesh.dict 鐨勮亴璐ｆ槸锛?\begin{itemize}[leftmargin=2.2em]
+  \item 瀹氫箟鑳屾櫙缃戞牸鐨勫垎杈ㄧ巼锛圽texttt{divide}锛変笌鍥涘弶鏍戞帶鍒跺弬鏁帮紱\textbf{domain 鏉ヨ嚜 geometry.dict}銆?  \item 瀹氫箟 quadtree 鐨勫熀鏈帶鍒跺弬鏁般€?  \item 鑻?adaptiveMesh=true锛屽垯 \textbf{澹版槑} 闇€瑕佸摢浜涜嚜閫傚簲椹卞姩锛堝嚑浣?鐗╃悊锛夛紝浣?\textbf{涓嶆斁缃畗 鐗╃悊閲忕殑鍏蜂綋鍙傛暟锛堝弬鏁板湪 pic.dict锛夈€?\end{itemize}
+
+\subsection{鎺ㄨ崘妯℃澘}
+\begin{lstlisting}
+# mesh.dict (v3)
+
+BackgroundMesh
+{
+    divide (50, 100)
+}
+
+adaptiveMesh true
+
+QuadtreeMesh
+{
+    maxCellNum 200000
+    maxInitialIterations 3
+    C_Lipschitz 2.6
+
+    # ---------------------------
+    # Geometry-driven refinement
+    # ---------------------------
+    GeometryRefinement
+    {
+        enabled true
+
+        # Refine near specific boundaries (each may have its own maxLevel).
+        # Use min_{v in V(K)} |psi_v| <= $C_\Gamma$ * h_K as trigger.
+        # psi is the referenced level set (via boundary's levelSetIndex).
+        refineBoundary
+        {
+            entry { boundaryId 10  $C_\Gamma$ 1.0  maxLevel 7 }
+            entry { boundaryId 20  $C_\Gamma$ 1.0  maxLevel 8 }
+        }
+
+        # Phase interior level limits.
+        refinePhase
+        {
+            phase 1 { minLevel 4 maxLevel 7 }
+            phase 2 { minLevel 3 maxLevel 6 }
+            phase 3 { minLevel 2 maxLevel 5 }
+        }
+
+        # NOTE: 鏈増鏈笉鍗曠嫭鏆撮湶鈥滄寜 cut-cell(0<alpha<1) 寮哄埗缁嗗寲鈥濈殑寮€鍏炽€?        # cut-cell 浼氶殢 boundary proximity refinement 鑷劧鍑虹幇骞惰缁嗗寲锛?        # 鑻ユ湭鏉ョ‘鏈夐渶瑕侊紝鍙啀鍔犲叆涓€涓叏灞€ cap 浣滀负鍏滃簳閫夐」銆?    }
+
+    # ---------------------------
+    # Physics-driven refinement
+    # ---------------------------
+    PhysicsRefinement
+    {
+        enabled true
+
+        # Declare which indicators to query from physics modules.
+        indicators ( DebyeLength ElectricField )
+
+        # Generic policy knobs (module-independent)
+        adaptEverySteps 20
+        hysteresis 0.2
+        persistenceSteps 3
+
+        # Indicator-specific generic caps (optional)
+        caps
+        {
+            DebyeLength { maxLevel 9 }
+            ElectricField { maxLevel 8 }
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{鍑犱綍閲忛┍鍔ㄧ殑瀹炵幇鏂规锛堣竟鐣?鐩歌В鑰︼級}
+
+\paragraph{闇€姹傚洖椤緘
+浣犲笇鏈涙妸 鈥滄瘡涓按骞抽泦涓や晶 minLevel/maxLevel鈥?鐨勬棫鏂瑰紡鏀逛负锛?\begin{itemize}[leftmargin=2.2em]
+  \item \textbf{姣忔潯锛堟垨姣忕粍锛夊祵鍏ヨ竟鐣屽彲鐙珛鎸囧畾 max refinement level}銆?  \item \textbf{姣忎釜鐩稿唴閮ㄥ彲鐙珛鎸囧畾 min/max level}銆?  \item 瑙﹀彂鍑嗗垯浠?\(\min_{v\in\mathcal{V}(K)}|\psi_v|\le C_\Gamma h_K\) 涓轰富锛堟寜杈圭晫閭昏繎鎬х粏鍖栵級銆?\end{itemize}
+
+\paragraph{寤鸿鐨勮惤鍦版柟寮弣
+\begin{enumerate}[leftmargin=2.2em]
+  \item 鐢?geometry.dict 鐨?\texttt{Boundary.fixedBoundary / movingBoundary} 缁欏嚭 boundaryId 涓庡叾 \texttt{levelSetIndex}銆?  \item mesh.dict 鐨?\texttt{GeometryRefinement.refineBoundary} 閫氳繃 boundaryId 閫夋嫨瑕佸姞瀵嗙殑杈圭晫瀵硅薄锛屽苟缁欏嚭璇ュ璞＄殑 \texttt{maxLevel} 涓?\texttt{C\_Gamma}銆?  \item 鍦?quadtree 鍒濆鍖栦笌姣忔閫傞厤鏃讹紝瀵规瘡涓?leaf cell K锛?  \begin{itemize}[leftmargin=1.6em]
+    \item 璁＄畻璇?cell 椤剁偣涓婄殑 \(\psi\)锛堟潵鑷?ImmersedGeometry level set field锛夛紱
+    \item 鑻ユ弧瓒?\(\min|\psi_v|\le C_\Gamma h_K\) 涓?\(\ell_K<\ell_{\max}(\text{boundary})\)锛屽垯鏍囪缁嗗垎锛?  \end{itemize}
+  \item 鐩稿唴閮ㄧ殑 min/max level 浣滀负 \textbf{纭害鏉焳锛?  \begin{itemize}[leftmargin=1.6em]
+    \item 鑻?cell K 瀹屽叏灞炰簬鐩?p锛屼笖 \(\ell_K<\ell_{\min}(p)\)锛屽垯寮哄埗缁嗗垎锛?    \item 鑻?\(\ell_K>\ell_{\max}(p)\)锛屽垯鍏佽鍚堝苟锛堜笌 Lipschitz/hysteresis 涓€璧峰喅瀹氾級銆?  \end{itemize}
+\end{enumerate}
+
+\subsection{鐗╃悊閲忛┍鍔ㄧ殑閫氱敤瀵规帴鏂规}
+
+\paragraph{鐩爣}
+鍥涘弶鏍戠綉鏍兼ā鍧楅渶瑕佷竴涓?\textbf{閫氱敤鎺ュ彛} 瀵规帴涓嶅悓鐗╃悊妯″潡鐨勮嚜閫傚簲閲忋€俶esh.dict 鍙０鏄庘€滈渶瑕佸摢浜涢噺銆佺敱鍝釜妯″潡鎻愪緵鈥濓紱姣忎釜鐗╃悊妯″潡鍦ㄨ嚜宸辩殑 dict锛堝 ExplicitPIC 鍗?pic.dict锛夐噷鎻愪緵璇ラ噺鐨勫弬鏁板畾涔夈€?
+\paragraph{寤鸿鎺ュ彛锛圕++锛墋
+鍦?Core/Mesh 鎴?Solvers/Mesh 涓嬫柊澧烇細
+\begin{lstlisting}
+struct RefinementIndicatorField
+{
+    std::string name;          // e.g. "DebyeLength"
+    std::vector<double> cellValue; // value per leaf cell (code units)
+};
+
+class IMeshRefinementProvider
+{
+public:
+    virtual ~IMeshRefinementProvider() = default;
+    virtual std::string moduleName() const = 0;   // "ExplicitPIC"
+    virtual bool Provide(const std::string& indicatorName,
+                         const QuadtreeMesh& mesh,
+                         RefinementIndicatorField& out) = 0;
+};
+\end{lstlisting}
+鐢卞悇鐗╃悊妯″潡鍦ㄥ垵濮嬪寲鏃舵敞鍐?provider锛堜緥濡傞€氳繃鍏ㄥ眬 registry 鎴?App-level wiring锛夈€?
+QuadtreeMeshRefiner 浼氬悜宸叉敞鍐岀殑鐗╃悊妯″潡 provider 閫愪竴鏌ヨ鎵€闇€ indicator锛堝厛鍒板厛寰楋級銆?
+\paragraph{鎸囨爣鍒扮粏鍖栧垽鎹殑缁熶竴}
+瀵逛簬姣忎釜 indicator锛岀綉鏍间晶浠呭仛鈥滈€氱敤鈥濆垽鏂細
+\begin{itemize}[leftmargin=2.2em]
+  \item \textbf{DebyeLength锛殅 鐩爣鏄?\(h_K \le C_D\,\lambda_D\)銆?  \item \textbf{ElectricField锛殅 鐩爣鏄崟鎹夐珮姊害鍖哄煙锛屽彲鐢?\(|\nabla\phi|\) 鎴?\(|E|\) 涓庨槇鍊?鍒嗕綅鏁版瘮杈冦€?\end{itemize}
+姝ゅ锛孿textbf{DebyeLength / ElectricField} 鏀寔鍙€夌殑绌洪棿骞虫粦鍙傛暟 \texttt{smoothWindowCells}锛堜互鍙跺瓙鍗曞厓瀹藉害璁＄殑閭诲煙鍗婂緞锛? 琛ㄧず鍏抽棴锛夛紝
+鐢ㄤ簬瀵圭墿鐞嗛噺鍋氶偦鍩熷钩鍧囥€佹姂鍒跺眬閮ㄥ櫔澹帮紱鍙笌鏃堕棿骞虫粦锛圽texttt{avgWindowSteps}/\texttt{smoothWindowSteps}锛夊彔鍔犱娇鐢ㄣ€?鍏蜂綋鍙傛暟锛堜緥濡?\(C_D\)銆乗(T_e\)銆乗(n_e\) floor銆侀槇鍊煎畾涔夛級鍧囧湪 pic.dict 涓畾涔夈€?
+\section{pic.dict 瑙勮寖锛堢墿鐞嗗弬鏁?+ BC + 鐗╃悊閲忛┍鍔ㄥ弬鏁帮級}
+
+\subsection{杈圭晫鏉′欢锛氫粠鈥滀晶闈?key鈥濆崌绾т负鈥滃紩鐢?Boundary ID鈥濄€戙€愬繀椤汇€憓
+
+褰撳墠 pic.dict 鐨?\texttt{BC/Domain\{left/right/...\}} 鏂瑰紡榛樿 domain 杈圭晫涓哄洓鏉′晶闈紝杩欎笌鈥滃嚑浣曟樉寮忓畾涔夎竟鐣屸€濈殑鐩爣鍐茬獊銆傛柊瑙勮寖濡備笅锛?
+\begin{itemize}[leftmargin=2.2em]
+  \item pic.dict 鐨?BC 缁熶竴鍐欏湪 \texttt{BC\{...\}} 涓嬨€?  \item 姣忔潯闇€瑕佹柦鍔?BC 鐨勮竟鐣岄€氳繃 \textbf{boundaryId} 寮曠敤 geometry.dict 鐨?Boundary 瀹炰綋銆?  \item BC 绫诲瀷闄愬畾涓哄綋鍓嶄唬鐮佸凡鏀寔鐨?Poisson BC锛欴irichlet / Neumann / Robin锛堜互鍙婃椂闂翠緷璧?Dirichlet 浣滀负鎵╁睍锛夈€?  \item 鍏佽鍚屾椂瀹氫箟 \textbf{Field BC} 涓?\textbf{Particle BC}锛堜緥濡傚惛鏀?鍙嶅皠/SEE锛夛紝浠ユ敮鎾?PIC 闇€瑕併€?\end{itemize}
+
+\subsection{鎺ㄨ崘妯℃澘锛堝甫鍗曚綅锛墋
+\begin{lstlisting}
+// pic.dict (v3)
+
+PIC
+{
+    dt    5e-11 s
+    steps 2000
+    seed  12345
+    omp   8
+}
+
+Units
+{
+    mode SI
+    L0   3 cm
+    T0   1 ns
+    Phi0 800 V
+    n0   1e16 1/m^3
+    writeSIOutputs true
+}
+
+Solvers
+{
+    PoissonCellCentered { useSuperLU true  useCG true  useIC true  maxIter 2000  relTol 1e-10 }
+}
+
+BC
+{
+    # ---- Poisson / electrostatic BCs ----
+    Field
+    {
+        boundary 1  { type Dirichlet  value 0 V }      # left
+        boundary 2  { type Dirichlet  value 800 V }    # right
+        boundary 3  { type Neumann    value 0 }        # bottom
+        boundary 4  { type Neumann    value 0 }        # top
+
+        boundary 10 { type Dirichlet  value 0 V }      # cathode (embedded)
+    }
+
+    # ---- Particle-wall interaction ----
+    Particle
+    {
+        boundary 10
+        {
+            model absorb
+            # optional: SEE model by reusing existing SEEConfig keys
+            SEE { enabled false }
+        }
+    }
+}
+
+Phases
+{
+    # Tell PIC which phase is plasma (where particles live)
+    plasmaPhase 2
+
+    # Solid phases: particles entering these phases are removed
+    solidPhases (1, 3)
+}
+
+RefinementIndicators
+{
+    # Parameters used by mesh PhysicsRefinement.indicators
+
+    DebyeLength
+    {
+        enabled true
+        CD 0.5
+        Te 2.0 eV
+        neFloor 1e12 1/m^3
+        smoothWindowCells 1
+    }
+
+    ElectricField
+    {
+        enabled false
+        # example threshold policy
+        percentile 95
+        smoothWindowSteps 20
+        smoothWindowCells 1
+    }
+}
+
+Deposition
+{
+    useMatchedWeights true
+    compositeBand     true
+    momentExactCut    true
+    cutRenorm         true
+}
+
+Species
+{
+    "electron" { q -1 e  m 9.1093837015e-31 kg  Te 2.0 eV  drift (0, 0)  numParticles 20000  weight 1e6 }
+    "Ar_plus"  { q  1 e  m 39.948 amu          Te 0.05 eV drift (0, 0)  numParticles 20000  weight 1e6 }
+}
+
+Output
+{
+    every 200
+    fields ( phi rho E n )
+    console.level info
+    console.every 50
+}
+\end{lstlisting}
+
+\subsection{涓庣幇鏈変唬鐮佽兘鍔涚殑瀵瑰簲鍏崇郴}
+\begin{itemize}[leftmargin=2.2em]
+  \item \textbf{Field BC} 鐩存帴鏄犲皠鍒?\texttt{Solvers/Poisson/PoissonBC} 鐩墠鏀寔鐨勭被鍨嬶紙Dirichlet/Neumann/Robin锛夈€?  \item \textbf{Particle BC}锛氬綋鍓?ExplicitPIC 宸叉敮鎸?\texttt{absorbParticles}锛堝 embedded solid锛夈€傛柊瑙勮寖鎶婂畠鎻愬崌涓衡€滄寜 boundaryId 鎸囧畾鈥濄€傜涓€闃舵瀹炵幇鍙厛鏀寔 \texttt{absorb}锛屽苟澶嶇敤鐜版湁 SEEConfig锛堜粛鍙寜 boundaryId 閫夋嫨鍙戝皠杈圭晫锛夈€?\end{itemize}
+
+\subsection{纰版挒/鍙嶅簲杈撳叆杩佺Щ鍘熷垯锛圥IC vs MCC锛墋
+涓洪伩鍏?pic.dict 杩囦簬搴炴潅锛屽苟淇濇寔 ``PIC 鎺ㄨ繘'' 涓?``纰版挒/鍙嶅簲'' 鐨勮В鑰︼紝鏈鑼冨皢鎵€鏈変笌\textbf{纰版挒銆佸弽搴斻€佹埅闈€佸弽搴旂綉缁溿€佹暟鍊肩鎾炵畻娉晑鐩稿叧鐨勮緭鍏textbf{鍏ㄩ儴绉诲嚭} pic.dict锛屽崟鐙舰鎴?\texttt{mcc.dict}銆俻ic.dict 浠呬繚鐣欙細鏃堕棿姝?鐗╃/娌夌Н閲囨牱/Poisson 姹傝В/杈圭晫鏉′欢/锛堝彲閫夛級鐗╃悊閲忛┍鍔ㄥ弬鏁般€?
+\section{mcc.dict 瑙勮寖锛堢鎾?鍙嶅簲锛歁CC 瀛愭ā鍧楋級}
+
+\subsection{鑱岃矗涓庤竟鐣寎
+\texttt{mcc.dict} 鐨勮亴璐ｆ槸瀹氫箟锛?\begin{itemize}[leftmargin=2.2em]
+  \item 浣撶鎾炴ā鍨嬶紙Monte Carlo Collision / Null-collision / DSMC-like 鍙樹綋绛夛級锛?  \item 姘斾綋鑳屾櫙锛堢粍鍒嗐€佹俯搴︺€佸帇寮烘垨鏁板瘑搴︼級涓庝腑鎬х矑瀛愬亣璁撅紱
+  \item 鎴潰妯″瀷锛堣В鏋愬紡/琛ㄦ牸鏁版嵁锛変笌鍙嶅簲閫氶亾锛堝脊鎬?婵€鍙?鐢电/鐢佃嵎浜ゆ崲/澶嶅悎绛夛級锛?  \item 鏁板€肩瓥鐣ワ紙瀛愬惊鐜€佹渶澶х鎾為鐜囦及璁°€侀噰鏍蜂笌缁熻杈撳嚭锛夈€?\end{itemize}
+\textbf{涓嶅湪 mcc.dict 涓畾涔夎竟鐣屾潯浠秨锛堣竟鐣岀浉浜掍綔鐢ㄤ粛灞炰簬 pic.dict 鐨?Particle BC锛夛紝涔熶笉閲嶅瀹氫箟鍑犱綍/缃戞牸銆?
+\subsection{鎺ㄨ崘妯℃澘锛堝甫鍗曚綅锛墋
+\begin{lstlisting}
+# mcc.dict (v1) - Monte Carlo Collisions / Reactions
+
+MCC
+{
+    enabled true
+
+    # Algorithm options
+    method NullCollision     # NullCollision | DirectSampling
+    subcycles 1              # collisions per PIC step (>=1)
+    seed 2026
+
+    # Safety / performance
+    maxNu 5e9 1/s            # optional cap for collision frequency
+    rebuildNuEverySteps 50
+}
+
+BackgroundGas
+{
+    # One may specify pressure+temperature, or directly number density.
+    model IdealGas
+    Tgas 300 K
+    p    50 Pa
+
+    # Gas species composition (mole fractions)
+    composition
+    {
+        Ar 1.0
+        # N2 0.1
+    }
+}
+
+# Map PIC species names (from pic.dict/Species) into collision participants.
+Participants
+{
+    charged ( electron Ar_plus )
+    neutral  ( Ar )
+}
+
+CrossSections
+{
+    # Define cross sections by pair and process name.
+    # Supported sources:
+    #  (1) analytic: hardSphere / powerLaw / userPolynomial
+    #  (2) tabulated: file with (E[eV], sigma[m^2])
+
+    pair "electron"-"Ar"
+    {
+        elastic
+        {
+            source tabulated
+            file "cross_sections/e_Ar_elastic.csv"
+            energyUnit eV
+            sigmaUnit m^2
+        }
+
+        ionization
+        {
+            source tabulated
+            file "cross_sections/e_Ar_ionization.csv"
+            threshold 15.76 eV
+            products ( "electron" "electron" "Ar_plus" )
+        }
+    }
+}
+
+Reactions
+{
+    # Optional explicit reaction list if the code prefers a reaction graph.
+    # Each reaction references a CrossSections entry.
+    reaction 1
+    {
+        name e_Ar_ionization
+        reactants ( "electron" "Ar" )
+        products  ( "electron" "electron" "Ar_plus" )
+        process ionization
+    }
+}
+
+Output
+{
+    every 200
+    diagnostics ( nuMax nuMean reactionRates )
+}
+\end{lstlisting}
+
+\subsection{鍏抽敭璇箟锛堝缓璁浐瀹氾級}
+\begin{itemize}[leftmargin=2.2em]
+  \item 鎴潰鑷彉閲忛粯璁や娇鐢╘textbf{鐩稿鍔ㄨ兘}锛堜緥濡傜數瀛?涓€х鎾炵敤鐢靛瓙鍦ㄤ腑鎬у弬鑰冪郴涓嬬殑鑳介噺锛屽崟浣?eV锛夈€?  \item 鍙嶅簲閫氶亾鐢?\texttt{pair+process} 鍞竴鏍囪瘑锛沑texttt{Reactions} 浠呯敤浜庢樉寮忓垪涓?閲嶅懡鍚?杈撳嚭缁熻銆?  \item 鑻ラ噰鐢?\texttt{NullCollision}锛岄渶瑕佺淮鎶ゆ瘡涓?pair 鐨?\(\nu_{\max}\)锛涘彲鐢?\texttt{maxNu} 鎴栭噸寤虹瓥鐣ユ帶鍒躲€?  \item 鎵€鏈夋枃浠惰矾寰勫潎鐩稿 case 鐩綍锛涘缓璁斁鍏?\texttt{case/cross\_sections/} 瀛愮洰褰曘€?\end{itemize}
+
+\section{浠ｇ爜瀹炵幇鏂规锛堟寜妯″潡鍒嗚В锛墋
+
+\subsection{geometry.dict 瑙ｆ瀽涓庢暟鎹ā鍨媫
+
+\paragraph{鐜扮姸涓庨棶棰榼
+鐜版湁 \texttt{DictionaryGeometry} 宸茶兘瑙ｆ瀽 Point/Line/LevelSet/Phase/Boundary锛屼絾瀛樺湪锛?\begin{itemize}[leftmargin=2.2em]
+  \item 鐐瑰潗鏍囦笌 innerPoint 涓嶆敮鎸佸崟浣嶏紱featurePoints 涔熶笉鏀寔鍗曚綅銆?  \item 杈圭晫浠嶆槸鈥滄寜 line 鏍囪鈥濓紝缂哄皯 boundaryId/group 鐨勪竴绛夊璞°€?  \item Phase 鐨勫竷灏旇繍绠楄娉曚笉娓呮櫚锛屼笖杈撳叆涓殑 \texttt{[newIndex]} 骞舵湭琚В鏋愩€?\end{itemize}
+
+\paragraph{鏀归€犵洰鏍噠
+\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{鏂板骞跺浐瀹?Domain 鍧梷锛歞omain 鍙湪 geometry.dict 涓畾涔夛紙鍞竴鏉ユ簮锛夈€?  \item \textbf{缁熶竴 1-based 缂栧彿杈撳叆}銆?  \item \textbf{浣跨敤 UnitsContext 瑙ｆ瀽甯﹀崟浣嶅潗鏍噠锛歅oint/innerPoint/arc center/spline featurePoints銆?  \item \textbf{寮曞叆 BoundaryEntity}锛歞omain/fixed/moving 涓夌被杈圭晫閮戒互 boundaryId 涓轰富閿紝骞惰褰?lines銆乴evelSetIndex銆佺浉閭?phase 淇℃伅銆?  \item \textbf{Phase 瀹氫箟鍗囩骇涓?constraints/subregions}锛堟浛浠ｆ棫鐨?levelSetIndexA/B + operation 閾撅級锛屽疄鐜版洿鐩磋銆?\end{enumerate}
+
+\paragraph{寤鸿鐨勬暟鎹粨鏋勶紙鏂板锛墋
+\begin{lstlisting}
+enum class BoundaryKind { Domain, Fixed, Moving };
+
+struct BoundaryEntity
+{
+    int id = -1;               // 0-based internal
+    std::string name;
+    BoundaryKind kind;
+    std::vector<int> lineIds;  // 0-based line indices
+
+    // For Fixed/Moving
+    int levelSetIndex = -1;    // which LS defines this interface
+    int phase = -1;            // psi<0 side
+    int opposedPhase = -1;     // psi>0 side
+    bool immersed = true;
+    bool ignored = false;
+
+    // For Domain
+    int adjacentPhase = -1;
+};
+
+struct PhaseEntity
+{
+    int id = -1;
+    std::string name;
+    std::string type; // plasma|conductor|dielectric|...
+
+    // Union of subregions; each subregion is an intersection of constraints.
+    struct Constraint { int ls; int sign; }; // sign=+1 for (<0), sign=-1 for (>0)
+    std::vector<std::vector<Constraint>> subregions;
+};
+\end{lstlisting}
+
+\subsection{LevelSet 鐢熸垚锛堜粠 Line 闆嗗悎鍒?signed distance锛墋
+
+\paragraph{鐩爣}
+缁欏畾涓€缁?line锛坰traight/arc/spline锛夛紝鏋勯€犳暣鍩熷畾涔夌殑 \(\psi(x)\)銆傝姹傦細
+\begin{itemize}[leftmargin=2.2em]
+  \item \(\psi(x)\) 涓哄埌鐣岄潰绾块泦鍚堢殑 signed distance锛堟垨鍏惰繎浼硷級銆?  \item 绗﹀彿鐢?\texttt{innerPoint} 閫夊畾锛歕(\psi(\text{innerPoint})<0\)銆?\end{itemize}
+
+\paragraph{瀹炵幇寤鸿锛堝吋瀹圭幇鏈夐€昏緫锛墋
+绗竴闃舵娌跨敤褰撳墠 ImmersedGeometry 浠ョ綉鏍奸《鐐归噰鏍?\(\psi\) 鐨勬柟寮忥細
+\begin{enumerate}[leftmargin=2.2em]
+  \item 瀵规瘡涓綉鏍奸《鐐?v锛岃绠楀埌鎵€鏈?interface line segments 鐨勬渶灏忚窛绂?\(d(v)\)锛坅rc/spline 鍙鏁ｄ负瓒冲瀵嗙殑 polyline锛夈€?  \item 鍒ゅ畾绗﹀彿锛?  \begin{itemize}[leftmargin=1.6em]
+    \item 鑻ョ嚎闆嗗悎闂悎锛氱敤 winding number 鎴?ray casting 鍒ゆ柇鐐瑰湪鍐呴儴/澶栭儴锛?    \item 鑻ョ嚎闆嗗悎鍒嗗壊 domain锛堜笌 domainBoundary 杩炴帴锛夛細鐢?innerPoint 鎵€鍦ㄨ繛閫氬煙浣滀负 \(\psi<0\) 涓€渚э紙鍙€氳繃鍦ㄩ《鐐瑰浘涓?flood-fill 杩戜技锛夈€?  \end{itemize}
+  \item 浠?\(\psi(v)=\pm d(v)\)锛屽苟淇濈暀鐜版湁 reinitialize / updateLevelSet锛堣嫢 moving=true锛夈€?\end{enumerate}
+
+绗簩闃舵鍙妸 cut-cell metric锛圽(\alpha,\beta,\gamma\)锛夌殑鍑犱綍璁＄畻浠庘€滈噰鏍封€濆崌绾т负鈥滃熀浜?line 鐨勮В鏋愬垏鍓测€濓紝浣嗚繖涓嶅奖鍝嶅瓧鍏歌鑼冦€?
+\subsection{Phase 鍦虹殑鏋勯€犱笌妫€鏌
+缁欏畾姣忎釜 level set 鐨?\(\psi_k(v)\)锛屽姣忎釜 phase p锛?\begin{enumerate}[leftmargin=2.2em]
+  \item 瀵规瘡涓?subregion r锛堢害鏉熼泦鍚堬級鏋勯€?  \[
+  \phi_r(v) = \max_i \bigl( s_i\,\psi_{k_i}(v) \bigr).
+  \]
+  \item phase 鐨?indicator 涓哄苟闆嗭細\(\phi_p(v) = \min_r \phi_r(v)\)銆?  \item 椤剁偣褰掑睘锛歕(v\in\text{phase }p\iff \phi_p(v)<0\)銆?\end{enumerate}
+鐒跺悗鍋?partition 妫€鏌ワ紙姣忎釜閲囨牱鐐规伆灞炰竴涓?phase锛夈€?
+\subsection{杈圭晫鍒?BC 鐨勬槧灏勪笌鏂藉姞}
+
+\paragraph{鏍稿績鍙樺寲}
+浠庘€渟ide key / 鍗曚竴 embedded BC鈥濆崌绾т负鈥渂oundaryId -> BC鈥濄€傞渶瑕佷袱鏉￠摼锛?\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{Domain boundary faces}锛歲uadtree 鐨勫杈圭晫 face 闇€瑕佽兘鏌ヨ鍏舵墍灞?boundaryId銆?  \item \textbf{Embedded boundary segments}锛歝ut-cell 鐨?EB segment 闇€瑕佽兘鏌ヨ鍏舵墍灞?boundaryId锛堥€氬父鐢卞叾 levelSetIndex + interface line id 鍐冲畾锛夈€?\end{enumerate}
+
+\paragraph{绗竴闃舵锛堟渶灏忔敼鍔紝鍏堣窇閫氾級}
+\begin{itemize}[leftmargin=2.2em]
+  \item domainBoundary锛氫粛鏄犲皠鍒?west/east/south/north 鍥涗晶锛屼絾鐢?geometry.dict 鎻愪緵 boundaryId锛屽搴?pic.dict 鐨?BC/Field/boundary \texttt{id}銆?  \item fixedBoundary锛氬厛鏀寔鈥滃崟涓€ embedded boundary鈥濓紙鍗?pic.dict 鎸囧畾涓€涓?boundaryId 浣滀负 EB锛夛紝绛変环浜庣幇鍦ㄧ殑 EmbeddedGeometry.levelSetIndex + BC/Embedded銆傝繖鏍峰厛瀹屾垚鈥淏C 寮曠敤 boundaryId鈥濈殑闂幆銆?\end{itemize}
+
+\paragraph{绗簩闃舵锛堟敮鎸佸鍥哄畾杈圭晫銆佸 BC锛墋
+\begin{itemize}[leftmargin=2.2em]
+  \item 鍦?cut-cell metric/segment 鏋勫缓鏃讹紝璁板綍姣忎釜 EB segment 灞炰簬鍝釜 levelSet锛屽苟杩涗竴姝ラ€氳繃鏈€杩?line锛堟垨绾挎鍙傛暟锛夋槧灏勫埌 boundaryId銆?  \item PoissonFVSolverCellCentered 缁勮鏃讹紝瀵规瘡涓?EB segment 璋冪敤 \texttt{bcMap.get(boundaryId)} 鑾峰彇 Dirichlet/Neumann/Robin 鍙傛暟銆?\end{itemize}
+
+\subsection{mesh 鑷€傚簲锛氬嚑浣曢噺 + 鐗╃悊閲弣
+
+\paragraph{鍑犱綍閲忛┍鍔▆
+瀹炵幇浣嶇疆锛歕texttt{DictionaryMesh} 澧炲姞 \texttt{GeometryRefinement} 瑙ｆ瀽锛沑texttt{QuadtreeMesh} 鐨?refine 鏍囪闃舵澧炲姞 boundaryId/phase 閫昏緫銆?
+\paragraph{鐗╃悊閲忛┍鍔▆
+瀹炵幇浣嶇疆锛氭柊澧?\texttt{IMeshRefinementProvider} 鎺ュ彛 + provider registry锛汦xplicitPIC 鎻愪緵 DebyeLength 涓?ElectricField 鎸囨爣銆?
+\section{浠诲姟鍒嗚В锛堝缓璁噷绋嬬锛墋
+
+\small
+\begin{longtable}{p{0.08\linewidth}p{0.58\linewidth}p{0.30\linewidth}}
+\toprule
+闃舵 & 浜や粯鐗╋紙鍙獙鏀讹級 & 涓昏鏀瑰姩鏂囦欢锛堝缓璁級\\
+\midrule
+M1 & geometry.dict(v3) 涓?mesh.dict(v3) 瑙ｆ瀽瀹屾垚锛屾敮鎸佸崟浣嶄笌 1-based 缂栧彿锛沝omain 鍙湪 geometry.dict 瀹氫箟锛涙洿鏂?electrospray 鏍蜂緥鍙鍏?& 
+DictionaryGeometry.(h/cpp),\newline Dictionary.(h/cpp),\newline Line/Structures,\newline ElectrosprayApp 鍚姩閾綷\
+
+M2 & geometry.dict(v3) 鐨?BoundaryEntity 鐢熸晥锛沺ic.dict(v3) 鐨?Field BC 鍙寜 boundaryId 鏂藉姞鍒?domain 鍥涗晶锛堟浛浠?left/right锛?& 
+DictionaryPIC,\newline PicConfig(BC),\newline PoissonFVSolverCellCentered,\newline domain bc query\\
+
+M3 & mesh.dict(v3) 鐨?GeometryRefinement 鐢熸晥锛堟寜 boundaryId maxLevel + phase min/max锛夛紱鏇存柊鐜版湁 ExplicitPIC cases 閫氳繃 & 
+DictionaryMesh,\newline QuadtreeMesh refine logic,\newline ImmersedGeometry phase labeling\\
+
+M4 & 鐗╃悊閲忛┍鍔ㄥ鎺ワ細mesh.dict 澹版槑 DebyeLength锛沺ic.dict 鎻愪緵鍙傛暟锛汦xplicitPIC provider 杈撳嚭 indicator锛泀uadtree 鏍规嵁 h<=CD*lambdaD 缁嗗寲 & 
+IMeshRefinementProvider,\newline registry,\newline ExplicitPIC provider,\newline mesh refiner\\
+
+M4b & 寮曞叆 mcc.dict(v1) 瑙ｆ瀽涓?MCC 瀛愭ā鍧楅鏋讹細璇诲彇姘斾綋鑳屾櫙/鎴潰/鍙嶅簲閫氶亾锛涗笌 ExplicitPIC 鐗╃鍚嶅榻愶紱鍏堝疄鐜扳€滅┖纰版挒锛坣o-op锛夆€濆彲寮€鍏宠繍琛?&
+DictionaryMCC,\newline MCCConfig,\newline ExplicitPIC-MCC hook (stub)\\
+
+M5 & 澶氬浐瀹氳竟鐣?BC锛堝涓?conductor/insulator锛夛細cut segments 缁戝畾 boundaryId锛汸oisson EB closure 鎸?boundaryId 鍙?BC & 
+CutCellMetrics/segment builder,\newline Poisson EB closure,\newline geometry-boundary mapping\\
+\bottomrule
+\end{longtable}\normalsize
+
+\section{寤鸿鐨?AI 瀵硅瘽椹卞姩鎸囦护锛堥€愭瀹炵幇鐢級}
+
+涓嬮潰缁欏嚭鍙互鐩存帴澶嶅埗缁?AI 鐨勨€滃垎姝ュ疄鐜版寚浠も€濓紝姣忎竴姝ラ兘瑕佹眰杈撳嚭锛氫慨鏀圭偣銆佽ˉ涓侊紙diff锛夈€佷互鍙婅兘璺戠殑鏈€灏忛獙璇?case銆?
+\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{M1 鎸囦护锛殅
+  \begin{quote}
+  璇峰湪 QUANTUM2 涓疄鐜?geometry.dict(v3) 鐨?Units 鏀寔涓?1-based 缂栧彿锛?  (1) 缁?DictionaryGeometry::readDict 澧炲姞 UnitsContext* 鍙傛暟骞剁敤 parseCoordWithUnits/parseCoordsWithUnits 瑙ｆ瀽 Point/innerPoint/arc center/spline featurePoints锛?  (2) 鏀寔 Domain{min/max}锛?  (3) Point/Line/LevelSet/Boundary 鐨勭紪鍙疯緭鍏ヤ粠 1 寮€濮嬶紝鍐呴儴杞崲涓?0-based锛?  (4) mesh.dict 鐨?BackgroundMesh 浠呭惈 divide锛汢ackgroundMesh 鐨?domain 鐩存帴缁ф壙 geometry.dict 鐨?Domain锛涜嫢 Domain 缂哄け鍒欐姤閿欍€?  杈撳嚭锛氫唬鐮?diff + 鑷冲皯涓€涓洿鏂板悗鐨?case锛坋lectrospray 鎴?\texttt{explicitpic\_two\_plates\_eb\_post}锛夊彲姝ｅ父璇诲彇骞舵墦鍗拌В鏋愮粨鏋溿€?  \end{quote}
+
+  \item \textbf{M2 鎸囦护锛殅
+  \begin{quote}
+  璇锋妸 ExplicitPIC 鐨?BC 浠?left/right/top/bottom 杩佺Щ涓哄紩鐢?geometry Boundary ID锛?  (1) 璁捐 PicConfig::FieldBCMap锛坆oundaryId->PicBC锛夛紱
+  (2) 鏇存柊 DictionaryPIC 瑙ｆ瀽 BC/Field/boundary <id> {...}锛?  (3) 鍦?PoissonFVSolverCellCentered 涓紝瀵?domain 澶栬竟鐣?face 閫氳繃 geometry 鐨?domainBoundary 鏄犲皠鍒?boundaryId锛屽啀鍙栧搴?BC銆?  淇濈暀鏃ц娉曞吋瀹癸紙鑻ユ湭缁?boundaryId锛屽垯鍥為€€鍒版棫 Domain{left...}锛夈€?  杈撳嚭锛氫唬鐮?diff + \texttt{explicitpic\_two\_plates\_eb\_post} case 浣跨敤 boundaryId BC 杩愯閫氳繃銆?  \end{quote}
+
+  \item \textbf{M3 鎸囦护锛殅
+  \begin{quote}
+  璇峰疄鐜?mesh.dict(v3) 鐨?GeometryRefinement锛?  (1) DictionaryMesh 瑙ｆ瀽 GeometryRefinement/refineBoundary/refinePhase锛?  (2) quadtree refine 闃舵鎸?boundaryId 鐨?maxLevel + $C_\Gamma$ 瑙﹀彂锛屼互鍙?phase 鐨?min/max 绾︽潫銆?  杈撳嚭锛氫唬鐮?diff + 涓€浠借緭鍑烘棩蹇楋紙姣忔 adapt 缁熻姣忎釜瑙﹀彂鍣ㄨ础鐚殑缁嗗寲鏁伴噺锛夈€?  \end{quote}
+
+  \item \textbf{M4 鎸囦护锛殅
+  \begin{quote}
+  璇峰疄鐜扮墿鐞嗛噺椹卞姩鑷€傚簲鐨勯€氱敤瀵规帴锛氭柊澧?IMeshRefinementProvider 鎺ュ彛涓?registry锛?  ExplicitPIC 鎻愪緵 DebyeLength 鎸囨爣锛堢敤鐢靛瓙瀵嗗害浼拌 ne锛孴e 鍙敱 pic.dict 鎴?species 鎻愪緵锛夛紱
+  mesh 渚х敤 h<=CD*lambdaD 浣滀负 refine 鍑嗗垯銆?  杈撳嚭锛氫唬鐮?diff + 涓€涓姣斿疄楠岋紙鍚敤/绂佺敤 DebyeLength 閫傞厤锛夊睍绀虹綉鏍肩瓑绾у彉鍖栥€?  \end{quote}
+
+  \item \textbf{M5 鎸囦护锛殅
+  \begin{quote}
+  璇锋墿灞?EB 杈圭晫鍒板 boundaryId锛歝ut-cell segment 鏋勫缓鏃惰褰?boundaryId锛?  Poisson EB closure 瀵规瘡涓?segment 鏌ヨ瀵瑰簲 BC锛?  pic.dict 鏀寔涓哄涓?boundaryId 璁剧疆涓嶅悓 Dirichlet 鍊笺€?  杈撳嚭锛氫唬鐮?diff + 涓€涓寘鍚袱涓浣撶殑 EB case锛堜袱涓浣撲笉鍚岀數鍔匡級楠岃瘉鐢靛娍鍒嗗竷銆?  \end{quote}
+\end{enumerate}
+
+\section*{闄勬敞锛氫笌鐜版湁婧愮爜鐨勫搴斿叆鍙
+\begin{itemize}[leftmargin=2.2em]
+  \item geometry 瑙ｆ瀽锛歕texttt{src/Core/IO/DictionaryGeometry.cpp}
+  \item mesh 瑙ｆ瀽锛歕texttt{src/Core/IO/DictionaryMesh.cpp}
+  \item pic 瑙ｆ瀽锛歕texttt{src/Modules/Plasma/ExplicitPIC/DictionaryPIC.cpp}
+  \item Poisson BC锛歕texttt{src/Solvers/Poisson/PoissonFVSolverCellCentered.cpp}
+  \item EB 鑰﹀悎涓?cut metrics锛歕texttt{.../CutCellMetrics, FaceSegmentGraph, ElectricFieldEvaluator}
+\end{itemize}
+
+\end{document}
+

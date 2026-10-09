@@ -1,0 +1,556 @@
+% !TEX program = xelatex
+% Standalone source. Compile twice with XeLaTeX; no external figures required.
+\documentclass[UTF8,a4paper,11pt,fontset=fandol]{ctexart}
+\usepackage[margin=23mm,headheight=16pt]{geometry}
+\usepackage{amsmath,amssymb,booktabs,longtable,array,tabularx}
+\usepackage{xcolor,fancyhdr,enumitem,needspace,tikz,listings,etoolbox}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage[unicode,colorlinks=true,linkcolor=teal!65!black,urlcolor=teal!65!black]{hyperref}
+\usepackage{xurl}
+\definecolor{ink}{RGB}{28,49,68}
+\definecolor{accent}{RGB}{0,111,124}
+\definecolor{pale}{RGB}{236,245,246}
+\definecolor{muted}{RGB}{92,105,116}
+\ctexset{section={format=\Large\bfseries\color{ink}},subsection={format=\large\bfseries\color{ink}}}
+\setlength{\parskip}{4pt}
+\setlength{\emergencystretch}{4em}
+\setlist{nosep,leftmargin=2em,topsep=4pt}
+\renewcommand{\arraystretch}{1.22}
+\setlength{\tabcolsep}{4pt}
+\AtBeginEnvironment{longtable}{\small}
+\pretocmd{\section}{\Needspace{8\baselineskip}}{}{}
+\pretocmd{\subsection}{\Needspace{7\baselineskip}}{}{}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\code}[1]{\nolinkurl{#1}}
+\newcommand{\ev}[1]{{\small\color{muted}〔证据 #1〕}}
+\newcommand{\decision}[1]{\par\medskip\noindent\colorbox{pale}{\parbox{\dimexpr\linewidth-2\fboxsep}{\strut #1\strut}}\par\medskip}
+\newcommand{\status}[1]{\textbf{#1}}
+\lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,columns=fullflexible,keepspaces=true,showstringspaces=false,frame=single,rulecolor=\color{accent!30},backgroundcolor=\color{pale},xleftmargin=3pt,xrightmargin=3pt}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small QUANTUM 网格与几何公共底座}
+\fancyhead[R]{\small 模块化改造方案 / 2026-09-14}
+\fancyfoot[C]{\small\thepage}
+\hypersetup{pdftitle={QUANTUM 网格与几何公共底座：代码盘点与模块化改造方案},pdfauthor={QUANTUM 项目代码审计},pdfsubject={基于模块化蓝图 v1.1 的公共底座实施方案}}
+\begin{document}
+\hypersetup{pageanchor=false}
+\begin{titlepage}
+\vspace*{14mm}
+{\Large\color{accent}\bfseries QUANTUM \par}
+\vspace{7mm}
+{\Huge\bfseries\color{ink}网格与几何公共底座\par}
+\vspace{5mm}
+{\LARGE\bfseries 代码盘点与模块化改造方案\par}
+\vspace{8mm}
+{\large 从现有四叉树、原生面图与 Hermite 几何出发\par}
+\vspace{13mm}
+\noindent\begin{tabularx}{\textwidth}{@{}P{.2\textwidth}X@{}}
+\toprule
+设计依据 & \code{docs/QUANTUM_Modular_Model_Blueprint.pdf}，设计稿 v1.1，2026-09-14，共 48 个 PDF 页面。\\
+盘点对象 & 当前开发树 \code{D:/Chen/QUANTUM} 的 Core 及 Hydro、Electricity、Plasma、Electrospray 消费者；不把论文归档源码当作现行实现。\\
+审计快照 & 2026-09-14 16:00:40（北京时间）的文件清单；共扫描 456 个源码/头文件。工作目录不是 Git 仓库，以实际文件 SHA-256 标识来源。\\
+方案状态 & 专项设计 v1.0。细化蓝图第 3、5.1、5.6、6、8.5、10 节；不是功能已发布声明。\\
+本次验证 & 执行现行依赖与目录检查，均通过；阅读相关测试源码及既有验证记录。未修改数值源码、标准输入或物理运行结果，未新跑数值算例。\\
+交付 & 可独立编译的 LaTeX 源码与 PDF；接口草图、文件迁移表、阶段任务及验收矩阵。\\
+\bottomrule
+\end{tabularx}
+\vspace{9mm}
+\decision{\textbf{核心建议：保留现有网格和几何算法，先把共享数据、身份、生命周期与数学职责定型。}公共底座目前已具备实质能力；缺口主要在公共域契约、受控写入、物理/几何边界、跨网格状态转移和可检查的消费关系。}
+\vfill
+{\small\color{muted}阅读建议：第 1 节看结论，第 3--4 节看源码依据，第 5--8 节看目标契约，第 10--11 节用于实施排期与验收。附录可按文件与行号追溯。}
+\end{titlepage}
+\hypersetup{pageanchor=true}
+{\small\setlength{\parskip}{0pt}\tableofcontents}
+\clearpage
+
+\section{结论与建议定型的边界}
+\subsection{底座不需要另建，公共契约需要补齐}
+当前代码已经共享 \code{QuadtreeMesh}、\code{FaceSegmentGraph}、原生叶单元定位与校验、XY/RZ 度量辅助、Hermite 标量快照、原生 Q3/Q4 界面几何以及部分候选转移。喷嘴也确实把同一个网格传给流体和电场，不能把现状描述成“每个方程都用另一张网格”。问题是：这些复用多数仍通过具体网格类、可写数组、物理模块域对象和 App 初始化对象连接，尚未成为统一的公共服务。\ev{E01--E08,E13--E16}
+
+建议将本轮目标分成两个可以独立验收的结果：
+\begin{enumerate}
+\item \textbf{公共底座定型：}以已有算法为实现，形成蓝图指定的 \code{DomainView.h}、\code{MeshService.h}、\code{InterfaceView.h} 及 \code{FieldView.h/StateStamp.h}；明确只读访问、原生身份、度量、边界覆盖和派生数据有效期。
+\item \textbf{动态适应能力增量：}基于现有候选网格，按能力范围逐项接通 Interface、Hydro、Electricity/Plasma 的状态转移，由运行层联合接受。完成前不发布“通用动态 AMR 已支持”。
+\end{enumerate}
+首个结果不应被全功能 AMR 阻塞；第二个结果也不能以第一层接口编译成功代替物理验证。
+
+\subsection{本次建议确认的六项设计决定}
+\begin{enumerate}
+\item \textbf{Core 保有几何事实与拓扑事实。}坐标、单元/面连接、边界实体、活动域、相侧身份、空间查询、积分几何和候选拓扑属于 Core。NS、Poisson 边界装配、电荷推进和粒子侵蚀不属于 Core。
+\item \textbf{网格与液面分别有权威状态。}MeshState 表示背景拓扑与域；InterfaceState 表示演化标量的独立自由度和必要历史。几何快照、面元、相占比是带来源的派生量，不能反过来成为第二套液面。
+\item \textbf{公共域不以 Hydro 或电学为宿主。}活动单元/面、坐标系与边界覆盖由公共域产生；机械条件和压力算子仍由 Hydro 产生，电学条件与系数平均仍由 Electricity 产生。
+\item \textbf{只读契约必须有实现保障。}现有 \code{const BackgroundMesh} 仍能返回可写实体；在封闭这些写入口之前，仅增加版本号不足以证明缓存可复用。
+\item \textbf{AMR 是零时间状态变换。}同一次事件既不再推进 NS，也不再充电；当前/历史状态一起转移，保留原方法的时间阶、相守恒与约束恢复。
+\item \textbf{先提取与适配，再移除旧入口。}不重写四叉树、根求解、曲线积分或场插值来配合新目录；结构批次保留编号、求值顺序、参考、掩膜、门限及浮点编译边界。
+\end{enumerate}
+
+\subsection{优先级与投入方向}
+\begin{longtable}{@{}P{.11\textwidth}P{.31\textwidth}P{.52\textwidth}@{}}
+\toprule 优先级 & 工作 & 原因及完成标志\\\midrule\endhead
+P0 & 公共域、身份和只读视图 & 阻断跨模块传递错误域、旧面图和同长度异布局数组；公共接口不再包含 Hydro/App/Eigen 实现类型。\\
+P0 & 统一初始化与几何绑定 & 流体域不再依赖“先求一次电场”才能取得网格边界；保留原喷嘴 bootstrap 电场的数值次序。\\
+P0 & 候选/提交、转移阶段边界 & 复用已有 clone 与 Q4 受限转移；明确旧快照、两层历史与缓存的生命周期。\\
+P1 & Interface 输运职责、MovingEB 物理职责迁出 & 前者归 Interface，后者归 Plasma 与命名 App；Core 不再拥有物理推进和专用文件流。\\
+P1 & 严格配置值对象与 IO 分离 & 消除网格重复解析几何域、内核直接退出进程等行为；兼容现有 reader，目标版本 3 单独发布。\\
+P2 & 增量缓存、拓扑存储整理和一般 AMR & 有性能测量后优化；一般界面跨级转移、拓扑事件和新边界能力分别验收。\\
+\bottomrule
+\end{longtable}
+
+\section{盘点方法、来源与结论强度}
+\subsection{范围与实际检查}
+审计以指定 PDF 的公共底座要求为起点，读取现行代码组织规范、字典参考和算例指南，再追踪主要头文件、构造/调用位置、网格更新、几何派生和测试入口。源码/头文件统计按 \code{include/} 与 \code{src/} 中的 \code{.h/.hpp/.cpp} 文件计算；不计注释语义、不按行数评判质量，也不包含 \code{paper/} 内的历史副本。
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule 公共目录（include 与 src 合计） & 文件数 & 文本行数\\\midrule
+Core/Mesh & 29 & 7,700\\
+Core/Geometry & 68 & 22,700\\
+Core/Field & 13 & 2,177\\
+Core/IO & 21 & 3,950\\
+Core/Lagrangian & 11 & 3,212\\
+\bottomrule
+\end{tabular}
+\end{center}
+\code{MovingEBController.h} 为 2,196 行，\code{ImmersedGeometry_impl.h} 为 2,830 行，\code{QuadtreeMesh.cpp} 为 2,369 行。这些数字说明审查面，真正拆分依据是物理、几何、状态和 IO 的职责交叉。
+
+本次直接运行现有两项架构检查的 Python 入口：依赖检查报告 456 文件、8 个精确运行适配例外、16 个自检；目录检查及 6 个自检通过，均退出 0。未编译或运行几何/流体数值测试，因此文中“已有测试”只表示源码与 CMake 注册可见；引用历史通过记录时另行注明。
+
+\subsection{蓝图与当前源码的差异及编写期增量}
+\textbf{近期实现应计入资产。}当前树已包含 \code{QuadtreeMesh::clone/swapStorage}、动态加密折线替换、几何带外粗化策略和 \code{ActiveQuarticHermiteTransfer::prepare}。这些不能再列作从零开发。clone 等接口当前由 Core 测试直接消费；Q4 转移也已有直接测试，但本次未找到它们在生产 App 中完成联合 AMR 提交的调用。\ev{E08,E09,E20}
+
+\textbf{文档的支持范围也要核对消费者。}字典参考有“同层叶网格”的表述；较新的算例指南和固定局部加密记录已记载 28,358 叶单元的原生粗细网格短程。应在迁移时同步能力表，保留“固定粗细网格”与“运行时改网格”的区别。本文把前者列为有代码及历史记录的能力，把后者列为未完成全链接线；不据较旧一句话否定新实现，也不由新测试推定通用支持。\ev{E23}
+
+\textbf{16:23 补查：工作区有并行开发增量。}在正文编写期间又出现 \code{Snapshot::identicalNativeQuarticCell}、\code{SurfaceChargeField::rebindMesh} 的实现与直接测试源码。前者比较两个原生 Q4 单元的物理盒与完整约束多项式，后者在面元划分、方向、局部坐标及积分测度不变时，双射重排积分电荷和每个传入历史层，不添加时间或电流。补查未见 App 调用；本次也未编译/运行其新测试。因此将它们计为\textbf{已有实现待集成/核验}，M5 优先复用；并不另造电荷转移算法，也不把接口存在称为完整动态 AMR。主统计与原检查仍固定在 16:00:40，补查文件另记来源。\ev{E25}
+
+\decision{全文用四种证据强度：\textbf{源码存在}、\textbf{消费者已接通}、\textbf{既有记录报告通过}、\textbf{本次实测通过}。本次实测只包含两项架构检查；所有数值验收建议均为后续工作。}
+
+\section{现有代码资产与消费者盘点}
+\subsection{网格、面图与空间查询}
+\begin{longtable}{@{}P{.24\textwidth}P{.37\textwidth}P{.33\textwidth}@{}}
+\toprule 现有实现 & 已有价值与实际角色 & 主要边界/改造方向\\\midrule\endhead
+\code{BackgroundMesh/QuadtreeMesh} & 矩形背景、父子树、点/边/单元编号，原细化/粗化与场更新；Hydro、电学、Plasma 共用。 & 保留存储与算法；先在外层建立 MeshState 与私有适配，后续封闭公共可写数组。\ev{E01,E02}\\
+\code{DyadicGridCoordinates} & 同一二进网格逻辑地址得到一致坐标；沿父子关系恢复地址，端点原值保留。 & 作为 CellId/谱系设计的几何基础；自身注释明确它尚不是新的持久身份体系。\ev{E03}\\
+\code{CartesianLeafMesh/UniformLeafGrid} & 前者检查原生矩形叶与 2:1 关系；后者提供根网格或同层叶逻辑布局。 & 两者是能力视图，不是重复网格。混合网格的最小 h 不能充作全局差分步长。\ev{E04}\\
+\code{FaceSegmentGraph} & 按活动单元存定向面片；粗面按真实叶边拆分，保留 owner/neighbor、方向和原边标签。 & 当前按单元重复存内部面的两个方向；建立唯一面身份及关联映射，旧定向遍历先保持。\ev{E05}\\
+\code{CartesianLeafLocator} & 保存叶包围盒与原生下标的只读搜索结构，不另造重采样网格；精确闭盒候选。 & 绑定 MeshVersion；返回多候选由调用方选择实际有效侧，不能靠容差越过固壁。\ev{E04}\\
+\code{QuadtreeMeshRefiner} & 几何/相/区域目标，物理指标、预算、几何刷新与新增带外粗化。 & 依赖 reader 类型与活几何指针；将配置改为值对象、请求改为有身份的显式列表。\ev{E07}\\
+\bottomrule
+\end{longtable}
+
+\subsection{几何表示与界面算法}
+\begin{longtable}{@{}P{.24\textwidth}P{.37\textwidth}P{.33\textwidth}@{}}
+\toprule 现有实现 & 已有价值 & 面向模块化的处置\\\midrule\endhead
+\code{Line/Phase/LevelSet} 与 \code{ImmersedGeometry} & 直线、圆弧、样条及相表达式；初始化距离、相标记、传统切割信息；还拥有输运、重初始化与多层历史。 & 提取定义、初态构造、查询/切割与状态推进四种职责；不把整个类简单移进 Interface。\ev{E10}\\
+\code{LevelSetHermiteGeometry::Snapshot} & 拥有保留快照，pImpl、move-only；原生/同层 Q3/Q4 入口，严密的根、相侧、局部坐标、投影与微分契约。 & 公共 InterfaceView 优先包裹该引擎，继续拒绝未知拓扑和不支持查询；严禁外层以显示坐标重构丢失的局部位置。\ev{E11}\\
+\code{ActiveHermitePatch/ActiveQuarticHermitePatch} & 活动域上的独立标量/导数，Q4 边中点和中心数据，悬挂约束及单侧接触分片。 & 作为 InterfaceState 内部表示；公共视图不暴露完整 patch 模板。Q3/Q4 差异先保留。\ev{E11,E12}\\
+\code{LevelSetMappedSegment/Interface}、\code{LevelSetInterfacePanels}、\code{AxisymmetricBoundaryIntegral} & 同源根分段、相积分、面元链、旋转体积分及导数。 & 留 Core；统一 InterfaceId/PanelId 与几何来源。面元编号跨重建需有映射，不能只信数组顺序。\ev{E12}\\
+\code{ActiveLevelSetTransport} & 两层速度回溯、Q3/Q4 标量增量、钉扎/支撑约束，返回候选与材料轨迹。 & 时间推进归 Modules/Interface；纯重构、约束、查询继续 Core。保留轨迹的实际拥有关系。\ev{E12}\\
+\code{ActiveQuarticHermiteTransfer} & 零时间换网格；保留界面多项式，允许被严格认证的纯相区细粗化。 & 作为受限 AMR 的第一条复用路线；并非界面自身跨级的通用守恒插值。\ev{E09}\\
+\bottomrule
+\end{longtable}
+
+\subsection{有效域、度量与跨模块使用}
+\code{CartesianMeasure} 已有 $2\pi r$ 权重和矩形单元/面旋转测度，并拒绝非法半径。\code{HydroFittedDomain} 又集中保存活动行、原生面、面积、速度对偶体积、机械边界及散度/压力梯度矩阵；它的 \code{validateMeshIdentity} 使用完整有序字比对，包含混合网格所需祖先信息。这个检查比“只看单元数量”强，必须保留。\ev{E06,E13}
+
+电学的 \code{FittedDielectricPolarization.cpp} 实际包含 Hydro 域头文件并消费它；这是几何与机械离散交叉的一个明确接点。不能为消除依赖把整个 HydroFittedDomain 移入 Core：压力边界、入流密度/黏度、自由速度行与 $D/C$ 算子都仍有流体语义。\ev{E14}
+
+\code{Solvers/Poisson/CutCellMetrics} 在求解器目录内构造面积占比、边开口、嵌入界面法向/长度/距离及边界标签，供 Poisson 和沉积使用，还带 CSV 输出和局部 revision。其头部“仅默认全单元度量”的描述已落后于实现。应按当前 build 算法提取公共几何部分，保留原采样/切割语义；不能一边搬迁一边把它替换成 Hermite 的另一种几何。\ev{E17}
+
+\subsection{初始化与运行时网格调用链}
+\begin{longtable}{@{}P{.2\textwidth}P{.44\textwidth}P{.3\textwidth}@{}}
+\toprule 路径 & 当前调用方式 & 迁移要求\\\midrule\endhead
+独立 Hydro / EHD & Hydro runner 自行准备网格，拥有时钟/几何；\code{prepareMesh} 另有受限 mesh 解析。EHD 通过既有 Hydro 耦合接口。 & runner 迁到 App 装载 MeshService；普通均匀域 adapter 首批保持原限制和数值。\ev{E15}\\
+喷嘴 & App 构造一张 QuadtreeMesh；初始几何加密反复调用 refiner/adapt/初始化。电学初态对象先得到相别、活动图和边界 ID，Hydro 再借这些数据构域。 & 公共域先构造；电/流各绑定条件。保留初始电势 bootstrap 及之后 P3 的求解顺序，不能用拆依赖删除数值步骤。\ev{E16}\\
+独立 Electricity & 旧入口另行构造网格/ImmersedGeometry，并有共享网格重载。 & 单独运行自然允许拥有自己的运行根；耦合时必须借同一根。不能将不同运行之间的网格实例数当作重复算法。\ev{E15}\\
+显式/隐式 PIC & 已有运行时 adapt、场登记、几何刷新、面图与 Poisson/沉积缓存重建。 & 作为已存在的消费链逐步适配，不直接套用喷嘴 Q4 或替换粒子转移。\ev{E18}\\
+\bottomrule
+\end{longtable}
+
+\section{需要改造的具体问题}
+\subsection{G01：公共域目前由物理对象间接提供}
+喷嘴的 \code{cellPhases/coversFace/bindFace} 在 \code{ElectrosprayElectrostatics.cpp} 内，随后 Hydro 通过电学初态获得图和边界。这里有可提取的通用相表达式求值、边界几何覆盖校验，也有导体相、供液口和电势绑定。目标是将前者归 Core 的域构造，后者留模块/Setup。保留原绑定容差和“固壁必须面拟合、覆盖完整”的拒绝规则；首批不把弧形/斜壁自动栅格化为台阶。\ev{E16}
+
+\subsection{G02：可写拓扑与逻辑只读不一致}
+\code{BackgroundMesh::cells/verts/hEdges/vEdges} 的 const 成员返回非 const 引用；index-to-label 指针公开。Cell/Edge/Vert 中还混有临时插值源、needUpdate、相/切割字段和求解辅助索引。任意消费者均可能改变几何，而版本计数器无法自动察觉。\ev{E01,E02}
+
+\textbf{先做：}外层只提供不可变快照/窄查询；原始写接口限制在内部 adapter，调试时保留完整身份比对。\textbf{再做：}把一次转移的工作标记移为事件局部数据，将方程辅助缓存归消费者。原相/切割存储先兼容，不能在第一批改缓存格式和大量访问代码。
+
+\subsection{G03：原生下标、标签与长期身份混用}
+现有面图中的 K/L 是 cell label，offset 用 cell index，Hydro 又有紧凑行号；Q4 转移明确返回 source/target 的原生 index。它们不可互换。粗化再细化可能复用标签，面元重建也会改变顺序。需要强类型 ID、DofMapId、网格/几何版本及显式转移谱系；稳定身份不能由“裸 int 没变”推定。\ev{E02,E05,E09,E13}
+
+\subsection{G04：度量约定与机械离散没有完全分层}
+共享的 XY/RZ 帮助函数值得复用，但坐标系仍由多个 bool/配置选择；几何量也有二维长度、回转面积、面积分数和实际体积之别。Hydro 对偶体积与压力算子相关，不能把它当成所有物理场唯一的存储布局。应统一公共测度契约及可具名的对偶几何描述，把机械行号和算子留 Hydro。\ev{E06,E13,E17}
+
+\subsection{G05：静态几何与界面演化共用一套大对象}
+ImmersedGeometry 同时拥有点/线、当前与两层旧标量、输运、重初始化、切割刷新和输出；ActiveLevelSetTransport 的一步方法也在 Core。蓝图已将 Interface 作为独立时间能力。迁移边界应沿“是否推进/修正物理演化状态”，而不是沿文件名 LevelSet。初态距离、空间多项式、根与积分保留 Core；输运时序、历史和体积约束归 Interface。\ev{E10--E12}
+
+\subsection{G06：MovingEBController 的物理和应用内容位于 Core}
+该头文件含壁面离子冲击统计、\code{ionerosion} 速度闭合、运动窗口、多个 CSV 文件流和编号 10--15 的栅极间距/孔径诊断。这是可直接定位的职责越界，即使它没有包含 \code{Modules/} 也会通过当前字面依赖检查。\ev{E19}
+
+处理分三处：纯位移/法向速度应用和几何查询归 Core/Interface 的相应能力；离子侵蚀、冲击物理统计归 Plasma；何时触发移动/AMR、具体栅极编号和专用报告归命名 App 与其 IO。首批可通过窄适配保留旧粒子入口，不改变既有侵蚀物理参数和采样顺序。
+
+\subsection{G07：AMR 已有事务部件，尚缺全状态事务}
+\code{clone()} 给出独立网格候选，\code{swapStorage()} 在兼容检查后交换存储；原 \code{adapt()} 仍在每个细/粗化层修改候选拓扑并调用登记场的 \code{updateWithMesh}。新修复已清除旧插值关系并检查源下标，这是已完成项。缺少的是：显式 TransferPlan、物理场转移与原历史的成套身份、约束恢复、模块汇合检查和 App 原子发布。\ev{E02,E08,E09}
+
+\subsection{G08：全局加密指标注册表不适合多个独立运行上下文}
+\code{MeshRefinementRegistry} 是进程单例，保存裸 provider 指针；请求时复制指针列表，解锁后依次取第一个可提供者。现状不自动证明已经发生并发错误，但其接口未表达 provider 生命周期、同名冲突和所属网格/时层。目标改为一次调用显式传入已校验的 \code{RefinementRequest} 列表；旧注册表作为 runner 兼容桥，逐步退出新消费者。\ev{E07}
+
+\subsection{G09：配置与 IO 渗入数学对象}
+DictionaryMesh/Geometry 同时是 reader 与配置；网格 reader 再打开 geometry.dict 读取 Domain；Hydro 还有另一份受限 mesh 解析；多个 reader 用 \code{exit(1)} 报错。网格/几何类和 CutCellMetrics 仍有输出方法。需要“解析一次、类型化值对象、绑定一次、计算无文件副作用”的明确链。旧错误行为先在兼容入口隔离，新服务用 Result/异常向 App 传播。\ev{E01,E10,E17,E21}
+
+\subsection{G10：现有自动检查不足以锁住上述职责}
+当前检查禁止 Core/Solvers 包含 Modules/App、限制模块到 App 的八项例外，并检查七个计算适配文件。它不禁止 Electricity 包含 Hydro，不识别 Core 内的侵蚀公式，也不验证返回引用是否可写、面向量是否来自同一网格。应新增针对具体公共契约的编译/拒绝检查，不能扩大目录例外消除报警。\ev{E14,E19,E22}
+
+\Needspace{110mm}
+\section{目标架构：原内核之上的窄公共接口}
+\subsection{数据流与依赖方向}
+\begin{center}
+\begin{tikzpicture}[font=\small,box/.style={draw=accent!65,rounded corners=2pt,align=center,fill=pale,minimum height=11mm},arr/.style={-{Latex[length=2mm]},thick,draw=accent},node distance=8mm]
+\node[box,text width=13.2cm] (runtime) {命名 App / Runtime\\配置绑定、唯一时钟、AcceptedState、候选汇合与输出调度};
+\node[box,text width=3.5cm,below=of runtime,xshift=-4.7cm] (flow) {Hydrodynamics\\机械边界、D/C、流动状态};
+\node[box,text width=3.5cm,below=of runtime] (interface) {Interface\\标量推进、历史与相体积约束};
+\node[box,text width=3.5cm,below=of runtime,xshift=4.7cm] (electric) {Electricity / Plasma\\电荷、电场与粒子物理};
+\node[box,text width=13.2cm,below=12mm of interface] (views) {公共契约：DomainView / InterfaceView / FieldView + StateStamp\\同一 MeshState，可有不同具名活动域与自由度映射};
+\node[box,text width=13.2cm,below=of views] (core) {Core 原有内核\\QuadtreeMesh、FaceSegmentGraph、叶定位、XY/RZ 度量、Hermite 几何};
+\draw[arr] (runtime.south -| flow.north)--(flow.north);
+\draw[arr] (runtime.south)--(interface.north);
+\draw[arr] (runtime.south -| electric.north)--(electric.north);
+\draw[arr] (flow.south)--(views.north -| flow.south);
+\draw[arr] (interface.south)--(views.north);
+\draw[arr] (electric.south)--(views.north -| electric.south);
+\draw[arr] (views)--(core);
+\end{tikzpicture}
+\end{center}
+图中箭头表示依赖/调用方向，不表示各模块复制网格；Solvers 为模块提供已有通用算子和线性代数，省略在图外。App 不通过调用另一个 App 的 run 来实现复用。
+
+\subsection{沿用蓝图的公共头文件}
+以下五个文件名是蓝图已指定、当前尚未提供的正式接口方向；本文不另起同义服务名。其他实现类只在对应工作包需要时新增，不预建空目录。
+\begin{longtable}{@{}P{.37\textwidth}P{.57\textwidth}@{}}
+\toprule 目标头文件（相对 include） & 首批最小内容\\\midrule\endhead
+\code{Core/Mesh/DomainView.h} & DomainId、只读原生拓扑/活动域、CellId/FaceId 与 native index 映射、面覆盖/关联、边界实体、度量及版本；不含机械边界条件或稀疏矩阵。\\
+\code{Core/Mesh/MeshService.h} & MeshConfig、MeshState、MeshCandidate、RefinementRequest、TransferPlan 的窄声明；initialize/proposeAdapt 复用原网格。\\
+\code{Core/Geometry/InterfaceView.h} & InterfaceId、负/正相、几何版本、表示/拓扑能力、只读根/微分/积分点和面元查询；pImpl/句柄屏蔽原生 patch 模板。\\
+\code{Core/Field/StateStamp.h} & 蓝图的 StateId、MeshVersion、GeometryVersion、NormalizationId、StepId、time、Stage；补充 DomainId/DofMapId 的显式关联规则。\\
+\code{Core/Field/FieldView.h} & 值、位置、量纲、布局与 stamp 的只读视图。体积流率、积分电荷等沿用蓝图 TransportViews 扩展；不以 double 数组代替语义。\\
+\bottomrule
+\end{longtable}
+
+\subsection{GeometryDefinition、MeshState 与 InterfaceState 的分工}
+\begin{description}
+\item[GeometryDefinition] 解析后的点、曲线、相表达式、边界实体和初始界面来源；属于无文件句柄的 Core 值对象。保留 Point/Boundary/Phase 的原编号转换与来源信息，不含供液压力、电势或侵蚀闭合。
+\item[MeshState] 当前背景域、原生树和稳定身份、坐标/归一化关联、活动域映射。Runtime 的接受根持有它，MeshService 只生成初始值或候选，不另留一份可演化的“当前网格”。
+\item[InterfaceState] 由 Interface 定义，Runtime 根持有。包括独立 Q3/Q4 DOF、必要的旧层数据和接触约束。固定几何也可供查询，但不能通过 motion=fixed 把材料界面改成固壁。
+\item[InterfaceView] 由已标识的 InterfaceState 派生；保留 Snapshot 的不可变所有权，允许同一标量上有多种只读查询。显示折线、加密折线都不能回写为权威标量。
+\end{description}
+
+\subsection{公共域的最小几何内容}
+DomainView 至少提供：原生叶单元集、活动掩膜、单元/面关联、唯一面方向、两侧单元/相、边界实体 ID、面覆盖关系、XY/RZ 测度和空间搜索。域边界的拓扑含义与压力/电势条件分离：同一几何面可为流体压力口，同时为电学接地边界；它们引用同一 BoundaryId，但条件各归模块。
+
+Hydro 的 \code{cellRowByIndex} 中用于活动单元的部分可从公共域获得；\code{velocityRowByNative} 则与机械约束有关，仍归 HydroDofMap。\code{divergence/pressureGradientLoad} 属 Hydro 离散对象；几何关联符号可以公用，但不能把压力梯度装配和常量行修正放入 Core。公共域可提供具名速度对偶几何的度量，\textbf{采用哪一种对偶划分、边界行和约束恢复由 Hydro 明确选择}。
+
+\subsection{示意调用形态与兼容策略}
+以下是 C++17 风格设计草图，类型实现留在工作包中；不是可立即使用的生产 API。
+\begin{lstlisting}[language=C++]
+Result<MeshState> MeshService::initialize(
+    const GeometryDefinition&, const MeshConfig&,
+    const UnitsContext&);
+
+Result<MeshCandidate> MeshService::proposeAdapt(
+    const MeshState& accepted,
+    ConstArrayView<RefinementRequest> requests,
+    const AdaptationConstraints& constraints);
+
+struct MeshCandidate {
+    MeshState mesh;
+    TransferPlan transfer;
+    MeshChangeReport report;
+};
+\end{lstlisting}
+RefinementRequest 必须带源网格/几何版本和所属域；TransferPlan 记录旧/新单元与面覆盖、父子关系、编号转换和可认证的不变区。Core 不把流体或电荷状态放入 MeshCandidate。旧内核可暂由私有 adapter 接收原生网格引用；禁止新模块越过 adapter 直接写公共数组。
+
+\section{公共契约必须明确的数学与身份规则}
+\subsection{面身份与守恒关联}
+原生无向面仅分配一个 FaceId，选定一个确定的 owner-to-neighbor 法向；每个活动单元保存关联符号 $s_{if}\in\{-1,+1\}$。旧 FaceSegmentGraph 的双向条目映射为同一 FaceId 的两个 incidence；首批保留条目与累加顺序，避免结构迁移悄悄改变舍入。
+\[
+  (\operatorname{div}\boldsymbol u)_i
+  =\frac{1}{V_i}\sum_{f\in\partial i}s_{if}F_f,
+  \qquad F_f=\int_f\boldsymbol u\cdot\boldsymbol n_f\,dS.
+\]
+粗细连接以真实细面片覆盖粗面。验收检查面片无重叠、无缺口、方向成对及测度和；不能将每个 owner 的流率独立计算后声称天然抵消。周期配对是单独拓扑契约，首批按原 adapter 支持表拒绝不支持组合。
+
+\subsection{XY/RZ 的公共测度与量纲}
+\[
+ dV=\begin{cases}b\,dx\,dy,&\text{XY},\\2\pi r\,dr\,dz,&\text{RZ},\end{cases}
+ \qquad
+ dS_\Gamma=\begin{cases}b\,ds,&\text{XY},\\2\pi r\,ds,&\text{RZ}.\end{cases}
+\]
+按蓝图，目标 XY 的物理厚度 $b=1\,\mathrm m$；旧代码/Plasma 的 slab 与归一化规则通过兼容 adapter 明确保留，不能在统一坐标键时顺带重解释旧体积。RZ 第一坐标为非负半径；真实轴面面积为零，轴邻单元体积为正。\code{Normalization.dimension=3} 不代表三维网格。
+
+对完整矩形，\code{CartesianMeasure::cell} 的中心半径乘面积可在实数意义下精确积分 $2\pi r$；对一般切割相区，则需要
+\[
+ V_{\ell,i}=2\pi\int_{\Omega_i\cap\Omega_\ell}r\,dr\,dz.
+\]
+不能未经证明用“二维面积分数 $\alpha$ 乘完整 RZ 单元体积”代替它。公共记录应区分 planarArea、radialFirstMoment、physicalVolume、planarLength、surfaceArea；首批 adapter 标出原近似测度，数值替换另做验证。电荷 $Q$ 的单位为 C，面电荷密度为 C/m$^2$；归一化身份与几何测度规则必须一起匹配。
+
+\subsection{版本、稳定 ID 与精确比较的关系}
+\begin{longtable}{@{}P{.24\textwidth}P{.7\textwidth}@{}}
+\toprule 标识 & 语义与失效规则\\\midrule\endhead
+MeshVersion & 拓扑、坐标或原生布局改变产生新版本；等长容器不等于同版本。版本只由拥有者发放。\\
+DomainId / 域版本 & 某个具名活动域及边界映射；同一 MeshState 可有不同域。改变活动掩膜/边界绑定必须失效相应视图。\\
+GeometryVersion & 权威标量 DOF、固定几何位置或影响查询的约束改变后更新；固定网格上移动液面也必须变。\\
+CellId / FaceId & 当前实体的强身份；原标签和 index 为内部映射。可基于背景身份与 dyadic 地址记录谱系，但实体消失/重生须由事件明确映射。\\
+PanelId / InterfaceId & 面元与界面的身份及两相方向。跨几何重建以显式对应/重叠关系转移，禁止以数组下标冒充长期对应。\\
+DofMapId / StateId & 同一网格上不同场位置/约束仍有不同布局；同一时刻不同候选也有不同状态身份。\\
+NormalizationId & 单位及归一化上下文；RZ/XY 的 Metric 定义也需明确匹配。\\
+\bottomrule
+\end{longtable}
+版本号是受控写入后的快速证据，并不替代深检查。迁移阶段保留 HydroFittedDomain 的完整身份比对与缓存读取校验；只有证明旧写入口已封闭，才减少重复扫描。数值矩阵缓存仍要核对系数、dt、边界及离散策略，不能只核对 MeshVersion。
+
+\subsection{根、法向、曲率与接触端点}
+界面法向统一为负相到正相；固体域外法向单独记录。Hermite Frame 的曲率是子午平面 $\nabla\cdot n$，RZ 总曲率还需按已实现规则加回转项 $n_r/r$ 和轴端正则极限。公共视图必须说明返回的是哪一种曲率，禁止调用方重复补项。
+
+继续保留 CellChartPoint、原生 leaf 来源、端点单侧条件及根认证：图形显示点在大偏置坐标或微小切片上会丢失局部信息，不能通过全局坐标相减重新构造查询点。支持状态应明确区分全相无界面、无法解析、几何恰零、曲线重合和缺少界面。零面拓扑不明确就失败，不用空向量表示所有状态。
+
+\subsection{误差门、容差与精确浮点}
+把“坐标匹配容差、根残差、几何认证、线性残差、物理守恒”分开报告，保留原公式和实际取样集合。首批不新增统一 epsilon，不把未表示的小相裁为零，也不修改负半径/未知拓扑等原拒绝条件。
+
+\code{quantum_hermite_geometry} 已隔离严格浮点与禁用 LTO；Dyadic 坐标和若干几何/力/压力相关源文件亦有精确浮点边界。移动源文件时同步 CMake 源属性与目标属性，防止模板实例化或全局优化重新引入 contraction/重结合。SuperLU 保留，不能静默改用 Eigen SparseLU。\ev{E24}
+
+\clearpage
+\section{AMR：复用已有候选能力，补齐状态事务}
+\subsection{分三种能力发布}
+\begin{enumerate}
+\item \textbf{初始加密：}从 GeometryDefinition 构造网格与初态，此时没有已接受的流体/电荷历史。统一现有 refiner 调用，不改变初始叶单元编号和目标。
+\item \textbf{受限运行时适应：}先复用 Q4 Transfer 的严格条件，保护界面单元、完整多项式与所需支撑，只允许认证纯相区细粗化；再把流动、电荷历史与约束恢复接齐。这是最小可落地路线。
+\item \textbf{一般运行时适应：}允许界面本身跨级、活动固体覆盖改变或更复杂拓扑，需要新的保守几何/场转移证据。这属于后续数值能力，不是改一个开关。
+\end{enumerate}
+受限路线有实际价值：加密带可预先扩展到液面将要进入的纯相区，已经远离液面的纯相区再粗化；但必须限制下一事件前的位移、力带与重构支撑。若界面即将进入未保护区，事件应拒绝并报告原因，不能临时对界面单元使用普通插值。
+
+\subsection{一次事件的生命周期}
+\begin{center}
+\begin{tikzpicture}[font=\small,box/.style={draw=accent!60,rounded corners=2pt,fill=pale,text width=12.1cm,align=center,minimum height=10mm},arr/.style={-{Latex[length=2mm]},thick,draw=accent},node distance=5mm]
+\node[box] (a) {固定已接受根：旧网格、几何、场与全部历史（物理时间不变）};
+\node[box,below=of a] (b) {汇合模块分辨率/支撑请求，复用 clone + refiner + adapt 生成候选};
+\node[box,below=of b] (c) {验证拓扑、域覆盖、身份与 TransferPlan；生成候选几何/度量};
+\node[box,below=of c] (d) {Interface 转移 DOF；Hydro 转移并恢复约束；Electricity 转移 Q/历史并重求 E};
+\node[box,below=of d] (e) {检查相体积、电荷、动量/散度、曲率、两侧身份及历史；重新准备载荷};
+\node[box,below=of e] (f) {全部通过后发布新 AcceptedState 根；旧根保留至读者释放};
+\foreach \x/\y in {a/b,b/c,c/d,d/e,e/f}\draw[arr] (\x)--(\y);
+\end{tikzpicture}
+\end{center}
+任何失败均丢弃整组候选；mesh.adapt 只在候选上执行。Core 只完成网格/几何检查，不替代模块守恒检查。物理状态接受后再输出，分别记录 acceptedStep、frameComplete；写盘失败应非零返回，但不虚称已写文件和接受状态可一起回滚。
+
+\subsection{各类状态由谁转移}
+\begin{longtable}{@{}P{.2\textwidth}P{.38\textwidth}P{.36\textwidth}@{}}
+\toprule 状态/对象 & Core 提供的事实 & 模块必须完成的工作\\\midrule\endhead
+网格/域 & 父子、旧新 index、面覆盖、稳定 ID、候选坐标/边界、预算与 2:1 检查 & Runtime 组合状态后发布；不能单独交换网格。\\
+界面 Q3/Q4 & 原 Hermite 约束、查询与几何转移；Q4 严格纯相认证 & Interface 保留所有独立 DOF、钉扎/轴线/单侧分片及历史，检查零面、体积、曲率。\\
+单元守恒量 & 单元重叠、体积/一阶径向矩与相侧几何 & 消费者按其守恒量重建/限制；普通 CellField 插值的常量保持不能证明质量守恒。\\
+面速度及历史 & 原面覆盖和对偶几何、原生布局映射 & Hydro 保留当前与 CN/AB2 历史、密度/动量一致性；复用原算子恢复散度约束。\\
+物理压力 & 旧新单元对应及有效域 & Hydro 明确压力参考与边界；零时间约束恢复的乘子不能累加成额外物理压力。\\
+面电荷及两层历史 & 面元身份、局部坐标、面积与重叠对应 & 不变 Q4 面元优先复用新增 rebindMesh；一般变面元再用守恒重映射。每层 Q/历史时刻/阶次保留，不增加 $I\Delta t$。\\
+电势/场/载荷 & 同一新几何与域 & Electricity 由新 Q/系数重新求电场；Hydro 用匹配几何准备载荷；旧数值分解失效。\\
+粒子及缓存 & 新定位、EB 几何、面/单元映射 & Plasma 保留粒子状态，按原沉积/采样契约重绑；不随此轮改推进或碰撞算法。\\
+\bottomrule
+\end{longtable}
+
+\subsection{转移必须检查的量}
+对纯换网格事件，至少保留同一物理时刻的总量：
+\[
+ \sum_i V'_{\ell,i}=\sum_i V_{\ell,i},\qquad
+ \sum_a Q'_{a,k}=\sum_a Q_{a,k}\quad(k=\text{当前及每个有效历史层}).
+\]
+对一般单元守恒量，若 $m_i$ 为单元总量，保守转移权重必须以真实重叠测度构造；例如分片常量基线为
+\[
+ m'_j=\sum_i m_i\frac{\mu(\Omega_i\cap\Omega'_j)}{\mu(\Omega_i)}.
+\]
+该式是验证基准，不是要求以低阶方案替换现有高阶算法。面流率还要匹配方向与粗细面求和；重建速度后独立检查散度、边界通量、动量及动能变化。误差归一化沿用各原判据，新增 AMR 误差另设具名门，不能把原门放宽来吸收转移误差。
+
+\subsection{克隆、交换与长期快照的兼容方式}
+现有 swapStorage 会使\textbf{两边}旧借用引用失效，这与“旧 AcceptedState 可被读者继续持有”不是同一保证。首批同步 adapter 可在确认无活借用时交换存储；目标 Runtime 更适合整体替换拥有候选 QuadtreeMesh 的状态根，让旧对象随引用释放。两种用法必须写入契约，不应宣称一次裸存储交换就获得跨模块不可变快照。
+
+Q4 prepare 成功只说明该受限几何转移完成；它不转移速度、压力、电荷，也不接受 App 时间步。其 sourceToTargetCell 只对边界和多项式严格不变的单元有有效值；sourceToTargetVertex 的坐标相同也不代表 DOF 相同。\ev{E09}
+
+\section{查询、缓存、内存和性能提升}
+\subsection{按来源键复用，不按对象地址猜测}
+将缓存分为三类：网格级（叶搜索、原生面映射、祖先信息）、几何级（Hermite 构造、根分段、面元和积分数据）、方程级（重构支撑、稀疏 pattern、数值矩阵与分解）。前两类服务化，第三类仍归模块/Solvers。键至少覆盖实际使用的 mesh/domain/geometry/layout/normalization 与离散选项；数值矩阵另包含系数、dt、边界贡献。
+
+延迟材料轨迹若持有速度回调，回调捕获的速度必须有不可变所有权，并明确时层。ActiveLevelSetTransport 已提示这一点，外层接口应强制落实；把 \code{std::function} 复制一次不会自动延长它所借对象的寿命。
+
+\subsection{测量后推进的三个优化方向}
+\begin{enumerate}
+\item \textbf{减少同一几何上的重复构造。}复用已有叶定位与 Snapshot/面元固定查询；不同目的可共享几何缓存，但不共享可变求解工作数组。
+\item \textbf{以完整身份检查换取安全快路径。}先封闭写入口，再用版本挡住明显失配；旧完整比较作为调试/迁移核验保留。缓存不命中可重建，不能改变候选接受结果。
+\item \textbf{量化克隆与峰值内存。}AMR 最坏同时持有旧根、新根、转移映射和两组几何/历史。统计 peak bytes、构造/转移/重建/约束恢复耗时；确认瓶颈后才考虑结构共享、arena 或增量更新。
+\end{enumerate}
+首批不用“把全部数组改 SoA”作为前置条件；不取消精确几何、未知拓扑拒绝或真实非零载荷查询换取性能。缓存丢失、线程数变化和输出关闭都不应改变物理问题。
+
+\subsection{网格质量与资源约束报告}
+每次 initialize/adapt 生成 MeshChangeReport：旧新叶数、按层级统计、细化/粗化数、2:1 闭合新增单元数、预算预测与实际峰值、最小间距、活动域覆盖、最小相体积/面开口、受保护区数、未满足请求及拒绝原因。指标缺失、同名冲突、布局错位、非有限值都明确失败；是否允许预算截断应是具名策略，并报告未满足需求，不能默默降分辨率。
+
+\section{配置、IO 与目录迁移方案}
+\subsection{解析与绑定分离}
+目标链为：CaseLoader 加载文本与来源 $\to$ 各 reader 生成值对象 $\to$ 公共/模块 Binder 核验域、ID、单位及能力 $\to$ MeshService 初始化。DictionaryMesh 不再二次打开 geometry.dict；它接收已解析域定义。Hydro 旧受限解析归兼容入口，新网格配置唯一由 Core/IO 解析。
+
+保持蓝图的版本 3 键名：\code{Domain.coordinateSystem}、\code{Domains.<name>.phaseIds}、\code{RuntimeAdaptation.enabled}；\code{BackgroundMesh.divide}、QuadtreeMesh 与现有 GeometryRefinement 规则复用。\textbf{这些目标键当前没有统一 reader，不能直接写入现行 case。}代码里旧 geometry/mesh 注释的 v3 与 Run.schemaVersion=3 不是同一版本号。
+
+弧半径当前通过裸 \code{stod} 读取；目标要求长度单位时，应在版本适配器中保留旧 code 长度解释，并逐项比较转换后的几何。坐标、半径、旋转测度和相 ID 不因规范化更名而改变。新键需同时具备 reader、范围/组合校验、实际消费者、来源报告和拒绝测试。
+
+\subsection{逐文件职责迁移表}
+\begin{longtable}{@{}P{.34\textwidth}P{.36\textwidth}P{.24\textwidth}@{}}
+\toprule 当前位置/内容 & 目标归属与做法 & 首批保持事项\\\midrule\endhead
+\code{Core/Mesh/BackgroundMesh*}、\code{QuadtreeMesh*} & 原位置保留；外层 MeshState/MeshService，内部限制写接口 & 原拓扑、编号、adapt、缓存格式\\
+\code{HydroFittedDomain} 的域/身份/度量 & 提取至 Core/Mesh 的域实现；Hydro facade 消费公共视图 & 同一活动域、面积、原生面顺序\\
+同类的机械边界、行映射与 D/C & 继续 Modules/Hydrodynamics；拆为明确的离散拥有者 & 原边界、算子与常量行闭合\\
+\code{ElectrosprayElectrostatics} 的相求值/覆盖 & 通用部分提取到 Core/Geometry 与 Core/Mesh；喷嘴 ID 组合留 Setup & 原相表达式、覆盖拒绝与容差\\
+\code{CutCellMetrics} 纯几何 build & Core/Geometry 下具名 EB 度量实现，旧头可临时窄转发 & 原 alpha/beta/gamma 定义\\
+其 Poisson 使用、CSV & 求解消费留 Solvers，几何 writer 归 Core/IO & 不重写 EB Poisson 或沉积\\
+\code{ImmersedGeometry} 当前/旧层与时间方法 & Modules/Interface 接管时间/历史；Core 留静态定义和空间几何 facade & 原回溯/重初始化顺序\\
+\code{ActiveLevelSetTransport} & Modules/Interface 内部推进；使用 Core 原重构/积分 & 原两层速度、支撑与候选检查\\
+\code{MovingEBController} & 拆成 Plasma 闭合、命名 App 调度/专用 IO、公共几何操作 & 原离子冲击/侵蚀基线\\
+\code{MeshRefinementRegistry} & 新服务显式接收请求；旧 Plasma runner 兼容桥 & 原物理指标算法与采样频率\\
+\code{DictionaryMesh/Geometry} & Core/IO reader + 无 IO 值对象；Runtime 负责路径 & 原输入解析结果和编号\\
+网格/几何 \code{output/readCache/writeCache} & Writer/序列化器归 Core/IO；计算返回报告，旧 API 过渡转发 & QMC2 校验/失败原子性\\
+\bottomrule
+\end{longtable}
+目录沿用 Core/Solvers/Modules/Apps，不新增含混的 Utils/Common/Manager。新的阶段证据进入 \code{docs/validation/} 对应主题；数值输出只进 \code{runs/}，隔离检查进 \code{runs/checks/}，构建只进 \code{build/}。
+
+\subsection{缓存文件与 checkpoint 的不同范围}
+现有 QMC2 读取先暂存校验再替换，包含非叶祖先和几何/导数数据，非法/截断缓存失败时不改原网格；这是应继承的契约。文件缓存内容随后可拆为拓扑/几何子记录，但须另设格式版本、迁移测试和来源身份，不在纯目录批次改二进制布局。
+
+网格缓存不能等同完整 checkpoint。续算还要包含原生液面 DOF、当前及旧层流场、电荷两层历史、主时钟、参考压力/规范、累积账本和写出进度；恢复必须比较连续运行与中断续算。公共底座定型不应因此把当前拒绝的喷嘴 resume 改成读取 DAT 的伪续算。
+
+\section{分阶段工作包与退出条件}
+\subsection{实施顺序}
+\begin{longtable}{@{}P{.09\textwidth}P{.25\textwidth}P{.37\textwidth}P{.23\textwidth}@{}}
+\toprule 批次 & 交付 & 主要修改 & 退出条件\\\midrule\endhead
+M0 & 来源/契约冻结 & 保存受影响源码哈希、原生网格与字段基线、当前能力表；登记已有 AMR 工作 & 所有后续比较有固定输入、程序身份及原门限\\
+M1 & 公共身份与视图 & 五个蓝图公共头的最小实现；旧内核 adapter；只读域/布局验证 & 头文件自包含；同长度异身份拒绝；保留原生输出\\
+M2 & 公共域与初始化 & 提取域/边界覆盖/度量；Hydro 拆 D/C；喷嘴两模块消费同一域 & 不依赖电学初态创建 Hydro 域；原编号/度量/短程对照通过\\
+M3 & 几何/输运职责 & Interface 接管推进/历史；Core 只保留空间能力；IO 提取 & 相同输入、几何、轨迹、体积修正调用次序不变\\
+M4 & 受限 AMR 公共计划 & 基于 clone/adapt/Q4 prepare，显式 TransferPlan 与保护支撑 & 无改网格/细化/粗化/标签复用/丢弃候选均有直接检查\\
+M5 & 跨模块转移与提交 & Hydro 约束恢复、复用 Q4 电荷重绑/历史转移、电场/载荷重建、Runtime 根发布 & 原时间推进内确有细粗化事件；逐层守恒、失败原子性和历史一致\\
+M6 & 配置、发布与约束固化 & 类型化 loader，目标版本 3 的已实现子集；文档/实际消费者/拒绝检查 & 新旧配置等价，未支持能力预检拒绝，schema 2 原输入可追溯\\
+M7 & Plasma/MovingEB 适配 & 迁出侵蚀闭合/专用诊断；接入公共域/事件接口 & 原 PIC/移动 EB 相关原生对照；不改变粒子物理\\
+\bottomrule
+\end{longtable}
+主依赖为 M0$\to$M1$\to$M2；M3 在 M1/M2 契约稳定后实施；M4 接已有 AMR 资产，M5 必须同时依赖几何与各物理状态转移。M6 仅发布已经达到门槛的能力，不要求等一般 AMR；M7 是独立消费链，不能使喷嘴为其保留 Core 侵蚀职责而无限延期。
+
+\subsection{每批只解决一类变化}
+\textbf{结构批次}只改拥有关系、头文件和适配，不动离散/时序/输入；对受影响原生文件做原比较器要求的同输入对照。\textbf{数值批次}包括一般保守转移、RZ 切割度量替换、梯度或曲率算法改动，必须单独保存修复前失败、误差门与差异观察，不能标为逐字节结构等价。
+
+建议每个工作包以一组可回退提交或独立变更集完成。第一次垂直切片选现有喷嘴加一个独立 Hydro/静电消费者，证明公共域能被两个模块实际使用；然后扩展到 EHD/Plasma。不要同时迁移所有源文件与所有字典。
+
+\subsection{投入估计与边界}
+这是\textbf{单名熟悉项目的开发者的粗略工作量预算}，用于判断先后，不是交付承诺：M0--M2 约 10--16 人日；M3 约 5--9 人日；M4 约 3--5 人日（已有候选/Q4 能力抵减）；M5 约 8--15 人日；M6 约 4--7 人日；M7 约 5--10 人日。合计约 35--62 人日，不包括一般界面跨级保守转移、断裂/合并、新边界物理和物理收敛研究。
+
+主要不确定性是旧消费者的隐式写网格行为、粗细边界支撑、两层历史完整性与物理回归耗时。M0 结束后按受影响文件/调用点收窄估计。若只要求“模块化思想定型并跑通第一条复用链”，优先完成 M0--M2；若要求新接口覆盖正在推进的喷嘴动态 AMR，则至少完成 M5。
+
+\clearpage
+\section{验证矩阵与防止回退的检查}
+\subsection{已有检查：按实际触及范围复用}
+\begin{longtable}{@{}P{.43\textwidth}P{.51\textwidth}@{}}
+\toprule 当前 CTest 入口 & 用于后续哪类变更；证明边界\\\midrule\endhead
+\code{architecture_dependencies/layout} & 每批职责/目录检查；本次已运行其脚本并通过。不能证明数值正确或完整语义分层。\\
+\code{core_mesh_cache_contract} & 缓存往返/非法读取/写前拒绝；保留原子性与祖先几何检查。\\
+\code{core_mesh_adaptation} & 候选、移动细化带、粗化、2:1、编号复用、四类场常量与失败。不是 RZ 守恒转移证明。\\
+\code{core_quartic_mesh_transfer} & Q4 受限零时间转移、几何/曲率/体积及拒绝检查；不代表全状态 AMR。\\
+\code{ehd_hermite_snapshot_contract}、\code{ehd_hermite_geometry_contract} & Snapshot 保留/生命周期及共享几何契约；移动其实现或视图封装时复用。\\
+\code{ehd_leaf_scalar_contract}、\code{ehd_leaf_geometry_contract}、\code{core_quartic_native_*} & 原生悬挂约束、单侧分片、Q4 几何/变化/重构。按改动选择具体测试，不能只跑同层场。\\
+\code{hydro_fitted_adaptive}、\code{hydro_adaptive_pressure} & 拟合域、粗细面、压力消费者；防止提取域时把机械算子误改。\\
+\code{hydro_native_face_flux}、\code{hydro_fitted_flux_velocity}、\code{hydro_adaptive_velocity} & 原生面流率、相容速度和粗细速度重构，检查位置/方向/度量一致。\\
+\code{hydro_adaptive_volume_correction}、\code{hydro_native_quartic_transport} & 界面推进/体积修正迁移；不把无运动夹具代替非零缺陷修正。\\
+\code{electrospray_versioned_input/cli}、\code{electrospray_numerical_controls} & 新旧配置等价、拒绝与真实数值消费者，schema 变更时必须执行。\\
+\bottomrule
+\end{longtable}
+以上是 CMake 与测试源码中存在的入口，不是本次执行结果。已有 2026-09-14 动态 AMR 记录报告 clone/refiner、原缓存与两项架构共 4/4 通过；本文沿用该记录的范围，不把后续新 Q4 代码自动并入那次通过结论。
+
+\subsection{应新增的直接契约检查}
+\begin{longtable}{@{}P{.21\textwidth}P{.46\textwidth}P{.27\textwidth}@{}}
+\toprule 新检查主题 & 最小有辨识力的夹具 & 通过要求\\\midrule\endhead
+域和面身份 & 同单元数量但不同父子/坐标；不同活动域；内部双向面与粗细覆盖 & 拒绝错配；唯一面方向/关联正确；无漏面重面\\
+只读与生命周期 & 旧根保留期间生成/丢弃新候选；不同 StateId 同时刻；延迟材料回调 & 旧查询与原值不变；无悬空借用；发布失败不污染原根\\
+XY/RZ 测度 & 轴邻矩形、圆/球截面、跨径向切割区及单侧小相 & 对照解析积分/独立高精度参考；严格区分面积与体积\\
+边界绑定 & 缺失/重复/部分覆盖、斜壁误拟合、负正相颠倒、ID 同值异类型 & 明确拒绝并定位对象；不自动选择最近边界作为物理条件\\
+请求组合/预算 & 同名指标、错误网格版本、不可用指标、2:1 闭合超预算 & 确定组合或明确失败；报告未满足需求，原状态不变\\
+几何与物理转移 & RZ 非常量守恒场、非零面通量、两个不同历史层；真实细粗化事件 & 每层总量/方向保持；散度独立检查；不清空历史\\
+失败注入 & 几何转移失败、流体约束失败、电学失败、报告分配失败 & 失败发生在发布前；旧根、旧账本和旧缓存不被半提交\\
+\bottomrule
+\end{longtable}
+
+\subsection{集成与物理验收分层}
+\textbf{第一层：同输入结构对照。}受影响原喷嘴导电、q=0、EHD 入口及新增适配对应的现有固定局部路线，按现有比较器核对完整原生数组、编号、时间、文件清单和退出码。选直接受影响入口，不因移动目录重跑全物理矩阵。
+
+\textbf{第二层：动态事件对照。}运行中真实发生细化与粗化，保存事件前后相体积、电荷/历史、面流率、压力规范、曲率与约束恢复报告；失败应停在上一接受根。保留固定网格参照，区分 Q3/Q4、分辨率改变与时积改变的影响。
+
+\textbf{第三层：独立物理精度。}验证几何与场的网格/时间收敛、静滴压差/寄生流、电通量与表面电荷收支、曲率误差及长期稳定性。既有 N32 环面曲率失败和未完成的成熟喷射验收保持可见；AMR 与接口通过不解决这些物理问题。\ev{E23}
+
+\subsection{把设计变成可执行约束}
+在现有 architecture 检查旁增加精确规则：公共五个头文件自包含且不暴露物理/App/Eigen 类型；新数值文件不能直接解析 case；Electricity/Interface 的新公共调用不包含 Hydro 实现头；Core 几何计算文件不拥有输出流/侵蚀模型；新模块不得写网格数组。存量跨模块依赖按\textbf{文件＋包含项}登记迁移期限，逐项删去，不做整目录豁免。
+
+检查分为语法依赖、公开 API 编译、运行期身份/失败行为和数值验收四组。仅用正则不可能证明 const 语义或并行安全；关键只读和候选所有权要由类型与行为测试共同约束。新增约束不自动宣称旧实现已全部满足。
+
+\section{建议启动的第一批变更}
+第一批选择 M0--M2 中最小闭环：以 \code{HydroFittedDomain} 和喷嘴初态的几何数据为来源，完成 DomainView、身份映射与公共域构造；让 Hydro 与电学分别绑定自己的条件，并保持原数值调用顺序。该批不推进一般 AMR、不切换 schema，也不迁走全部 LevelSet 文件。
+
+第一批应交付六项具体成果：
+\begin{enumerate}
+\item 一份可编译的公共域/字段身份接口及原生 adapter，无第二套网格；
+\item 一个解析后 GeometryDefinition/MeshConfig 的显式传递链，先保留兼容 reader；
+\item Hydro 中机械边界/D/C 的独立拥有者，公共几何部分只有一份；
+\item 喷嘴与一个独立模块消费者使用公共域的运行证据；
+\item 同输入原生结果对照、身份错配拒绝、旧快照保留及架构检查；
+\item 正式组织规范、字典消费者说明和能力表同步，已有失败/限制不删除。
+\end{enumerate}
+完成后再实施 Interface 职责迁移与受限 AMR 事务。这样“模块化定型”有可审核的边界、真正的双模块消费者和可持续的检查，而不是一次仅改变文件名的整理。
+
+\appendix
+\clearpage
+\section{源码证据索引}
+以下路径均相对 \code{D:/Chen/QUANTUM}；行号用于本次审计定位，源码继续变更后以函数名和附录哈希为准。没有列出路径的拟新增 API 均属于设计目标。
+\small
+\begin{longtable}{@{}P{.07\textwidth}P{.58\textwidth}P{.29\textwidth}@{}}
+\toprule ID & 当前文件与定位 & 支持的结论\\\midrule\endhead
+E01 & \code{include/Core/Mesh/BackgroundMesh.h}:54--100；\code{include/Core/Field/Field.h}:18--44 & 原生数组、const 返回可写引用、Field 值/标签无统一 stamp。\\
+E02 & \code{include/Core/Mesh/QuadtreeMesh.h}:17--54；\code{src/Core/Mesh/QuadtreeMesh.cpp}:58--161、253；\code{include/Core/Mesh/QuadtreeMesh_impl.h}:14--117 & clone/swapStorage、原 adapt 分层更新、转移索引准备。\\
+E03 & \code{include/Core/Mesh/DyadicGridCoordinates.h}:9--40；\code{src/Core/Mesh/DyadicGridCoordinates.cpp} & 路径无关坐标与树地址；严格浮点实现。\\
+E04 & \code{include/Core/Mesh/CartesianLeafMesh.h}:7--18；\code{src/Core/Mesh/CartesianLeafMesh.cpp}:50；\code{include/Core/Mesh/UniformLeafGrid.h}；\code{include/Core/Mesh/CartesianLeafLocator.h}:8--26 & 原生叶校验、同层布局及只读搜索边界。\\
+E05 & \code{include/Core/Mesh/FaceSegmentGraph.h}:56--121；\code{src/Core/Mesh/FaceSegmentGraph.cpp}:17--46、69--203 & 每 owner 定向面片，真实叶边拆分与 label/index 语义。\\
+E06 & \code{include/Core/Mesh/CartesianMeasure.h}:6--55；\code{src/Core/Geometry/AxisymmetricBoundaryIntegral.cpp} & 完整矩形旋转测度、轴面和几何积分能力。\\
+E07 & \code{include/Core/Mesh/QuadtreeMeshRefiner.h}:23--95；\code{src/Core/Mesh/QuadtreeMeshRefiner.cpp}:278--313、588--755；\code{src/Core/Mesh/MeshRefinementProvider.cpp}:5--44 & 当前折线覆盖、带外粗化、全局裸指针 registry。\\
+E08 & \code{tests/core/mesh_adaptation_regression.cpp}:225--302；\code{include/Core/Field/FieldTransferValidation.h}:11--32 & 候选丢弃/交换、标签复用与源下标拒绝；常量保持检查。\\
+E09 & \code{include/Core/Geometry/ActiveQuarticHermiteTransfer.h}:10--56；\code{tests/core/quartic_mesh_transfer_regression.cpp}:85--166 & 受限零时间 Q4 转移；界面自身加密被拒绝。\\
+E10 & \code{include/Core/Geometry/ImmersedGeometry.h}:62--190；\code{include/Core/Geometry/ImmersedGeometry_impl.h} & 静态定义、标量历史、输运/重初始化/切割与输出混合。\\
+E11 & \code{include/Core/Geometry/LevelSetHermiteGeometry.h}:80--240；\code{src/Core/Geometry/LevelSetHermiteGeometry.cpp} & 所有权快照、Q3/Q4、原生查询、局部坐标与微分语义。\\
+E12 & \code{include/Core/Geometry/ActiveLevelSetTransport.h}:16--120；\code{include/Core/Geometry/ActiveQuarticHermitePatch.h}；\code{include/Core/Geometry/LevelSetInterfacePanels.h}；\code{include/Core/Geometry/LevelSetMappedInterface.h} & 时间推进、物质轨迹、独立 DOF 与派生面元/积分。\\
+E13 & \code{include/Modules/Hydrodynamics/HydroFittedDomain.h}:10--85；\code{src/Modules/Hydrodynamics/HydroFittedDomain.cpp}:41--146、172--239 & 公共度量与机械条件/矩阵混合；完整身份及常量行修正。\\
+E14 & \code{src/Modules/Electricity/FittedDielectricPolarization.cpp}:3、24--114 & 电学实际依赖 Hydro 域，核验同网格/原生面与材料系数。\\
+E15 & \code{src/Modules/Hydrodynamics/HydrodynamicsModule.cpp}:39--102、682--785；\code{src/Modules/Electricity/ElectricityModule.cpp}:37--57、115--143 & 独立模块的网格/reader/运行生命周期，旧共享重载。\\
+E16 & \code{src/Apps/Electrospray/ElectrosprayApp.cpp}:53--83、213--227；\code{src/Apps/Electrospray/Setup/ElectrosprayElectrostatics.cpp}:29--135、171--260；\code{src/Apps/Electrospray/Setup/ElectrosprayHydroDomain.cpp}:14--101 & 一个喷嘴网格；几何初始化、相/边界图经电学初态供 Hydro。\\
+E17 & \code{include/Solvers/Poisson/CutCellMetrics.h}:23--148；\code{src/Solvers/Poisson/CutCellMetrics.cpp}:214--835、839--918 & EB 度量、revision、采样/切割实现及 CSV；头注释落后。\\
+E18 & \code{src/Modules/Plasma/ImplicitPIC/ImplicitPICModule.cpp}:7773--8053；\code{src/Modules/Plasma/ExplicitPIC/ExplicitPICModule.cpp}（搜索 \code{mesh.adapt}） & 已有 PIC 运行时适应与几何/场/缓存刷新接线。\\
+E19 & \code{include/Core/Geometry/MovingEBController.h}:27--48、198--260、927--931、1445--1484、2004--2018 & 离子侵蚀闭合、阶段状态、文件流与编号 10--15 专用几何诊断。\\
+E20 & \code{CMakeLists.txt}:334--374；搜索 \code{clone/swapStorage/ActiveQuarticHermiteTransfer} 的当前生产与测试调用 & Core adaptation/Q4 直接测试注册；不等于完整喷嘴接线。\\
+E21 & \code{src/Core/IO/DictionaryMesh.cpp}:82--88、847--914；\code{src/Core/IO/DictionaryGeometry.cpp}:565--569；\code{include/Core/IO/DictionaryMesh.h} & 硬编码路径、重读 Domain、exit、裸弧半径与聚合 reader。\\
+E22 & \code{tests/architecture/check_dependencies.py}:15--75、108--160；\code{tests/architecture/check_layout.py} & 当前字面检查范围与精确例外；非完整语义/数值分析。\\
+E23 & \code{docs/validation/electrospray/QUANTUM_Electrospray_Dynamic_AMR_20260914.md} 第 2--5 节；\code{docs/validation/hydro/QUANTUM_Hydro_Fitted_Adaptive_20260913.md} 第 30 节；\code{docs/QUANTUM_Hydro_EHD_Case_Guide.md} 第 1 节 & 近期已完成项与固定局部短程；保留曲率/动态 AMR/长期物理限制。\\
+E24 & \code{CMakeLists.txt}:20--44、157--207 & 精确/严格浮点、Hermite 对象目标、禁用 LTO 与源文件边界。\\
+E25 & 编写期增量：\code{include/Core/Geometry/LevelSetHermiteGeometry.h}:193--198；\code{src/Core/Geometry/LevelSetHermiteGeometry.cpp}:238--244；\code{include/Modules/Electricity/SurfaceChargeField.h}:51--59、196--209；\code{src/Modules/Electricity/SurfaceChargeMeshTransfer.cpp}:38--109；\code{tests/electrohydrodynamics/surface_charge_mesh_transfer_regression.cpp} & 16:23 补查的精确 Q4 单元一致性与电荷/历史零时间重绑；未在本次执行新测试。\\
+\bottomrule
+\end{longtable}
+\normalsize
+
+\section{主要来源文件的身份与复现说明}
+全量 456 文件清单、行数、SHA-256 与本次架构检查日志保存于工作区 \code{paper/_revision/codex_workspace/mesh_geometry_modular_audit_20260914/source/}。下表列出 16:00:40 关键源码的 SHA-256 前 16 位，便于定位；完整哈希在该 JSON 清单中。编写期 E25 增量另存 \code{supplement_manifest.json}，不覆盖原清单或把新代码算入旧检查结果。截断哈希仅为识别摘要，不作为安全校验值。
+\small
+\begin{longtable}{@{}P{.69\textwidth}P{.25\textwidth}@{}}
+\toprule 文件 & SHA-256 前 16 位\\\midrule\endhead
+\code{include/Core/Geometry/MovingEBController.h} & \code{ba500d2aa2a3df00}\\
+\code{include/Core/Geometry/ImmersedGeometry_impl.h} & \code{07aab35aa27ef49f}\\
+\code{src/Core/Geometry/LevelSetHermiteGeometry.cpp} & \code{f3bdac210eba0b32}\\
+\code{src/Core/Mesh/QuadtreeMesh.cpp} & \code{000617f308481320}\\
+\code{src/Core/Mesh/QuadtreeMeshRefiner.cpp} & \code{a9b707d6e034a5d2}\\
+\code{src/Modules/Hydrodynamics/HydroFittedDomain.cpp} & \code{35b98a63a8d985b9}\\
+\bottomrule
+\end{longtable}
+\normalsize
+本方案只生成文档，不向现行源码写入目标 API，不覆盖蓝图或修改标准算例。正式方案与源文件可放置于 docs，工作文件和渲染检查均在 D: 项目工作区。LaTeX 源文件独立包含全部正文/图表，不需要外部图片；使用 XeLaTeX 连续编译两次可生成目录与交叉引用。
+\end{document}

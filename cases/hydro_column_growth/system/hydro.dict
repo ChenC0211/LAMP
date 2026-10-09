@@ -1,0 +1,11 @@
+Hydrodynamics {
+    coordinateSystem axisymmetricRZ;
+    materialModel twoPhase;
+    interfaceLevelSet liquid;
+    densityNegative 1; densityPositive 0.0001;
+    viscosityNegative 0; viscosityPositive 0;
+    interfaceForceGeometry conservative; interfaceForceLayer inventory;
+    interfaceThickness 0.25; surfaceTension 1;
+    initialVelocity zero; initialPressureJump 1;
+    linearResidualTolerance 1e-8;
+}

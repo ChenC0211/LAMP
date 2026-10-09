@@ -1,0 +1,8 @@
+# RZ measures already include the full 2*pi*r revolution.
+# Use cubic length scaling for physical volumes, not a 1 m slab factor.
+# dimension 3 here selects volume normalization, not a Cartesian 3D mesh.
+Normalization
+{
+    dimension 3
+    strategy manual
+}

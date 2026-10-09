@@ -1,0 +1,436 @@
+% !TEX program = xelatex
+\documentclass[UTF8,a4paper,12pt]{ctexart}
+
+\usepackage{geometry}
+\geometry{margin=2.2cm}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs,longtable,tabularx,makecell}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{caption}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\QUANTUM}{\textsc{QUANTUM}}
+\newcommand{\dt}{\Delta t}
+
+\title{\QUANTUM{}：新增 \code{ImplicitPIC} 模块（基于 PaperB 半隐式 FV--PIC 极化闭合）的完整实现方案与任务分解}
+\author{Chong Chen}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{目标与范围（What / Why）}
+
+\subsection{目标}
+在 \QUANTUM{} 的 \code{Modules/Plasma} 下，新增一个与 \code{ExplicitPIC} 并列的模块：
+\begin{itemize}[leftmargin=2em]
+  \item \code{ImplicitPIC}：实现 PaperB 中提出的 ``consistent semi-implicit FV--PIC macro-step with polarization closure''（半隐式宏步推进 + 同算子极化闭合），核心特征为：
+  \begin{enumerate}[leftmargin=2em]
+    \item \textbf{大时间步宏步（macro-step）}：$\omega_{pe}\dt \gg 1$ 场景仍稳定；
+    \item \textbf{闭合的单次椭圆求解}：每个宏步只解一次 FV 椭圆方程得到 $\phi^{n+1}$；
+    \item \textbf{同算子耦合（same-operator coupling）}：轨道平均重叠（overlaps）用于 \emph{沉积} 与 \emph{采样}，Poisson/FV 通量算子与 CF/EB 一致；
+    \item \textbf{SPD 结构}：$(\varepsilon_0+\mu)$ 的 FV 形式保持对称正定（便于 CG/IC 等迭代器）；
+    \item \textbf{诊断可解释}：输出 Gauss-law residual 与能量收支 residual，便于验证收敛与自力/自热控制。
+  \end{enumerate}
+\end{itemize}
+
+\subsection{非目标（第一阶段暂不做）}
+\begin{itemize}[leftmargin=2em]
+  \item 不在第一阶段引入全非线性 implicit（Newton/Krylov）粒子--场耦合（PaperB 方法为 \emph{predictor-orbit + polarization closure}，非 Newton 内迭代）；
+  \item 不在第一阶段改动网格核心（AMR/EB 生成、CF 通量图结构保持不动）；
+  \item 不强制要求 predictor 轨道的 ``叶事件精确分段'' 一步到位：允许先以可控误差的正交采样实现轨道平均（见 \S\ref{sec:orbitavg}），再升级为事件分段实现（见任务分解 WP2.4）。
+\end{itemize}
+
+\section{PaperB 方法在代码中的可执行定义（Algorithm Contract）}
+
+\subsection{宏步流水线（PaperB Algorithm 的工程化解释）}
+每个宏步 $t^n\to t^{n+1}$ 按如下闭环执行（对应 PaperB 的算法流程）：
+\begin{enumerate}[leftmargin=2em]
+  \item （可选）碰撞：Strang split 半步 $\mathcal{C}_{\dt/2}$（对速度/反应）；
+  \item Predictor 轨道：用冻结的 $\bm{E}^n$ 在网格上推进粒子，得到轨道样本/分段；
+  \item 轨道平均重叠 $\overline{W}_{p\to c}$：用 predictor 轨道构造粒子--单元重叠（CF/EB 一致 + cut-aware + renorm）；
+  \item 沉积 ``amount'' 量：
+  \[
+    \widehat{Q}_c^\star=\sum_{p} q_{s(p)}\,\overline{W}_{p\to c},\qquad
+    \widehat{N}_{c,s}^\star=\sum_{p\in s}\overline{W}_{p\to c}
+  \]
+  并由 $\widehat{N}_{c,s}^\star$ 得到 $\hat n_{c,s}^\star=\widehat{N}_{c,s}^\star/V_c^p$；
+  \item 极化系数（cell/face）：
+  \[
+  \mu_c=\frac{\dt^2}{4}\sum_s\frac{q_s^2}{m_s}\,\hat n_{c,s}^\star,\qquad
+  \mu_f=\mathcal{A}(\mu_c,\mu_{c'})
+  \]
+  其中 $\mathcal{A}$ 默认 harmonic 平均（单调性好）；
+  \item 解一次 FV 椭圆方程得到 $\phi^{n+1}$：
+  \[
+  \nabla_h\cdot\bm{D}^{n+1}=\frac{\widehat{Q}_c^\star}{V_c^p},\qquad
+  \bm{D}=(\varepsilon_0+\mu)\bm{E},\ \bm{E}=-\nabla\phi
+  \]
+  EB Robin/Dirichlet 等边界闭合保持与现有 FV/EB solver 一致；
+  \item 重构/采样：重构 $E^{n+1}$，并形成
+  \[
+    \bm{E}^{n+1/2}_c=\tfrac12(\bm{E}^n_c+\bm{E}^{n+1}_c),\qquad
+    \bm{E}^{n+1/2}(\bm{x}_p)\approx\sum_c \overline{W}_{p\to c}\bm{E}^{n+1/2}_c
+  \]
+  \item Permanent advance：用 $\bm{E}^{n+1/2}$ 更新粒子（一次完成 $[t^n,t^{n+1}]$）：
+  \[
+  \bm{v}_p^{n+1}=\bm{v}_p^{n}+\frac{q_s\dt}{m_s}\bm{E}^{n+1/2}(\bm{x}_p^{n+1/2}),\quad
+  \bm{x}_p^{n+1}=\bm{x}_p^n+\dt\,\tfrac12(\bm{v}_p^n+\bm{v}_p^{n+1})
+  \]
+  \item （可选）碰撞第二半步 $\mathcal{C}_{\dt/2}$ + 边界交互/注入/统计；
+  \item 诊断：Gauss-law residual、能量 residual、放电/羽流可观测量输出。
+\end{enumerate}
+
+\subsection{一致性与验收标准（必须满足）}
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{耦合对称性（沉积/采样同权重）}：$\overline{W}_{p\to c}$ 在沉积与采样中必须使用完全同一份 CSR 权重；
+  \item \textbf{全局电荷守恒}：amount 沉积 + renorm 后满足 $\sum_c \widehat{Q}_c^\star=\sum_p q_p$（对 roundoff 收敛）；
+  \item \textbf{SPD 椭圆算子}：$(\varepsilon_0+\mu_f)>0$ 且 FV 离散为对称正定（至少在 Dirichlet 或 gauge-fixed Neumann 情况下）；
+  \item \textbf{CF/EB 兼容}：Poisson 通量算子使用与现有 \code{FaceSegmentGraph} 一致的 leaf-face segment 结构；cut-aware 面积/体积分数进入同一套 FV 通量形式；
+  \item \textbf{可诊断}：输出每步 $\|\nabla_h\cdot\bm{D}-\rho\|$ 与能量误差，便于论文与回归。
+\end{enumerate}
+
+\section{代码落点与架构设计（Where / How）}
+
+\subsection{新增目录与注册}
+\begin{itemize}[leftmargin=2em]
+  \item 新增：
+  \[
+    \code{QUANTUM/include/Modules/Plasma/ImplicitPIC/}\quad\text{与}\quad
+    \code{QUANTUM/src/Modules/Plasma/ImplicitPIC/}
+  \]
+  \item 在 \code{Runtime/Apps/SingleModuleApp.cpp} 的 \code{makeDefaultModuleRegistry()} 中注册：
+  \[
+    \code{registry.registerModule("ImplicitPIC", ...);}
+  \]
+  并可增加别名（可选）：
+  \[
+    \code{"iPIC"}\ \text{或}\ \code{"PICImplicit"}
+  \]
+\end{itemize}
+
+\subsection{最大复用原则（尽量不复制 ExplicitPIC 的重资产代码）}
+建议把 ExplicitPIC 中已经成熟的子系统抽象为可复用组件，ImplicitPIC 复用这些组件并替换 ``宏步算法编排''：
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{复用：}网格/几何、粒子容器与并行、cut-aware 指标（\code{CutCellMetrics}）、沉积/采样权重构造（\code{CouplingWeightsCache} 的内核）、电场重构（\code{ElectricFieldEvaluator}）、MCC 碰撞算子（\code{MCCCollisionOperator}）、输出/Logger；
+  \item \textbf{新增：}Predictor 轨道生成器、轨道平均权重缓存（OrbitAveragedWeightsCache）、number amount 沉积、极化系数装配（mu）、variable-coefficient FV Poisson（$(\varepsilon_0+\mu)$）、宏步诊断（Gauss/energy residual）。
+\end{itemize}
+
+\section{关键新组件设计}
+\label{sec:keycomponents}
+
+\subsection{Predictor 轨道（冻结场推进）}
+\begin{itemize}[leftmargin=2em]
+  \item 输入：粒子 $(\bm{x}^n,\bm{v}^n)$，网格与 $\bm{E}^n$（cell-centered 或可采样）；
+  \item 输出：用于轨道平均的 ``轨道表示''：
+  \begin{enumerate}[leftmargin=2em]
+    \item \textbf{Stage-1（优先落地）}：$M$ 个时间采样点 $\{\bm{x}^\star(t_k)\}_{k=1}^M$ + 权重 $w_k$（如 2/3 点 Gauss 或均匀采样）；
+    \item \textbf{Stage-2（对齐 PaperB）}：叶事件分段 $\{\mathcal{S}_{p,m}\}$（每段位于同一 leaf cell 或同一局部 patch），并给出段长/时间权重。
+  \end{enumerate}
+  \item Predictor 子步控制：\code{predictorSubcycles}，以控制 cell-crossing/EB-crossing 轨道误差与数值耗散。
+\end{itemize}
+
+\subsection{轨道平均 overlaps（\S\ref{sec:orbitavg})}
+\label{sec:orbitavg}
+核心目标：构造每个粒子的 CSR 权重 $\overline{W}_{p\to c}$，满足：
+\[
+\sum_c \overline{W}_{p\to c}=1,\qquad \overline{W}_{p\to c}\ge 0 \ (\text{必要时 clip+renorm})
+\]
+并对 CF/EB cut-aware。
+
+\paragraph{Stage-1：采样积分实现（先落地）}
+对每个粒子：
+\begin{enumerate}[leftmargin=2em]
+  \item 对每个采样点 $\bm{x}^\star(t_k)$，调用现有 \code{CouplingWeightsCache} 的构造内核（或提取一个 \code{buildWeightsAtPosition()}）得到瞬时权重 $W^{(k)}_{p\to c}$；
+  \item 积分/平均：
+  \[
+    \overline{W}_{p\to c}=\sum_{k=1}^M w_k\,W^{(k)}_{p\to c}
+  \]
+  \item 对 $\overline{W}$ 做 cut-renorm/composite-band/moment-correction（与 ExplicitPIC 同逻辑，但对象换成 $\overline{W}$）。
+\end{enumerate}
+
+\paragraph{Stage-2：叶事件分段实现（对齐 PaperB）}
+实现一个轻量 ``segment walker''：
+\begin{itemize}[leftmargin=2em]
+  \item 把 predictor 轨道按 leaf-cell 事件切分；每段内用解析/低阶多项式积分得到 CIC 对单元的时间平均重叠；
+  \item 这样可以减少 $M$，并提升与 PaperB ``orbit-averaged overlaps'' 的一致性与效率。
+\end{itemize}
+
+\subsection{Number amount 沉积（新增）}
+ExplicitPIC 目前主要沉积电荷 amount（$Q$）。ImplicitPIC 需要同时沉积 number amount（$N$）用于 $\mu$：
+\begin{itemize}[leftmargin=2em]
+  \item \code{DepositNumberAmount}：按 species 分组统计
+  \[
+    \widehat{N}_{c,s}^\star = \sum_{p\in s} \overline{W}_{p\to c}
+  \]
+  \item 输出（供诊断/论文）：$\hat n^\star_{c,s}=\widehat{N}^\star_{c,s}/V_c^p$（其中 $V_c^p=\alpha_c V_c$，$\alpha_c$ 为 plasma 体积分数）；
+  \item 与 \code{DepositQK} 一样支持：cut-renorm、composite band、周期边界 ghost-merge、deterministic CSR 等。
+\end{itemize}
+
+\subsection{极化系数装配（mu cell/face）}
+\begin{itemize}[leftmargin=2em]
+  \item 新增 \code{PolarizationAssembler}：
+  \[
+    \mu_c=\frac{\dt^2}{4}\sum_s\frac{q_s^2}{m_s}\,\hat n^\star_{c,s}
+  \]
+  \item face 平均：默认 harmonic，
+  \[
+    \mu_f=\frac{2\mu_c\mu_{c'}}{\mu_c+\mu_{c'}}\quad(\mu_c+\mu_{c'}>0)
+  \]
+  \item 输出场：\code{muCell}, \code{muFace}（用于论文图与 debug）。
+\end{itemize}
+
+\subsection{Variable-coefficient FV Poisson：$(\varepsilon_0+\mu)$}
+\label{sec:vpoisson}
+
+\paragraph{原则}
+不改动网格与 \code{FaceSegmentGraph}，仅扩展 FV solver 支持 ``面系数''：
+\[
+  -\nabla_h\cdot\left( \kappa_f \nabla_h \phi \right) = \mathrm{rhs},
+  \qquad \kappa_f = \varepsilon_0 + \mu_f
+\]
+
+\paragraph{建议实现路径（最小侵入）}
+在 \code{PoissonFVSolverCellCentered::solve(...)} 增加一个可选参数：
+\[
+\code{const CellField<double>* kappaCell} \quad \text{或}\quad \code{const FaceField<double>* kappaFace}
+\]
+并在 segment 组装时，把现有的
+\[
+c=\frac{A_f^{open}}{d_f}
+\]
+替换为
+\[
+c=\kappa_f\,\frac{A_f^{open}}{d_f}
+\]
+其中 $\kappa_f$ 由 cell 值 harmonic 平均得到（边界面用 cell 值）。
+
+\paragraph{缓存策略}
+由于 $\mu$ 每步变化，矩阵数值会变，直接复用 ``数值分解缓存'' 不成立。建议分两层缓存：
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Pattern cache（强烈推荐）}：复用未知量映射、CSR pattern、triplet 结构，仅更新 values；
+  \item \textbf{Factor cache（可选）}：仅当 $\mu$ 固定或步间变化很小时启用（默认关闭）。
+\end{enumerate}
+
+\paragraph{SPD 求解器（第二阶段增强）}
+PaperB 强调 SPD，可引入：
+\begin{itemize}[leftmargin=2em]
+  \item \code{Eigen::ConjugateGradient<SparseMatrix, Lower|Upper, IncompleteCholesky>}；
+  \item 或自研 PCG + IC(0)/AMG（若后续规模变大）。
+\end{itemize}
+
+\subsection{同权重采样（Matched Gather 的宏步版本）}
+新增 \code{ImplicitMatchedGather} 或在现有 \code{MatchedGather} 增加一条路径：
+\begin{itemize}[leftmargin=2em]
+  \item 输入：\code{OrbitAveragedWeightsCache} 生成的 $\overline{W}_{p\to c}$；
+  \item 输入：cell-centered $\bm{E}_c^{n+1/2}$；
+  \item 输出：每粒子的 $\bm{E}^{n+1/2}(\bm{x}_p)$。
+\end{itemize}
+
+\subsection{宏步诊断（Gauss / Energy residual）}
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Gauss residual}（cell-wise）：
+  \[
+    R_c = (\nabla_h\cdot\bm{D}^{n+1})_c - \widehat{Q}_c^\star/V_c^p
+  \]
+  输出：$L_\infty/L_2$，并可输出 \code{gaussResidualCell} 场；
+  \item \textbf{Energy residual}（全局）：
+  \[
+    \Delta K + \Delta U_E - W_{ext} - W_{loss} \approx 0
+  \]
+  其中 $U_E=\tfrac12\sum_f \kappa_f E_f^2\,V_f$（工程上可用一致的 FV 离散近似），并把碰撞/吸收/注入功作为 $W_{loss}/W_{ext}$ 计入。
+\end{itemize}
+
+\section{pic.dict 与运行层集成（配置设计建议）}
+
+\subsection{模块选择}
+保持现有 \code{SingleModuleApp} 通过 run 配置选择模块名：
+\begin{itemize}[leftmargin=2em]
+  \item \code{RunController.module = "ImplicitPIC";}
+\end{itemize}
+
+\subsection{pic.dict 新增块（建议）}
+在不增加新字典文件的前提下，在 \code{pic.dict} 加一个块（或在现有 PIC 块下加子块）：
+\begin{lstlisting}[language={},basicstyle=\ttfamily\small]
+ImplicitPIC
+{
+  enable           true;
+
+  // macro-step
+  dt               1e-9;          // code units or "1 ns" if units enabled
+  steps            1000;
+
+  // predictor orbit
+  predictorSubcycles   4;          // substep count for frozen-field predictor
+  orbitQuadrature      gauss2;     // gauss2 | gauss3 | uniformM
+  orbitSamples         2;          // used when orbitQuadrature=uniformM
+
+  // polarization closure
+  usePolarization      true;
+  muFaceAverage        harmonic;   // harmonic | arithmetic
+  muFloor              0.0;        // safety clamp
+
+  // variable-coeff Poisson
+  poisson
+  {
+    solver            pcg;         // direct | pcg
+    cachePatternOnly  true;
+    relTol            1e-10;
+    maxIter           2000;
+  }
+
+  // diagnostics
+  diagnostics
+  {
+    gaussResidual     true;
+    energyResidual    true;
+    dumpMu            false;
+  }
+}
+\end{lstlisting}
+
+\section{完整任务分解（可逐步实现的 WP 列表）}
+
+\subsection*{WP0：对齐接口与最小骨架（可编译、可运行）}
+\begin{enumerate}[leftmargin=2em]
+  \item 新建目录与 \code{ImplicitPICModule.{h,cpp}}（仿 \code{ExplicitPICModule}）；
+  \item 在 \code{SingleModuleApp.cpp} 注册模块；
+  \item 让 \code{ImplicitPIC} 能读取现有 \code{geometry.dict/mesh.dict/pic.dict} 并完成 ``空跑''（不推进/不求解）；
+  \item 验收：\code{SingleModule --module ImplicitPIC} 可运行并打印配置摘要。
+\end{enumerate}
+
+\subsection*{WP1：配置与数据结构扩展（PicConfig/DictionaryPIC）}
+\begin{enumerate}[leftmargin=2em]
+  \item 在 \code{PicConfig} 增加 \code{ImplicitPICConfig} 子结构；
+  \item \code{DictionaryPIC} 解析 \code{ImplicitPIC\{...\}} 块；
+  \item 增加必要默认值与合法性检查（如 \code{dt>0}、\code{predictorSubcycles>=1}）；
+  \item 验收：输出 \code{implicit_pic_config_dump.json/txt}（可选）用于回归比对。
+\end{enumerate}
+
+\subsection*{WP2：核心算法闭环（先用采样积分实现 orbit-average）}
+\begin{enumerate}[leftmargin=2em]
+  \item WP2.1 PredictorOrbitBuilder（冻结场推进）
+  \begin{itemize}
+    \item 复用现有 gather（瞬时权重）对 $\bm{E}^n$ 采样；
+    \item 子步推进得到 $\bm{x}^\star(t_k)$；
+  \end{itemize}
+
+  \item WP2.2 OrbitAveragedWeightsCache（采样平均版）
+  \begin{itemize}
+    \item 对每个 $t_k$ 位置调用权重构造内核，累加到 map，再压缩为 CSR；
+    \item 对 $\overline{W}$ 执行 renorm / cut-aware 修正（复用 ExplicitPIC 逻辑）；
+  \end{itemize}
+
+  \item WP2.3 DepositNumberAmount + PolarizationAssembler
+  \begin{itemize}
+    \item 与 \code{DepositQK} 同步：同一份 $\overline{W}$ 产生 $Q^\star$ 与 $N^\star$；
+    \item 计算 $\mu_c,\mu_f$ 并生成场输出；
+  \end{itemize}
+
+  \item WP2.4 Variable-coeff Poisson（最小改动版本：direct solver + 无缓存）
+  \begin{itemize}
+    \item 扩展 FV 组装：把 $\kappa_f$ 乘到现有 $A/d$ 系数；
+    \item 先用 direct（SparseLU/SuperLU），默认关闭 factor cache；
+  \end{itemize}
+
+  \item WP2.5 同权重采样 + permanent advance
+  \begin{itemize}
+    \item 形成 $\bm{E}_c^{n+1/2}$ 并用 $\overline{W}$ gather；
+    \item 推进粒子一次完成宏步；
+  \end{itemize}
+
+  \item 验收（闭环）：在无碰撞、简化边界的 2D 单元盒测试中能跑通，且 Gauss residual 有意义输出。
+\end{enumerate}
+
+\subsection*{WP3：数值正确性与论文对齐验证（Test Ladder）}
+\begin{enumerate}[leftmargin=2em]
+  \item WP3.1 与 ExplicitPIC 的一致性对比（小 dt 极限）
+  \begin{itemize}
+    \item 设置 $\dt$ 很小、关闭 $\mu$（或强制 $\mu=0$），ImplicitPIC 应退化为 ``一次 Poisson + leapfrog'' 的一致结果；
+  \end{itemize}
+  \item WP3.2 大步稳定性与等离子体频率标度测试：扫描 $\omega_{pe}\dt$；
+  \item WP3.3 自力/自热控制测试：单粒子/静电平衡构型比较 Explicit vs Implicit；
+  \item WP3.4 EB Robin 测试：嵌入导体/介质边界下的残差与收敛；
+  \item 产物：新增 \code{cases/implicit_pic_*} 一组回归算例 + 脚本。
+\end{enumerate}
+
+\subsection*{WP4：性能与工程化（Pattern cache + PCG/IC）}
+\begin{enumerate}[leftmargin=2em]
+  \item WP4.1 Pattern cache：复用 CSR pattern，仅更新 values（每步避免重建 triplets）；
+  \item WP4.2 PCG + IC：利用 SPD 加速，替代 direct solver（大规模更稳）；
+  \item WP4.3 线程并行：orbit-average 权重构造、沉积、gather、PCG matvec 全部 OpenMP 化（遵循现有并行策略，不破坏 MPI/并行框架）。
+\end{enumerate}
+
+\subsection*{WP5：文档与字典规范更新}
+\begin{enumerate}[leftmargin=2em]
+  \item 更新 \code{QUANTUM\_InputDicts\_Spec\_Report}：新增 \code{ImplicitPIC} 块字段说明；
+  \item 补充：典型推荐参数表、常见坑（如 $\mu$ 过大导致过度屏蔽、predictorSubcycles 太小导致轨道误差）；
+  \item 论文产物：PaperA/B 中对应章节的 ``Implementation details'' 与图表脚本。
+\end{enumerate}
+
+\section{建议的交互式逐步实现方式（你与我如何配合）}
+为了适配你 ``逐步实现 + 每步 diff/zip'' 的工作流，建议你每次对话驱动一个最小 WP 子任务：
+\begin{itemize}[leftmargin=2em]
+  \item 你给我上传当前源码 zip（或 git diff 也行）；
+  \item 你指定要执行的子任务编号（例如 \code{WP2.2}）；
+  \item 我输出：实现要点 + 需要改的文件列表 + 关键代码片段 + 回归测试方法；
+  \item 你本地编译跑回归，有问题把日志/差异贴回来，我们继续修。
+\end{itemize}
+
+\section{附：工程接口草案（建议的 C++ 类/函数形态）}
+
+\subsection*{Orbit 轨道与权重缓存}
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small]
+struct OrbitSample {
+  Vector2D x;
+  double w;        // quadrature weight sum w=1
+};
+
+class PredictorOrbitBuilder {
+public:
+  void buildSamples(const Particle& p,
+                    const Field& Ecell_n,
+                    int subcycles,
+                    std::vector<OrbitSample>& out) const;
+};
+\end{lstlisting}
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small]
+class OrbitAveragedWeightsCache {
+public:
+  // CSR: row per particle, cols are cellIndex
+  std::vector<int> rowPtr, colInd;
+  std::vector<double> val;  // Wbar
+
+  void build(const ParticleContainer& particles,
+             const std::vector<std::vector<OrbitSample>>& samples,
+             const Mesh& mesh,
+             const CutCellMetrics* cut,
+             const DepositionConfig& depOpt);
+};
+\end{lstlisting}
+
+\subsection*{Variable-coeff Poisson（扩展签名）}
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small]
+// kappaCell: kappa_c = eps0 + mu_c
+bool solve(const QuadtreeMesh& mesh,
+           const FaceSegmentGraph& graph,
+           const PicDomainBC& bc,
+           const CellField<double>& rhs,
+           const CellField<double>* kappaCell, // nullable
+           CellField<double>& phi,
+           SolveReport* report,
+           const Options& opt,
+           const CutCellMetrics* cutMetrics,
+           const PicEmbeddedBC* embeddedBC,
+           const PicEmbeddedBCMap* embeddedBCById);
+\end{lstlisting}
+
+\section{结语：先跑通，再对齐，再加速}
+推荐你按 ``WP0$\rightarrow$WP2（闭环）$\rightarrow$WP3（验证）$\rightarrow$WP4（加速）'' 的顺序推进。
+这样每一步都有可运行的里程碑，也最符合你目前 \QUANTUM{} 的工程节奏（不破坏并行与网格核心）。
+
+\end{document}

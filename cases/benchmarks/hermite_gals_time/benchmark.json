@@ -1,0 +1,8 @@
+{
+    "program":  "LAMP_hermite_gals_benchmark.exe",
+    "study":  "time",
+    "arguments":  [
+                      "time"
+                  ],
+    "description":  "Pure Hermite-GALS time study"
+}

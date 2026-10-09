@@ -1,0 +1,398 @@
+\documentclass[UTF8,11pt,a4paper]{ctexart}
+
+\usepackage{geometry}
+\geometry{margin=2.2cm}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{longtable}
+\usepackage{fancyhdr}
+\usepackage{pifont}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{210,210,210}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=2,
+  showstringspaces=false
+}
+
+\setlength{\headheight}{14pt}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{QUANTUM: ExplicitPIC / MCC / EB}
+\rhead{粒子管理（Population Control）落地方案 v3}
+\cfoot{\thepage}
+
+\title{QUANTUM：粒子管理（Population Control）\\
+{\large 基于现有代码现状的落地调整版（v3：仅用 pic.dict 配置，保持 OpenMP 并行）}}
+\author{陈冲（Chong Chen）}
+\date{2026年1月27日}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+已提供的 v2 方案以 ``per-cell merge/split + 源项 thinning'' 为核心思路是正确的。然而，QUANTUM 当前显式 PIC 实现中，\textbf{宏粒子权重（macro weight）在工程上仍是 ``按物种常数''}（\texttt{macroWeight[si]}），而 merge/split/thinning 要在统计意义上保持电荷量/质量守恒，必须引入\textbf{可变粒子权重}并将其贯穿沉积、碰撞产物、二次电子发射（SEE）与诊断。
+
+本文首先对齐当前 QUANTUM 代码的粒子数据结构、时间步流水线、并行/确定性约束，然后给出\textbf{不破坏现有 OpenMP 并行}且\textbf{仅通过 \texttt{pic.dict} 新增一个配置块}即可启用的粒子管理方案，并提供\textbf{可分步执行的实现任务分解}与\textbf{每一步交互的指令模板}。
+\end{abstract}
+
+\tableofcontents
+
+%=================================================
+\section{现状对齐：QUANTUM 当前粒子链路与约束}
+%=================================================
+
+\subsection{粒子容器与关键字段}
+当前显式 PIC 使用以下数据结构：
+\begin{itemize}[itemsep=3pt]
+  \item \textbf{粒子结构体}：位于 \texttt{Core/Lagrangian/Particle.h}。
+  其中 \texttt{position, velocity, vz, inCellL, inBackgroundCellL} 为推进与定位关键字段；\texttt{weight[4]} 是形函数/重构权重（\emph{不是} 宏粒子物理权重）；\texttt{rngState} 用于碰撞 RNG 的 per-particle 模式。
+  \item \textbf{粒子容器}：位于 \texttt{Core/Lagrangian/ParticleType.h}，核心为 \texttt{std::vector<Particle> particle;}。
+  \item \textbf{宏粒子权重（现状）}：在 \texttt{ExplicitPICModule.cpp} 中由 \texttt{pic.dict/Species} 读入 \texttt{macroWeight[si]}，当前按物种常数使用。
+\end{itemize}
+
+\subsection{时间步流水线与 ``不能在中途修改粒子数'' 的原因}
+\texttt{src/Modules/Plasma/ExplicitPIC/ExplicitPICModule.cpp} 的每步大致流程如下：
+\begin{enumerate}[itemsep=2pt]
+  \item 建立权重/沉积电荷/求解泊松方程/计算电场（使用粒子当前位置建立缓存）
+  \item 匹配聚集（基于缓存将电场插值到粒子）
+  \item 粒子推进（Leapfrog 方法，含越界/电子束删除与原地压缩）
+  \item 二次电子发射（基于离子撞墙产生二次电子）
+  \item 蒙特卡洛碰撞（可能产生 \texttt{mccSpawnBuffer}）
+  \item 延迟合入 \texttt{mccSpawnPending}（避免破坏后续物种的聚集缓存）
+  \item 输出与诊断
+\end{enumerate}
+\textbf{关键点：} 聚集缓存在该步开始阶段按 ``当时的粒子列表'' 建立，因此在聚集/推进循环中\emph{不能}往其他物种容器中插入粒子（代码已通过 \texttt{mccSpawnPending} 规避）。因此粒子管理的最安全切入点为：
+\begin{itemize}[itemsep=2pt]
+  \item \textbf{推荐切入点 A（强烈推荐）}：\emph{所有} 推进/MCC/SEE 结束并完成 ``延迟合入'' 之后，且在本步输出之前（这样输出反映管理后的状态）。
+  \item \textbf{可选切入点 B（保险机制）}：在 ``spawn 合入前'' 对 spawn buffer 执行 thinning（避免峰值内存）。
+\end{itemize}
+
+\subsection{并行与确定性约束：保持 OpenMP 兼容性}
+现有并行热点：
+\begin{itemize}[itemsep=2pt]
+  \item \textbf{推进器（Pusher）}：OpenMP 并行推进 + 原地压缩（写指针），并在并行段之后按固定顺序合并 impact buffers。
+  \item \textbf{蒙特卡洛碰撞（MCC）}：当 \texttt{Collisions.rngMode} 为 \texttt{perParticle} 或 \texttt{counterBased} 且 \texttt{parallel=true} 时，支持 OpenMP 并行碰撞。
+\end{itemize}
+这意味着：
+\begin{enumerate}[itemsep=2pt]
+  \item 粒子管理组件\textbf{默认应串行执行}（至少第一版），避免引入线程不安全 RNG 或非确定性合并顺序。
+  \item 如需后续并行化粒子管理，应采用 ``按网格单元并行 + 线程本地暂存 + 确定性归并'' 的模式。
+  \item \texttt{Particle.rngState} 在 MCC 的 perParticle 模式下是 ``状态本体''：合并/分裂时必须生成新的可复现 rngState，\emph{不要依赖粒子在数组中的索引} 来重新初始化随机种子。
+\end{enumerate}
+
+%=================================================
+\section{方案调整：将 v2 方案适配到 QUANTUM 现状}
+%=================================================
+
+\subsection{必要的工程改动：引入 ``可变宏权重''（否则 merge/split 无法守恒）}
+v2 方案中 merge/split/thinning 的守恒性是通过粒子权重 $w_p$ 实现的；而 QUANTUM 当前仅有 ``按物种常数'' 的 \texttt{macroWeight}。因此建议引入：
+\begin{itemize}[itemsep=2pt]
+  \item 在 \texttt{Particle} 中增加字段 \texttt{double w = 1.0;}（宏粒子物理权重，代表物理粒子数），简称 \texttt{p.w}。
+  \item 初始化与注入处：将 \texttt{p.w} 赋为该物种的默认 \texttt{macroWeight[si]}。
+  \item 后续所有 ``以物理量计数'' 的地方（沉积电荷量、SEE 产物权重、碰撞产物权重、诊断统计）逐步改为使用 \texttt{p.w}。
+\end{itemize}
+\textbf{兼容性要求：} 当所有粒子的 \texttt{p.w==macroWeight[si]} 时，模拟结果应与现状一致（回归验收）。
+
+\subsection{核心组件位置与职责（推荐放在 Core 层）}
+建议新增/调整以下组件（名称可按您的命名体系微调）：
+\begin{itemize}[itemsep=2pt]
+  \item \texttt{Core/ParticleManagementConfig}\newline
+  负责从 \texttt{pic.dict} 解析配置（\textbf{禁止}单独新增字典文件），提供默认值及按物种覆盖。
+  \item \texttt{Core/CellBinner}\newline
+  使用 \texttt{mesh.cells(p.inCellL).index()} 建立 ``密集单元索引'' 的分桶结构：\texttt{cellIndex -> [particleIndices]}。
+  \item \texttt{Core/ParticleManager}\newline
+  对指定物种执行：spawn thinning（可选）+ per-cell merge + per-cell split，并输出统计。
+  \item \texttt{Core/ParticleManagementReport}\newline
+  负责输出 \texttt{output/particle\_management\_report.csv}（每次执行一行或按物种一行均可）。
+\end{itemize}
+
+\subsection{算法选择（保持 v2 基线，但补充 QUANTUM 细节）}
+\paragraph{合并（基线：动量守恒成对合并）}
+在同一网格单元内寻找速度相近的粒子对：
+\[
+\Delta E = \tfrac12 m_s \|\mathbf{v}_1-\mathbf{v}_2\|^2 < E_{\text{merge},s}.
+\]
+合并后：
+\[
+ w' = w_1+w_2,\qquad
+ \mathbf{v}' = \frac{w_1\mathbf{v}_1+w_2\mathbf{v}_2}{w_1+w_2},\qquad
+ \mathbf{x}'\in\{\mathbf{x}_1,\mathbf{x}_2\}.
+\]
+\textbf{并行安全：} 第一版串行，顺序固定；如需并行，则对每个网格单元独立处理并使用确定性顺序写回。
+
+\paragraph{分裂（基线：二维四边形克隆 + EB 安全）}
+当网格单元内粒子过少或权重大于阈值时，执行 4 分裂：
+\[
+ w' = w/4,\qquad \mathbf{v}'=\mathbf{v},\qquad \mathbf{x}'=\mathbf{x}+ (\pm \delta x,\pm \delta y).
+\]
+\textbf{EB 安全：} 若分裂后新位置落入固体区域（$\psi<0$），采用 ``有限次重采样'' 或沿法向投影到 $\psi=\varepsilon$。
+
+\paragraph{Spawn thinning（强烈推荐作为保险机制）}
+对即将合入的 spawn（MCC 与 SEE 都可能产生）进行抽样：保留概率 $p$，保留下来的粒子权重调整为 $w\leftarrow w/p$，以保持期望守恒。
+\textbf{注意：} QUANTUM 现有 MCC/SEE 产物需要先有 \texttt{p.w}，否则无法 ``除以 $p$''。
+
+%=================================================
+\section{配置接口：仅在 \texttt{pic.dict} 中增加一个配置块}
+%=================================================
+
+根据您的备注，这里做最重要的改动：\textbf{不再使用 \texttt{system/particleManagement.dict}}，只在 \texttt{system/pic.dict} 中增加：
+
+\begin{verbatim}
+ParticleManagement
+{
+  enabled        true;
+  everySteps     1;
+
+  // --- global caps (all species combined) ---
+  softCapTotal   2000000;
+  hardCapTotal   3000000;
+
+  // --- per-cell caps (defaults) ---
+  perCellMax     120;
+  perCellMin     20;
+
+  // --- merge ---
+  merge
+  {
+    enabled         true;
+    maxDeltaE_eV    1.0;
+    maxPairsPerCell 64;
+  }
+
+  // --- split ---
+  split
+  {
+    enabled         true;
+    wMax            4.0;   // weight threshold
+    maxSplitPerCell 8;
+    jitterFrac      0.25;  // position jitter fraction of cell size
+    ebSafe          true;
+    maxRetries      8;
+  }
+
+  // --- thinning (spawn-level fuse) ---
+  thinning
+  {
+    enabled            true;
+    applyToMccSpawn    true;
+    applyToSeeSpawn    true;
+    minKeepProb        0.05;
+  }
+
+  // --- per-species overrides ---
+  species
+  (
+    { name electron; perCellMax 160; maxDeltaE_eV 2.0; wMax 2.0; }
+    { name Ar_plus;  perCellMax 80;  maxDeltaE_eV 5.0; wMax 4.0; }
+  );
+
+  diagnostics
+  {
+    writeReport       true;
+    reportEverySteps  1;
+    includeEnergyMom  true;
+  }
+}
+\end{verbatim}
+
+\textbf{字段说明：}
+\begin{itemize}[itemsep=2pt]
+  \item \texttt{softCapTotal/hardCapTotal}：全局粒子数软/硬上限（所有物种合计）
+  \item \texttt{perCellMax/perCellMin}：每个网格单元粒子数上限/下限（默认值）
+  \item \texttt{wMax}：粒子权重阈值（触发分裂的权重值）
+  \item \texttt{jitterFrac}：位置抖动幅度（相对于单元尺寸的比例，例如0.25表示±25%的单元尺寸）
+  \item \texttt{minKeepProb}：最小保留概率（防止稀释过度导致权重过大）
+\end{itemize}
+
+\textbf{命名风格：} 您现有 \texttt{pic.dict} 以 \texttt{PIC/Units/Solvers/Species/Collisions/SEE/Output} 等首字母大写块为主，建议此处也使用 \texttt{ParticleManagement}（首字母大写）以保持一致。
+%=================================================
+\section{集成位置与数据流：如何不破坏现有逻辑}
+%=================================================
+
+\subsection{推荐的调用时机（与现状代码完全对齐）}
+在 \texttt{ExplicitPICModule.cpp} 中，推荐按以下顺序插入：
+\begin{enumerate}[itemsep=2pt]
+  \item MCC 对每个 projectile 的 \texttt{mccSpawnBuffer} 已汇总到 \texttt{mccSpawnPending}（延迟合入）。
+  \item SEE 的二次电子暂存在 \texttt{seeSpawn}，并在各物种循环后统一合入。
+  \item 先执行：\textbf{spawn thinning}（对 \texttt{mccSpawnPending} 与 \texttt{seeSpawn}）。
+  \item 再执行：\textbf{commit spawn}（保持现有 ``延迟合入'' 机制）。
+  \item 然后执行：\textbf{ParticleManager::Apply}（per-cell merge/split）。
+  \item 最后进入现有输出/诊断。
+\end{enumerate}
+这样做的好处：
+\begin{itemize}[itemsep=2pt]
+  \item 不会破坏聚集缓存的一致性；
+  \item thinning 可抑制瞬时峰值；
+  \item 输出与后续步使用的是管理后的粒子集合；
+  \item OpenMP 热路径（推进器/MCC）完全不变。
+\end{itemize}
+
+\subsection{对现有诊断的影响与处理策略}
+现有的 ``ion\_report / ionBalance'' 类诊断会使用 ``宏粒子数'' 推算物理量（依赖 \texttt{macroWeight[si]}）。
+引入 \texttt{p.w} 后建议：
+\begin{itemize}[itemsep=2pt]
+  \item 所有 ``物理计数'' 改为 $\sum_p w_p$（与可变权重保持一致）。
+  \item ionBalance 报告在启用粒子管理时需要增加列（例如 \texttt{merged, split, thinned}）才能闭合 ``预期 = 结果''。
+  \item 为避免破坏现有脚本：新列追加在行末，不改变既有列顺序。
+\end{itemize}
+
+%=================================================
+\section{实现任务分解（可分步执行）与交互指令}
+%=================================================
+
+\subsection*{总原则}
+\begin{itemize}[itemsep=2pt]
+  \item 每一步提交都必须：\ding{52} 编译通过；\ding{52} 默认配置下（未启用 ParticleManagement）结果不变；\ding{52} 不降低 OpenMP 可用性。
+  \item 如需新增配置，一律只在 \texttt{pic.dict} 中添加块，不新增其他 dict。
+  \item 每一步都输出 diff+zip（或直接提供新 zip），便于您逐步回放。
+\end{itemize}
+
+\subsection{PM-0：现状基线诊断（不改物理，仅输出统计）}
+\textbf{目的：} 在不引入粒子管理前，先量化 ``爆炸'' 的证据，便于后续验收。
+\begin{itemize}[itemsep=2pt]
+  \item 每步：各物种宏粒子数、\texttt{mccSpawnBuffer/mccSpawnPending/seeSpawn} 尺寸；
+  \item 每隔 $k$ 步：每个网格单元粒子数分布的 min/mean/p50/p95/max（可按物种）。
+\end{itemize}
+\textbf{交互指令：}
+\begin{verbatim}
+执行 PM-0：增加粒子数基线诊断输出（per species total、mccSpawnPending/seeSpawn size、
+per-cell count 的 min/mean/p95/max），不做 merge/split/thinning。请提供 diff+zip。
+\end{verbatim}
+
+\subsection{PM-1：ParticleManagementConfig（从 pic.dict 解析 + 默认关闭）}
+\textbf{目的：} 先打通配置入口，并保证 ``不写块=完全不影响现有行为''。
+\begin{itemize}[itemsep=2pt]
+  \item 新增 \texttt{ParticleManagementConfig}，仅从 \texttt{pic.dict} 读取 \texttt{ParticleManagement} 块；
+  \item 缺省 \texttt{enabled=false}；
+  \item 解析结果仅在 \texttt{info/debug} 下打印一次。
+\end{itemize}
+\textbf{交互指令：}
+\begin{verbatim}
+执行 PM-1：新增 ParticleManagementConfig（仅解析 pic.dict/ParticleManagement 块；
+默认 enabled=false），并将解析摘要打印到日志（once）。请提供 diff+zip。
+\end{verbatim}
+
+\subsection{PM-2：引入可变宏权重 p.w，并进行 ``全链路兼容'' 验证}
+\textbf{目的：} 为 merge/split/thinning 奠定基础。要求：当所有粒子的 \texttt{p.w==macroWeight[si]} 时，结果与现状一致。
+\begin{itemize}[itemsep=2pt]
+  \item \texttt{Particle} 增加 \texttt{double w} 字段；
+  \item 初始化/注入/复制处设置 \texttt{w}（包括 SEE/MCC 产物，先与原 \texttt{macroWeight} 一致）；
+  \item 将沉积、电荷量统计、Nphys 统计改为 $\sum w_p$ 路径（但默认完全等价）。
+\end{itemize}
+\textbf{交互指令：}
+\begin{verbatim}
+执行 PM-2：在 Particle 中增加宏权重字段 p.w，并将现有 macroWeight[si] 的使用逐步
+替换为 sum(p.w) 的等价路径（确保默认 w 全相等时结果不变）；包含 SEE/MCC 产物权重
+初始化。请提供 diff+zip。
+\end{verbatim}
+
+\subsection{PM-3：MCC/SEE 产物权重与 rngState 的 ``确定性'' 处理}
+\textbf{目的：} 当后续 thinning/merge/split 改变粒子数与权重时，碰撞与 SEE 不应回退到 ``按物种常数''。
+\begin{itemize}[itemsep=2pt]
+  \item MCC：确保 spawned 粒子的 \texttt{w} 继承 projectile 的 \texttt{w}（或按反应规则缩放）；
+  \item SEE：离子撞墙的物理通量应以 $\sum w_{ion}$ 统计；发射电子的 \texttt{w} 应为 $\gamma\,w_{ion}$（或在宏粒子层面做随机/泊松采样，但期望一致）；
+  \item rngState：merge/split 生成的新粒子必须给出可复现的 \texttt{rngState}（例如 mix(parent rngState)）。
+\end{itemize}
+\textbf{交互指令：}
+\begin{verbatim}
+执行 PM-3：补齐 MCC/SEE 的权重传播（spawned 粒子继承/缩放 p.w），并为 merge/split/thinning
+所需的新粒子定义确定性的 rngState 生成规则（不依赖数组 index）。请提供 diff+zip。
+\end{verbatim}
+
+\subsection{PM-4：Spawn thinning（对 mccSpawnPending 与 seeSpawn 的保险机制）}
+\textbf{目的：} 先解决 ``峰值内存'' 问题，同时验证权重除以 $p$ 的守恒链路。
+\begin{itemize}[itemsep=2pt]
+  \item 触发依据：commit 之前估算总粒子数（或按物种），当超过 soft/hard cap 时计算保留概率 $p$；
+  \item 对 spawn list 串行抽样；保留则执行 \texttt{w/=p}；
+  \item 输出 thinned 统计到 report。
+\end{itemize}
+\textbf{交互指令：}
+\begin{verbatim}
+执行 PM-4：实现 SpawnThinning（仅作用于 mccSpawnPending 与 seeSpawn，按 soft/hard cap
+计算保留概率 p，并对保留粒子执行 w/=p），保持 OpenMP 热路径不变；将 keep/drop 统计
+写入 particle_management_report.csv。请提供 diff+zip。
+\end{verbatim}
+
+\subsection{PM-5：CellBinner（密集单元索引分桶 + 可选刷新 inCellL）}
+\textbf{目的：} 为 per-cell merge/split 提供稳定基础。
+\begin{itemize}[itemsep=2pt]
+  \item 使用 \texttt{mesh.cells(p.inCellL).index()} 作为密集索引；
+  \item 可选：管理前刷新 \texttt{inCellL = mesh.findCellLabelFromHint(...)}，避免粒子漂移后仍位于旧单元。
+\end{itemize}
+\textbf{交互指令：}
+\begin{verbatim}
+执行 PM-5：实现 CellBinner（对 ParticleType 按密集单元索引分桶），并提供可选的
+inCellL 刷新（使用 findCellLabelFromHint 优先）。请提供 diff+zip。
+\end{verbatim}
+
+\subsection{PM-6：实现 per-cell Merge（动量守恒成对合并）}
+\textbf{目的：} 将每个网格单元的宏粒子数压回上限，同时尽量不扰动分布。
+\begin{itemize}[itemsep=2pt]
+  \item 仅在同一单元内合并；
+  \item 速度相近阈值使用 \texttt{maxDeltaE\_eV}（内部可换算到 code units）；
+  \item 删除使用 swap-pop 或复用现有压缩风格；
+  \item 报告：mergedPairs、$\Delta\sum w$（应为 0）、$\Delta\sum w\mathbf{v}$ 代理量。
+\end{itemize}
+\textbf{交互指令：}
+\begin{verbatim}
+执行 PM-6：实现 ParticleManager::MergePairwiseMomentum（按单元分桶；支持
+maxDeltaE_eV/maxPairsPerCell/perCellMax），并将 mergedPairs 与动量/能量代理量写入
+particle_management_report.csv。请提供 diff+zip。
+\end{verbatim}
+
+\subsection{PM-7：实现 per-cell Split（二维四边形克隆 + EB 安全）}
+\textbf{目的：} 避免粒子过稀导致噪声过大，同时配合 merge 维持合理采样。
+\begin{itemize}[itemsep=2pt]
+  \item 触发条件：\texttt{perCellMin} 或 \texttt{wMax}；
+  \item 4 分裂：\texttt{w/=4}，位置抖动；
+  \item EB 安全：重采样/投影，带 \texttt{maxRetries}。
+\end{itemize}
+\textbf{交互指令：}
+\begin{verbatim}
+执行 PM-7：实现 ParticleManager::SplitQuad2D（按单元；支持 perCellMin/wMax/jitterFrac；
+包含 EB 安全重采样或投影），并写 splitCount 统计到 report。请提供 diff+zip。
+\end{verbatim}
+
+\subsection{PM-8：集成到 ExplicitPIC 时间步 + 回归/验收脚本}
+\textbf{目的：} 将所有部件连接成 ``默认关闭、可开关、可诊断'' 的完整链路。
+\begin{itemize}[itemsep=2pt]
+  \item 在推荐切入点插入：thinning（spawn）$\to$ commit spawn $\to$ manager apply（merge/split）；
+  \item 为避免破坏旧脚本：新增 \texttt{output/particle\_management\_report.csv}，并在 \texttt{Output} 块中可控；
+  \item 增加最小验收脚本：检查总粒子数不超过 hardCap、report 中 merged/split/thinned 非零、主要宏观量（电势/电流）不出现灾难性漂移。
+\end{itemize}
+\textbf{交互指令：}
+\begin{verbatim}
+执行 PM-8：将 ParticleManager 集成进 ExplicitPICModule（spawn thinning -> commit ->
+merge/split），并新增 output/particle_management_report.csv 与最小验收脚本（检查
+hardCap 与 report 统计）。请提供 diff+zip。
+\end{verbatim}
+
+%=================================================
+\section{风险点与默认参数建议（面向首次上线）}
+%=================================================
+\begin{itemize}[itemsep=3pt]
+  \item \textbf{合并能量偏差：} 成对动量守恒合并不严格保持能量。上线默认建议：阈值 \texttt{maxDeltaE\_eV} 取小、每单元合并对数 \texttt{maxPairsPerCell} 受限。
+  \item \textbf{权重暴涨风险：} thinning 的保留概率 $p$ 太小会导致 \texttt{w} 很大，噪声反而增大。使用 \texttt{minKeepProb} 下限钳制。
+  \item \textbf{SEE 与强源项：} SEE 往往是 ``指数爆炸'' 的导火索，建议先开启 spawn thinning，即使 merge/split 暂时关闭。
+  \item \textbf{确定性/回归：} 先保证 ``enabled=false'' 时比特级行为不变；\emph{enabled=true} 时允许物理量变化，但需设定可接受误差阈值并进行对照实验。
+\end{itemize}
+
+%=================================================
+\section{结论}
+%=================================================
+本文提供相对于 v2 方案的关键调整：\textbf{(i) 仅在 pic.dict 中增加配置块，不新增字典文件；(ii) 引入粒子可变宏权重 p.w 并贯穿 MCC/SEE/沉积链路；(iii) 粒子管理默认串行，避免破坏现有 OpenMP 并行热路径；(iv) 先实施 spawn thinning 作为保险机制，再实施 per-cell merge/split。}
+按 PM-0\textasciitilde PM-8 的顺序推进，可以在不牺牲现有并行结构的前提下，将 PIC\_MCC 的宏粒子数量稳定控制在可用范围内，并保留可诊断、可回归的工程闭环。
+
+\end{document}

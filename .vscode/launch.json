@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "LAMP: debug prepared run",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/relwithdebinfo/LAMP.exe",
+      "args": ["--case", "${input:runDirectory}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ],
+  "inputs": [
+    { "id": "runDirectory", "type": "promptString", "description": "Paste Run directory from LAMP: prepare debug case (must be a fresh runs/ snapshot)" }
+  ]
+}

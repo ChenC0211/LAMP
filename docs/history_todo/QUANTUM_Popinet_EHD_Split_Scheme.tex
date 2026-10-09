@@ -1,0 +1,607 @@
+% !TEX program = xelatex
+\documentclass[UTF8,a4paper,11pt,fontset=fandol]{ctexart}
+\usepackage[margin=23mm,headheight=15pt]{geometry}
+\usepackage{amsmath,amssymb,bm,booktabs,longtable,tabularx,array}
+\usepackage{xcolor,fancyhdr,enumitem,needspace}
+\usepackage[unicode,colorlinks=true,linkcolor=blue!45!black,urlcolor=blue!45!black,citecolor=blue!45!black]{hyperref}
+\usepackage{xurl}
+\definecolor{ink}{RGB}{25,55,78}
+\ctexset{section={format=\Large\bfseries\color{ink}},subsection={format=\large\bfseries\color{ink}}}
+\setlength{\parskip}{3pt}\setlength{\emergencystretch}{3em}
+\setlist{nosep,leftmargin=2em}\renewcommand{\arraystretch}{1.22}
+\pagestyle{fancy}\fancyhf{}\fancyhead[L]{\small QUANTUM：两相 EHD 分裂推进设计}
+\fancyhead[R]{\small 2026-09-13}\fancyfoot[C]{\thepage}
+\numberwithin{equation}{section}
+\newcommand{\dt}{\Delta t}\newcommand{\dd}{\,\mathrm d}
+\newcommand{\uu}{\bm u}\newcommand{\UU}{\bm U}\newcommand{\FF}{\bm F}
+\newcommand{\QQ}{\bm Q}\newcommand{\pp}{\bm p}\newcommand{\EE}{\bm E}
+\newcommand{\nn}{\bm n}\newcommand{\bb}{\bm b}\newcommand{\acc}{\bm a}
+\newcommand{\mat}[1]{\mathsf{#1}}\newcommand{\code}[1]{\nolinkurl{#1}}
+\newcommand{\jump}[1]{\left[#1\right]}
+\begin{document}
+\begin{titlepage}
+\vspace*{15mm}
+{\Huge\bfseries\color{ink} 两相电流体的\par 分裂时间推进方案\par}
+\vspace{8mm}{\LARGE 基于 Popinet（2009）时间交错与平衡力思想\par}
+\vspace{5mm}{\Large QUANTUM 原生面速度、矩形四叉树与 RZ 适配\par}
+\vspace{10mm}\noindent\rule{\textwidth}{.7pt}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+交付性质 & 数值设计及实施后验证规范；不是已实现功能或已通过的算例报告。\\
+最终系统 & 接受分裂预测、总压力投影得到的速度；不再以完整动量--压力联立修正替换该结果。\\
+多物理安排 & 整数层速度；半整数层界面、材料、电荷、电场、Maxwell 力和总压力。\\
+空间基础 & 复用当前面自由度、完整黏性应力、变系数压力算子、Level Set/Hermite 几何及 P3 电场。\\
+新增重点 & BCG 型半步对流、净受力预测补偿、材料电荷的两阶段隐式推进、统一候选提交。\\
+证据截止 & 2026 年 9 月 13 日的本地源码及用户提供的 Popinet 正式发表版。\\
+\end{tabularx}
+\vspace{8mm}\noindent\textbf{设计结论}\par
+建议在现有 Hydro 和 Electricity 求解器内部扩展时间推进接口，由命名 App 管理交错时层。毛细力和 Maxwell 界面力在投影前作为同一面加速度施加；压力求解使用同一面质量与梯度。电荷采用材料面元积分量，导电与电势在每个 SDIRK 阶段内自洽求解。本文给出完整分步方程、守恒关系、启动方式、边界与粗细网格要求，以及逐级验证矩阵。
+
+\textbf{准确性边界：}这是一套继承论文分裂结构、适配当前空间离散的方案。它不等于把论文的 VOF、height function 和同位网格全部移植。本文推导的净受力预测补偿、电荷 SDIRK 和 EHD 验证均是本项目设计；二阶结论具有光滑性和边界相容条件，必须由完整耦合收敛试验确认。
+\vfill\small 本次未修改生产算法，未创建新的可运行输入，也未把规划中的选项写成现行 schema。文档、编译与核查文件全部位于 D: 项目目录。
+\end{titlepage}
+\setcounter{tocdepth}{1}\tableofcontents
+\clearpage
+\section{选择、范围与原文对应关系}
+\subsection{采用什么，如何称呼}
+Popinet 的式 (3)--(7) 将速度置于整数时间层，界面体积分数、物性和压力置于半整数层；对流采用 BCG 二阶非分裂迎风估计，黏性采用 CN。其第 4 节式 (17) 明确将毛细加速度施加到投影前的辅助面速度，并与压力共用梯度离散\cite{popinet}。这些安排构成本方案的依据。
+
+论文第 2.2 节实际采用单元同位主变量和辅助面速度，最终单元速度只是近似无散。QUANTUM 当前的主速度已经是面法向自由度，直接在该自由度上投影即可，无须另建同位流体求解器。本文称为\textbf{“Popinet 思路的 QUANTUM 面速度 EHD 适配方案”}，不称为原文算法的逐项复现。
+
+本文选定的最终推进保留分裂误差，不调用现行末尾完整鞍点系统修正。允许对\emph{同一个压力 Poisson 方程}做线性残差细化；这不等于重新做 NS 耦合迭代。电荷阶段内的电势--电荷求解也不构成 NS 时间步的外部反复迭代。
+
+\subsection{为什么还需要一个预测补偿}
+此前可行性笔记给出的“无力 CN 预测，然后加力投影”表达说明了静态平衡机制，但没有证明一般动态下的整体二阶。第\ref{sec:split}节给出一个受迫黏性模态反例和改进推导。本文据此选定\textbf{用上一半时层净加速度补偿黏性预测}：保持最终总压力投影与平衡力结构，同时降低直接移植产生的时间缺陷。这是适配设计，不冒充 Popinet 原文中的同一条离散公式。
+
+\subsection{当前可复用与实际改动边界}
+\begin{longtable}{@{}p{.22\textwidth}p{.36\textwidth}p{.35\textwidth}@{}}
+\toprule 部分 & 已有基础 & 本方案所需变化\\\midrule\endhead
+动量与黏性 & 原生/贴合面自由度；CN 完整应力及径向度量 & 改 RHS 和物性时间层；保留 $u,v$ 交叉耦合矩阵。\\
+压力投影 & 面质量、散度、粗细界面梯度、SuperLU & 总压力语义；取消分裂后的完整鞍点修正；建立分裂残差。\\
+界面 & Level Set、Hermite 片段和相体积账本 & 用整数层速度推进两个半层；阶段快照和材料映射。\\
+对流 & 原有对偶控制体、面通量、迎风选择 & 当前 AB2/供体组合不是 BCG；补充非分裂半步重构及变密度自由流一致性。\\
+电场与 Maxwell & sharp Hermite P3、相侧电场及载荷映射 & 阶段电荷源绑定；同一半层电场计算完整牵引。\\
+电荷 & 积分电荷、守恒重映射、实际导电电流回调 & 现有历史公式为 BE/BDF2 型，不是本文 SDIRK；扩展所属模块的阶段内核。\\
+App 时钟 & 唯一时间循环与候选电学状态 & 调整“NS 后更新几何/力”的顺序，统一候选、输出及重启时层。\\
+\bottomrule
+\end{longtable}
+
+\section{连续模型、相侧约定与量纲}
+取负相为液体，正相为外部流体，$\nn$ 从负相指向正相，$[a]=a_+-a_-$。定义正相指示函数 $H$，故 $\nabla H=\nn\delta_\Gamma$；定义有符号曲率
+\begin{equation}
+ \kappa=-\nabla_s\cdot\nn.
+\end{equation}
+于是圆形液滴 $\kappa=-1/R$，RZ 球滴 $\kappa=-2/R$。实现时必须通过静滴符号试验将现有几何法向/曲率转换到此约定，不得只凭变量名改符号。
+
+在等温、不可压、常数表面张力、线性各向同性介质、体相无自由电荷的漏电介质模型下：
+\begin{subequations}\label{eq:model}
+\begin{align}
+ \rho(\partial_t\uu+\uu\cdot\nabla\uu)&=-\nabla p+\nabla\cdot(2\mu\bm D)+\FF_\Gamma\delta_\Gamma+\rho\bm g,\\
+ \nabla\cdot\uu&=0,\qquad \bm D=\tfrac12(\nabla\uu+\nabla\uu^T),\\
+ \partial_t\varphi+\uu\cdot\nabla\varphi&=0,\qquad \Gamma=\{\varphi=0\},\\
+ \nabla\cdot(\epsilon_\pm\nabla\Phi_\pm)&=0,\qquad \EE_\pm=-\nabla\Phi_\pm,\\
+ [\Phi]&=0,\qquad [\epsilon E_n]=q_s,\qquad[\EE_t]=0,\\
+ \bm T^E_\pm&=\epsilon_\pm(\EE_\pm\EE_\pm-\tfrac12|\EE_\pm|^2\bm I),\\
+ \FF_\Gamma&=\sigma\kappa\nn+[\bm T^E]\nn .
+\end{align}
+\end{subequations}
+$\varphi$ 为水平集，$\Phi$ 为电势，$q_s$ 为表面电荷密度，$K$ 为电导率，$\epsilon$ 为绝对介电常数，$\sigma$ 为表面张力。SI 单位分别是 $\mathrm{m,V,C/m^2,S/m,F/m,N/m}$（水平集按距离定义时）。电势 $\Phi$ 与压力投影变量不混用。
+
+对随流体运动的界面材料片 $\mathcal P_i(t)$，最自然的电荷方程是
+\begin{equation}\label{eq:Q}
+ Q_i=\int_{\mathcal P_i(t)}q_s\dd A,\qquad
+ \frac{\dd Q_i}{\dd t}=I_i,
+ \quad I_i=\int_{\mathcal P_i(t)}(K_-\EE_- -K_+\EE_+)\cdot\nn\dd A.
+\end{equation}
+局部等价式为 $D_t^\Gamma q_s+q_s\nabla_s\cdot\uu=K_-E_{n,-}-K_+E_{n,+}$，其中这里右端记作 $K_-E_{n,-}-K_+E_{n,+}$，避免不同跳跃约定混淆。实际统一使用式\eqref{eq:Q}。材料面积变化已包含在 $Q_i/q_s$ 的关系中，不能再额外加一次“面积膨胀源”。若采用非材料面元，则另加相对切向通量 $(\uu-\uu_{\rm mesh})_tq_s$；两种运输不能重复执行。
+
+RZ 的材料面积是 $\dd A=2\pi r\dd s$。当前积分电荷重映射、相侧电流映射及极点规则均应保留。体电荷输运、离子蒸发源、表面扩散、非恒定 $\sigma$ 和三维非轴对称失稳不在本方案的基本模型内；需要这些项时应另列方程及验收，不能从 Maxwell 张量中自动得到。
+
+\subsection{Maxwell 法向与切向载荷不能混为一个压力}
+由切向电场连续，可得
+\begin{align}
+ \tau_n^E&=\nn\cdot[\bm T^E]\nn
+ =\tfrac12\left(\frac{D_{n,+}^2}{\epsilon_+}-\frac{D_{n,-}^2}{\epsilon_-}
+ -(\epsilon_+-\epsilon_-) |\EE_t|^2\right),\label{eq:tn}\\
+ \bm\tau_t^E&=(\bm I-\nn\nn)[\bm T^E]\nn=q_s\EE_t.\label{eq:tt}
+\end{align}
+一般 $q_s\EE_t\ne0$，该力会驱动真实流动，不能全部吸收入压力。静态、黏性应力为零且切向牵引为零时，法向平衡为
+\begin{equation}\label{eq:jump}
+ [p]=\sigma\kappa+\tau_n^E.
+\end{equation}
+因此界面压力跳跃及其分布意义的导数是物理解；不能用“跨界面压力处处光滑”作为合格条件。
+
+\section{当前网格上的离散算子契约}
+\subsection{几何、度量和自由度}
+压力 $\pp$ 位于有效单元，$\UU=(\bm u_r,\bm u_z)^T$（XY 时为 $u_x,u_y$）位于原生面。允许矩形基网格、2:1 分级四叉树、贴合边界及压力口半对偶体积。RZ 几何必须使用
+\begin{equation}
+ V_c=\pi(r_+^2-r_-^2)\Delta z,\quad
+ A_r=2\pi r_f\Delta z,\quad A_z=\pi(r_+^2-r_-^2).
+\end{equation}
+面动量的对偶体积 $V_f$ 由实际域装配提供，不用 $\Delta r\Delta z$ 代替。轴线 $u_r=0$，标量采用轴对称正则条件；保留黏性应力中的 $u_r/r$ 和相关几何项。
+
+定义冻结于 $t^{n+1/2}$ 的算子：
+\begin{align}
+ (\mat B\UU)_c&=\sum_{f\in\partial c}s_{cf}A_fU_f,\qquad
+ (\mat C\pp)_f=V_f(G_hp)_f,\\
+ \mat M&=\operatorname{diag}(\rho_fV_f),\qquad
+ \mat W=\dt\mat M^{-1},\qquad
+ \mat L\UU\simeq\int_{V_f}\nabla\cdot(2\mu\bm D)\dd V.\label{eq:ops}
+\end{align}
+$\mat B$ 返回净体积流量，$\mat C\pp$、$\mat L\UU$、$\FF$ 为积分力，$\mat W\FF$ 为速度增量。非齐次边界项单独提取，以下内区公式默认已完成该提取。
+
+在当前均匀特例可利用 $\mat C=-\mat B^T$ 的装配关系；在原生粗细接口上 $\mat C$ 有实际梯度模板，\textbf{不假定仍与 $\mat B$ 严格互为负转置}。因此不以“正交投影”或对称正定为未经检查的前提。Poisson 装配、速度校正、毛细力和静态 Maxwell 法向力必须调用同一梯度入口，并继续使用 SuperLU。
+
+\subsection{相容受力与真实几何精度分开检查}
+复用现有同一 Hermite 快照产生的 $H_h$、法向、曲率与载荷几何。法向毛细积分力为
+\begin{equation}
+ (\FF_\sigma)_f=\sigma\kappa_f(\mat C\bm H)_f.\label{eq:cap}
+\end{equation}
+对一般 Maxwell 牵引，复用已有法向/切向几何映射，可抽象写为
+\begin{equation}
+ \FF_E=\mathcal S_n(\tau_n^E;\Gamma_h)+\mathcal S_t(\bm\tau_t^E;\Gamma_h).
+\end{equation}
+\emph{必须具体验证的接口契约}是：对常数法向牵引 $a$，$\mathcal S_n(a)=a\mat C\bm H$；切向映射保留方向和积分力。不能仅因两个函数都使用 Hermite 就认定此恒等式已成立。若当前 Maxwell 路径不满足，应在现有载荷映射内修复，不另建一套体力扩散算法。
+
+曲率沿界面变化时 $\kappa_f\mat C H$ 通常不是任何标量的纯梯度，寄生流可能仍由曲率误差驱动。本文保留当前几何重构，不许以任意平滑压力或调大界面厚度掩盖该误差。现有界面带宽等参数原样记录，空间收敛时采用明确的随网格缩放规则。
+
+\section{主时间层与候选状态}
+正常步采用固定 $\dt$。已接受状态为
+\begin{equation}
+ \mathcal X^n=\{\UU^n;\Gamma^{n-1/2},\QQ^{n-1/2},\Phi^{n-1/2},
+ \rho^{n-1/2},\mu^{n-1/2},\pp^{n-1/2},\acc_b^{n-1/2}\}.
+\end{equation}
+其中净受力加速度 $\acc_b$ 定义于第\ref{sec:split}节，包含界面力、其他体力与压力，不包含黏性和对流。每步的依赖关系是
+\begin{equation}
+ \UU^n\ \longrightarrow\ (\Gamma,\QQ)^{n+1/2}
+ \ \longrightarrow\ (\rho,\mu,\Phi,\FF)^{n+1/2}
+ \ \longrightarrow\ (\UU^{n+1},\pp^{n+1/2}).\label{eq:clock}
+\end{equation}
+两个半层之间相差\textbf{完整 $\dt$}。不把已接受整数时刻的电学场直接重新标成半层。
+
+\noindent\begin{tabularx}{\textwidth}{@{}lXXX@{}}
+\toprule 阶段 & 几何/电荷 & 电场与力 & 速度/压力\\\midrule
+进入时间步 & 已接受 $n-1/2$ & 已接受 $n-1/2$ & $U^n,p^{n-1/2}$\\
+材料阶段 1 & $n-1/2+\gamma$ & 阶段 1 自洽电场 & 输运使用冻结 $U^n$\\
+材料阶段 2 & $n+1/2$ & 阶段 2 自洽电场与载荷 & 构造半步对流\\
+动量预测 & 冻结 $n+1/2$ & 冻结 $n+1/2$ & 解 $U^\dagger$\\
+总压力投影 & 同一候选几何 & 同一候选载荷 & 解 $p^{n+1/2},U^{n+1}$\\
+通过全部门限 & 一次提交 & 一次提交 & 保存新的净加速度\\\bottomrule
+\end{tabularx}
+
+\subsection{材料轨迹与界面输运}
+在 $[t^{n-1/2},t^{n+1/2}]$ 内，将 $U^n$ 作为时间中点速度。用现有一致速度采样器与二阶空间轨迹积分构造映射 $X(c)$，例如冻结场的显式中点轨迹：
+\begin{equation}
+ X(c)=X_0+c\dt\,\uu^n\!\left(X_0+\tfrac12c\dt\,\uu^n(X_0)\right),\quad0\le c\le1.
+\end{equation}
+端点轨迹对光滑时变速度达到所需二阶；内部阶段以同一冻结速度形成非自治电荷问题的几何。Level Set 推进与材料映射必须对应同一候选几何，不能分别积分出两条不一致的界面。相体积修正仍由权威相通量账本约束；修正导致的片段位移应进入同一材料重映射，而不能在电荷提交后再改几何。
+
+阶段几何可由同一个所有者生成只读快照，不要求全步只有一个快照对象；要求同一阶段只有一个权威几何身份、唯一面元顺序和度量。不得在电荷迭代内重新改变网格或随试探电荷重建几何。
+
+\section{材料电荷与电势的两阶段隐式耦合}
+\subsection{选定 SDIRK2 及其时间推导}
+导电时间尺度 $\tau_e\sim\epsilon/K$ 可能远小于流体时间尺度。采用两阶段、二阶、L 稳定 SDIRK\cite{alexander}，令
+\begin{equation}
+ \gamma=1-1/\sqrt2,\qquad
+ \begin{array}{c|cc}\gamma&\gamma&0\\1&1-\gamma&\gamma\\\hline&1-\gamma&\gamma\end{array}.
+\end{equation}
+每个材料控制片的电荷量在一步内使用\emph{固定材料标签}，阶段面积随几何变。$\mathcal I_c(\QQ)$ 表示在 $\Gamma(c)$ 上解真实电场后回到这些材料标签的积分导电电流。令 $\QQ_0=\QQ^{n-1/2}$：
+\begin{subequations}\label{eq:sdirk}
+\begin{align}
+ \QQ_1&=\QQ_0+\gamma\dt\,\mathcal I_\gamma(\QQ_1),\\
+ \QQ_2&=\QQ_0+(1-\gamma)\dt\,\mathcal I_\gamma(\QQ_1)
+                   +\gamma\dt\,\mathcal I_1(\QQ_2),\\
+ \QQ^{n+1/2}&=\QQ_2.
+\end{align}
+\end{subequations}
+这里尚未写端点重分片的符号，实际按下一小节进行。阶条件 $\sum b_i=1$、$\sum b_ic_i=2\gamma-\gamma^2=1/2$ 给出二阶。对 $\dot y=\lambda y$，
+\begin{equation}
+ R(z)=\frac{1+(1-2\gamma)z}{(1-\gamma z)^2},\quad z=\lambda\dt,
+ \quad R(z)=1+z+z^2/2+O(z^3),\quad R(-\infty)=0.
+\end{equation}
+这抑制 CN 对刚性衰减可能保留的高频振荡。L 稳定不等于逐阶段电荷单调，也不等于未解析充电过程的 Maxwell 力仍然准确；大 $\dt/\tau_e$ 必须区分稳定性测试与精度测试。
+
+\subsection{移动面元的阶段重映射：守恒优先，阶数要测}
+现有电荷对象以原生 Hermite 面元为载体，面元数可随运动改变。因此不能直接相加不同几何/顺序的 $Q$ 数组。建议在一次材料推进内固定旧材料片的标签与边界，阶段时将其像与权威 Hermite 片段求交。定义 $\mat T_c$ 将材料积分电荷分配到阶段电学面元，$\mat G_c$ 将阶段积分电流归集到材料片，要求
+\begin{equation}
+ \bm1^T\mat T_c=\bm1^T,\qquad \bm1^T\mat G_c=\bm1^T.
+\end{equation}
+二者分别由相同交叠几何的积分规则定义，\textbf{不假定 $\mat G_c=\mat T_c^{-1}$ 或转置}。为减少重复投影，电荷未知量始终存于材料标签；电学源用 $\mat T_c\QQ_i$ 构造，实际相侧积分电流用 $\mat G_c$ 归集。端点仅做一次面元重分片并提交：$\QQ_{\rm native}^{n+1/2}=\mat T_1\QQ_2$。
+
+复用现有 overlap 重映射、$2\pi r\dd s$ 度量、二次电荷重构和 $q_s$ 导数源。阶段映射适配器需要新增；现有分片常数重映射不能自动宣称二阶空间精度。若重复重映射在固定网格减小 $\dt$ 时主导误差，应在同一重映射内核内加入守恒矩重构，并以输运解析解验证；不能靠全局按比例归一化来伪造守恒。
+
+对闭合材料界面，阶段相加立即给出
+\begin{equation}\label{eq:chargeledger}
+ \bm1^T(\QQ_2-\QQ_0)=\dt\left[(1-\gamma)\bm1^T\mathcal I_\gamma(\QQ_1)
+ +\gamma\bm1^T\mathcal I_1(\QQ_2)\right].
+\end{equation}
+开口界面额外计入电荷流入/流出材料域的边界通量，并按同一阶段权重积分。不得在出入口默认令 $q_s=0$。无体电荷模型下，界面导电收支还应与相电极电流相符，无法归属的体相电流继续作为失败。
+
+\subsection{每个阶段实际解什么线性系统}
+冻结阶段几何、材料、电极时刻后，线性漏电介质的 P3 电场装配及积分电流可表示为
+\begin{equation}
+ \mat A_E\bm\Phi-\mat S_Q\QQ=\bb_E,\qquad
+ \mathcal I_c(\QQ)=\mat J_\Phi\bm\Phi+\mat J_Q\QQ+\bb_I.
+\end{equation}
+$\mat S_Q$ 含 $\mat T_c$ 和现有电荷源重构；电流若含直接的电荷源贡献，必须保留 $\mat J_Q$，不能一概省略。对阶段已知量 $\QQ_{\rm known}$，解
+\begin{equation}\label{eq:eblock}
+ \begin{bmatrix}
+ \mat A_E&-\mat S_Q\\
+ -\gamma\dt\mat J_\Phi&\mat I-\gamma\dt\mat J_Q
+ \end{bmatrix}
+ \begin{bmatrix}\bm\Phi_i\\\QQ_i\end{bmatrix}
+ =\begin{bmatrix}\bb_E\\\QQ_{\rm known}+\gamma\dt\bb_I\end{bmatrix}.
+\end{equation}
+优先复用同一 P3 装配的稀疏系数与 SuperLU 扩展块接口，不重新写 Poisson 离散。消去 $\Phi$ 得
+\begin{equation}
+ \left[\mat I-\gamma\dt(\mat J_Q+\mat J_\Phi\mat A_E^{-1}\mat S_Q)\right]\QQ_i
+ =\QQ_{\rm known}+\gamma\dt(\bb_I+\mat J_\Phi\mat A_E^{-1}\bb_E).
+\end{equation}
+此式用于推导和算子接口，不要求显式形成稠密 Schur 补，也不建议对每个面元逐一试探求解来组稠密矩阵。若使用现有电流回调的迭代式，须验证阶段方程残差及实际电场残差；固定欠松弛参数不保证任意刚性下收敛。
+
+现有 \code{relaxSurfaceCharge} 的首步 BE、后续变步长 BDF2 型系数，以及喷嘴导电 preflight 的 $\dt\max(K/\epsilon)\le0.25$，都不能直接称为 SDIRK 实现。实施时仅对\emph{明确选择且实际执行}的新隐式阶段分支设置对应的刚性/精度规则，保留显式路径原门限。最终电场必须由最终接受的 $Q_i$ 产生，不发布滞后一次迭代的场。
+
+\section{半时间层对流与变密度一致性}
+\subsection{保留几何，补充 BCG 型半步预测}
+当前原生 RHS 中的供体通量与 $-1.5N^n+0.5N^{n-1}$ 是历史组合，不能改名为 BCG。本文要求在原有对偶控制体上实现 BCG 型非分裂重构\cite{bcg}，不改变主速度布局。对动量控制体 $f$ 的边界 $e$，一个供实现的光滑区半步状态表达是
+\begin{equation}\label{eq:bcg}
+ U_{f\to e}^{n+1/2}=U_f^n+\nabla_hU_f^n\cdot(x_e-x_f)
+ +\frac{\dt}{2}\left[-\uu^n\cdot\nabla_hU_f^n
+ +\left(\mat M_-^{-1}\mat L_-\UU^n+\acc_b^{n-1/2}\right)_f\right].
+\end{equation}
+梯度在实际物理坐标上重构和限幅，包含法向及横向对流贡献。粗细接口先按原有子面通量几何拆分，再重构状态；禁止把四叉树索引距离当作物理距离。式\eqref{eq:bcg}给出 Taylor/Godunov 一致性目标，限幅、边界鬼值和横向通量校正必须作为同一 BCG 内核实现并验收，不宣称现有采样器已经具备完整 BCG。
+
+用于迎风选择的半步输运速度可经辅助面投影满足净通量约束，再按符号选取左右半步状态。该辅助投影的标量仅用于构造无散输运速度，不作为 $p^{n+1/2}$，不在最终速度上叠加两次。主速度最终仍由第\ref{sec:split}节唯一的总压力投影定义。
+
+\subsection{必须修正的密度通量歧义}
+目标形式是 $\rho\uu\cdot\nabla\uu$。若一面沿用冻结 $\rho_f\partial_tU_f$，另一面直接计算 $\sum_e \dot m_eU_e$，跨密度跳跃可能多出 $U\nabla\cdot(\rho\uu)$。定义基于同一半步相信息的对偶质量流量 $\dot m_e=\rho_e\widehat U_{n,e}A_e$，本方案的\emph{平流形式}明确写为
+\begin{equation}\label{eq:adv}
+ (\bm N^{n+1/2})_f=\sum_{e\in\partial V_f}s_{fe}\dot m_e
+ \left(\widehat U_{e}^{n+1/2}-\widehat U_f^{n+1/2}\right).
+\end{equation}
+它是保守通量减去同一离散质量散度项，常速度时严格为零，不会因密度跳跃产生伪加速度。对偶质量流量由原有相几何/相通量映射获得，粗细面保持唯一共享通量。
+
+式\eqref{eq:adv}不等于离散总动量严格守恒的 $\partial_t(\rho\uu)$ 方案。本文优先保持论文式平流时间骨架及现有几何，\textbf{不声称该适配在大密度比界面输运中自动满足精确动量守恒}。实施后必须检验平移液滴的自由流保持、相质量和总动量收敛；若不通过，应在同一动量模块中补齐与相输运一致的离散质量--动量耦合后再用于高密度比喷嘴，不能以压力投影残差小代替该验收。
+
+\section{选定的分裂 NS 方程与推导}\label{sec:split}
+\subsection{预测补偿、加力、总压力投影}
+冻结 $n+1/2$ 的 $\mat M,\mat L,\mat C$，合并半层积分载荷 $\FF=\FF_\sigma+\FF_E+\FF_g$。定义
+\begin{equation}
+ \mat A=\frac{\mat M}{\dt}-\frac12\mat L,\qquad
+ \bb_{\rm ad}=\left(\frac{\mat M}{\dt}+\frac12\mat L\right)\UU^n-\bm N^{n+1/2}.
+\end{equation}
+将上一半层的已接受净加速度相容地映射到当前面，记为
+\begin{equation}\label{eq:ahat}
+ \widehat{\acc}_b=\mathcal R_a\left\{\mat M_-^{-1}
+ (\FF^{n-1/2}-\mat C_-\pp^{n-1/2})\right\}.
+\end{equation}
+固定网格上 $\mathcal R_a$ 为恒等；几何/面身份变更时使用常量与零场保持的转移。\textbf{转移的是已相消的净加速度，而不是分别高阶外推两个大而不光滑的力梯度。}
+
+本方案接受如下结果：
+\begin{subequations}\label{eq:steps}
+\begin{align}
+ \mat A\UU^\dagger&=\bb_{\rm ad}+\tfrac12\dt\mat L\widehat{\acc}_b,
+ &&\text{完整应力的速度预测},\label{eq:predict}\\
+ \UU^*&=\UU^\dagger+\mat W\FF,
+ &&\text{同一半层的界面力与体力},\\
+ (-\mat B\mat W\mat C)\pp^{n+1/2}&=-\mat B\UU^*,
+ &&\text{总压力 Poisson 方程},\label{eq:poisson}\\
+ \UU^{n+1}&=\UU^*-\mat W\mat C\pp^{n+1/2},
+ &&\text{最终速度},\label{eq:finalu}\\
+ \acc_b^{n+1/2}&=\mat M^{-1}(\FF-\mat C\pp^{n+1/2}),
+ &&\text{保存净受力加速度}.
+\end{align}
+\end{subequations}
+不做 $p^{n+1/2}=p^{n-1/2}+\psi$ 累积，不调用末尾完整速度--压力联立修正。式\eqref{eq:predict}仍为 $u_r,u_z$ 耦合的大速度矩阵，因为完整应力有交叉导数；它不包含未知压力块。随后独立解标量压力矩阵。只有特殊常黏度、规则网格及特定离散简化时，两个速度分量才可能解耦。
+
+\subsection{离散连续性与静态平衡证明}
+由式\eqref{eq:poisson}和\eqref{eq:finalu}直接有 $\mat B\UU^{n+1}=0$，误差仅受同一算子的线性残差及边界处理影响。
+
+对已正确初始化的静态状态，若 $\UU^n=0$、$\widehat{\acc}_b=0$、$\bm N=0$ 且 $\FF=\mat C\bm\pi$，则
+\begin{equation}
+ \UU^\dagger=0,\quad \UU^*=\mat W\mat C\bm\pi,
+ \quad\pp^{n+1/2}=\bm\pi+\text{允许的基准常数},\quad\UU^{n+1}=0.
+\end{equation}
+这同时覆盖恒曲率毛细平衡和常数 Maxwell 法向牵引。若初压任意，可在启动时解相容静态/加速度压力，不能把任意错误的旧压力用于构造 $\widehat a_b$ 后仍声称首步严格平衡。
+
+\subsection{分裂缺陷与补偿的必要性}
+作为比较对象，定义未分裂的冻结 CN 系统
+\begin{equation}
+ \mat A\UU_{\rm unsplit}+\mat C\pp_{\rm unsplit}=\bb_{\rm ad}+\FF,
+ \qquad\mat B\UU_{\rm unsplit}=0.
+\end{equation}
+利用 $\mat A\mat W=\mat I-\tfrac12\mat L\mat W$，将所选分步式相加，得到精确代数恒等式
+\begin{equation}\label{eq:defect}
+ \underbrace{\mat A\UU^{n+1}+\mat C\pp^{n+1/2}-\bb_{\rm ad}-\FF}_{\bm r_{\rm unsplit}}
+ =\frac{\dt}{2}\mat L\left(\widehat{\acc}_b-\acc_b^{n+1/2}\right).
+\end{equation}
+在光滑解、固定网格、正确边界且 $\widehat a_b-a_b^{n+1/2}=O(\dt)$ 时，动量方程缺陷为 $O(\dt^2)$；结合 $\mat A^{-1}=O(\dt)$，对应的局部速度缺陷为 $O(\dt^3)$。这给出二阶时间目标的必要一致性解释，\emph{不是}对跳跃系数、移动界面、开放边界或网格转移的全局收敛定理。
+
+若省略补偿，右端变为 $-\tfrac12\dt\mat L\acc_b^{n+1/2}$，通常只有 $O(\dt)$。一个无压力的标量反例是 $\dot u=\lambda u+f$：直接 CN 无力预测再加 $\dt f$，得到
+\begin{equation}
+ u^{n+1}=\frac{1+\lambda\dt/2}{1-\lambda\dt/2}u^n+\dt f.
+\end{equation}
+精确的力响应包含 $\dt f+\lambda\dt^2f/2+\cdots$，上式漏掉第二项；本文补偿 $\dt\lambda f/2$ 进入预测 RHS 后，对常力恢复 CN 力响应。该反例说明\textbf{不能把“黏性 CN＋半层受力”直接等同于完整二阶}。
+
+在界面处 $\acc_b$ 或其黏性作用可能仍不光滑，补偿也可能受空间误差限制。应输出 $\mat L\widehat a_b$、式\eqref{eq:defect}及纯相/界面分区统计。若完整耦合时间阶降低，应报告观测阶及原因，不能继续标称二阶，或临时用完整鞍点修正“修好”后仍称为同一分裂算法。
+
+\section{启动、边界、网格适应与步长}
+\subsection{从同一时刻初值启动}
+通常输入 $\Gamma^0,Q^0,U^0$，先解同一几何的电场和 $F^0$，确保 $BU^0$ 相容。为得到 $p^0$ 与初始流体加速度，求
+\begin{equation}
+ \mat M_0\dot{\UU}^{0}+\mat C_0\pp^0
+ =\mat L_0\UU^0-\bm N^0+\FF^0,\qquad
+ \mat B_0\dot{\UU}^{0}=\dot{\bm g}_B^0.
+\end{equation}
+可通过质量投影消去 $\dot U^0$；这是初始化加速度问题，不是每步末尾的完整 NS 修正。固定静壁时 $\dot g_B=0$。保存 $a_b^0=M_0^{-1}(F^0-C_0p^0)$。
+
+用 $u^{1/4}\simeq u^0+\dt\dot u^0/4$ 和长度 $\dt/2$ 推进初始材料界面与 SDIRK 电荷到 $t^{1/2}$，然后做 $U^0\to U^1$ 的第一个正常动量步。第一个预测补偿采用 $a_b^0$，其对 $a_b^{1/2}$ 的一阶估计足以满足上一节的一致性阶要求。不能虚构 $t^{-1/2}$ 的电荷历史。
+
+\subsection{非齐次边界必须进入分裂式}
+对规定通量 $\mat B U^{n+1}=g_B$，压力方程右端改为 $g_B-\mat B U^*$。在不被消元的法向壁面，速度校正要求
+\begin{equation}
+ \partial_np^{n+1/2}=\frac{\rho_f}{\dt}(U_n^*-g_n^{n+1}).
+\end{equation}
+压力口给\emph{总压力}的 Dirichlet 值 $p_b(t^{n+1/2})$，采用现有半对偶载荷和边界模板。黏性预测、BCG 鬼值、补偿项的 $L$ 作用与最终边界必须相容；不能把最终无滑移值无条件当作所有中间状态的同一边界值。纯 Neumann 压力固定一个基准，并先验证净边界通量可解性。
+
+电极电势在各个电荷阶段的真实时刻取值，不能冻结在旧整步。接触线继续采用原有运动约束；界面载荷带触及尚不支持的压力口几何时，保留原失败行为。封闭液滴的验收并不能替代压力口/接触线验收。
+
+\subsection{先固定分级网格，再验证运行中 AMR}
+第一阶段使用固定的矩形、2:1 分级网格，包括界面穿过粗细接口。完成这些验证后，才启用运行中自适应：仅在完整候选通过并提交后改变网格，整个 SDIRK--NS 步内固定网格拓扑。
+
+重网格时将 $U^{n+1}$、半层几何、电荷和 $a_b^{n+1/2}$ 各按自身时刻转移到同一新网格；$Q$ 和相体积守恒，$U$ 转移后做散度修复。转移投影的标量是数值辅助量，不加到物理压力。所有依赖几何/系数的电场、梯度与因子分解缓存重新核验，必要时重装配。监控转移引入的动能、压力与电荷误差，并做“相同 AMR 日程”时间收敛试验。
+
+\subsection{稳定性与精度步长分开}
+基准验证先用固定宏步长，满足对流 CFL、界面移动和显式受力约束。论文等物性毛细约束为 $\dt\le\sqrt{\rho h^3/(\pi\sigma)}$；当前非等距/变物性网格采用保守的初始设计上限
+\begin{equation}
+ \dt\le\min\left\{C_u\min_c\left(\frac{|u_r|}{\Delta r_c}+\frac{|u_z|}{\Delta z_c}\right)^{-1},
+ C_\sigma\sqrt{\frac{\rho_{\min}h_{\min}^3}{\pi\sigma}},
+ C_E\sqrt{\frac{\rho_{\min}h_{\min}^2}{T_E}}\right\},
+\end{equation}
+其中 $h_{\min}=\min(\Delta r,\Delta z)$，$T_E=\max_\Gamma(\epsilon_-|E_-|^2+\epsilon_+|E_+|^2)$。最后一项是基于电应力的\emph{设计量级限制，不是通用稳定性定理}；取 $C_u=0.4,C_\sigma=0.5,C_E=0.25$ 作为待验证起点，禁止凭这些常数宣称所有电失稳问题稳定。
+
+CN 黏性和 SDIRK 导电不解除显式对流、毛细和电力耦合限制。电荷误差可用同一固定流体步内的 SDIRK 子步估计/控制，电学子步使用同一材料轨迹，最终仍提供 $n+1/2$ 的电场；强瞬态下还必须缩小宏步来解析速度受力。
+
+非等步长会改变相邻半层间距与速度中点位置，不能直接用新 $\dt$ 覆盖旧值。第一版明确限定固定宏步；若触发步长不足则失败并从同步检查点重新初始化较小固定步，而不在半层交错状态上悄悄改变时间轴。变步长作为后续独立设计与验收项。
+
+\clearpage
+\section{接受条件、压力诊断与输出}
+\subsection{分裂系统应检查自己的方程}
+至少分别记录
+\begin{align}
+ r_A&=\mat A U^\dagger-\bb_{\rm ad}-\tfrac12\dt\mat L\widehat a_b,\\
+ r_P&=(-\mat B\mat W\mat C)p-(g_B-\mat BU^*),\\
+ r_B&=\mat BU^{n+1}-g_B,\\
+ r_S&=r_{\rm unsplit}-\tfrac12\dt\mat L(\widehat a_b-a_b^{n+1/2}).
+\end{align}
+线性求解残差采用各自矩阵、未知量及 RHS 的相对尺度，并保留绝对值。连续性同时报告 $\max_c|r_{B,c}|/V_c$ 与每步相对体积变化 $\max_c\dt|r_{B,c}|/V_c$。电场 Gauss 收支、各 SDIRK 阶段方程、式\eqref{eq:chargeledger}、相体积及边界电流分别设门限。
+
+现有未分裂动量残差仍输出作对照，但\textbf{不得以其不为机器零判定分裂失败，也不得通过放宽原数值将其伪装为原方程通过}。新方法建立有名称的分裂接受条件，原方法保留原门限、失败和基线。纯数值基准的建议目标是相对线性残差 $10^{-12}$、局部连续性/电荷收支 $10^{-10}$；均为\emph{待实施的设计目标}，现有更严格门限不自动降级。近零问题同时用固定物理尺度，不能除以接近零的解而产生虚假失效。
+
+\subsection{如何检查压力与其导数}
+输出原生 $p$、求解器实际使用的 $G_hp$、$M^{-1}(F-Cp)$，另输出 $\kappa,q_s,E_{n,\pm},E_t,\tau_n^E,\tau_t^E$。后处理自行中心差分的梯度只能作为辅助，不能替代实际算子。
+
+在两相中分别统计纯相 $\nabla p$ 和 $\nabla\nabla p$；排除界面带、壁面与粗细接口的宽度用当地网格尺寸定义并完整记录。界面附近测量\emph{压力跳跃误差、净受力、曲率波动和寄生速度}；粗细接口再单列一组统计。绘制穿过界面的法向剖面与沿界面的参数曲线，不以跨跳跃差分的尖峰直接断言不稳定。
+
+静滴应考察 $p_h-(\sigma\kappa_0+\tau_{n,0}^E)H_h$ 的纯相及界面带误差；动态时 $q_sE_t$ 驱动的真实流动不能称作寄生流。补偿所用的净加速度若出现网格尺度振荡，要对照曲率、相侧电场和 $r_S$ 判断来源，不做没有误差依据的压力滤波。
+
+\subsection{候选提交与能量收支}
+几何、电荷、电场、速度、总压力、历史净加速度及账本均为候选；所有阶段通过后一次提交。现有 Hydro 若原地覆盖状态，需增加候选缓存或等价事务接口。失败不覆盖上一步，也不留下“已接受”帧标志。
+
+输出明确写 $t_u$ 与 $t_{\Gamma,Q,E,p}$；需要同一时刻展示时，另生成标明插值方法的可视化场，不能冒充原生解。重启保存两个时间层、固定 $\dt$、面元身份、净加速度及网格版本。数值输出按 \code{output/fields}、\code{output/series}、\code{output/meta}。
+
+监控动能、界面能 $\sigma|\Gamma|$、场能 $\frac12\int\epsilon E^2\dd V$，以及黏性耗散、Ohmic 耗散、电极供能和机械边界功。定电势电极下场能本身并不必然递减。本文没有证明离散 EHD 无条件能量稳定；能量余额应随加密收敛，不能要求每一步总场能单调来误判外部供能问题。
+
+\section{实施后的验证算例：先代数，再物理}
+\subsection{统一试验纪律}
+以下均为\textbf{待实施的算例设计}，没有把计划值当作本次计算结果。每个算例先跑均匀方格，再跑矩形网格（纵横比 2）和固定 2:1 粗细接口；适用时增加 RZ。界面中心取网格对齐与偏移 $0.37h,0.21h$ 两组。时间阶用固定细网格 $\dt,\dt/2,\dt/4,\dt/8$，空间阶用足够小且一致受控的时间误差；界面到边界的距离、终止时刻和误差范数不得随网格悄悄改变。
+
+观测阶 $p=\log_2(e_h/e_{h/2})$，无解析解时以独立更细解做 Richardson 比较。光滑时间试验目标最后两组 $p_t\ge1.8$；含非光滑界面的试验报告实测阶，不强行拟合二阶。默认保留原格式对照；新格式的补偿项可在\emph{专用验证驱动}中关闭以检验反例，不作为未经校验的生产开关。
+
+\subsection{V0：分裂代数与受迫黏性模态}
+取周期盒上的无散剪切模态 $u_x=U(t)\sin(ky),u_y=0$，常 $\rho,\mu$，体力同模态，得到 $\dot U=-\nu k^2U+f_0$。用该 ODE 的精确解
+\begin{equation}
+ U(t)=U(0)e^{-\nu k^2t}+\frac{f_0}{\nu k^2}(1-e^{-\nu k^2t})
+\end{equation}
+验证补偿后的时间二阶、无补偿时的降阶及分裂缺陷恒等式。空间模态误差用离散 $L$ 的本征值或独立空间加密剔除，不能让空间误差掩盖时间阶。另制造 $F=C\pi$ 的随机平滑标量及阶跃 $\pi$，测试任意正密度分布下的静态相消。目标：静态无量纲速度 $\le10^{-12}$ 或经条件数解释的求解误差尺度，$r_S$ 与线性残差相当。此项只验证算子代数，不证明真实曲率准确。
+
+\subsection{V1：真实曲率静滴与低黏度寄生流}
+对应 Popinet 第 6.1--6.2 节。XY 圆滴和 RZ 球滴，$D=1$，盒宽至少 $4D$；初始速度零，压力由启动相容解产生。选 $\rho_-=1,\sigma=1$，$\mathrm{La}=\sigma D/(\rho_-\nu_-^2)=120,1200,12000$，$\mu_-=\sqrt{\rho_-\sigma D/\mathrm{La}}$；先等物性，再取密度比 $100,850$，高比值组动力黏度比 $55.72$。这些组合是本文扩展矩阵，并非全部逐项照抄原文。
+
+分辨率 $D/h=8,16,32,64$。无电场时 $p_--p_+=\sigma/R$（XY）或 $2\sigma/R$（RZ）。定义
+\begin{equation}
+ U_\sigma=\sqrt{\sigma/(\rho_-D)},\quad T_\sigma=D/U_\sigma,
+ \quad T_\nu=D^2/\nu_-,\quad \mathrm{Ca}_{\rm spur}=\mu_-U_{\max}/\sigma.
+\end{equation}
+记录 $U_{\max},U_{\rm RMS},\mathrm{Ca}_{\rm spur}$、压力跳跃、曲率均值/方差及纯相压力梯度。长时试验至少达到 $2T_\nu$，比较最后 $0.5T_\nu$ 平台；高 La 不能只跑几个毛细步就声称达到静态平衡。若计算成本无法覆盖，应标为“短时阶段未完成长时验收”。
+
+设计验收：最细网格压力跳跃误差 $<1\%$，$U_{\max}/U_\sigma<10^{-4}$ 且加密无系统恶化；该门是项目目标，不是论文保证。恒曲率制造力可达舍入误差，而真实 Hermite 曲率未必能达到论文 height-function 的寄生流水平，必须分别报告。
+
+\subsection{V2：平移液滴与材料电荷输运}
+对应论文第 6.2 节平移试验思路。周期 XY 盒内平移圆滴，$\mathrm{We}=\rho_-DU_0^2/\sigma=0.4$，密度比 $1,100,850$，其余沿用 V1。保持原生压力/毛细平衡，检查随动坐标系内 $\|u-U_0\|$、质心误差、相体积和总动量，至少平移一个盒长。关闭物理界面力另做常速度保持试验，以单独检验式\eqref{eq:adv}，目标为线性/舍入误差尺度，而非 $O(h)$ 的伪速度。
+
+电荷运输另设 $K_\pm=0$、不回馈电力的模块验证。在三维轴对称体积保持映射
+\begin{equation}
+ \mat F(t)=\operatorname{diag}(e^{\beta(t)},e^{\beta(t)},e^{-2\beta(t)}),\quad
+ \beta(t)=0.2\sin(2\pi t/T),
+\end{equation}
+下，球变为旋转椭球且周期返回。给定对应无散速度 $u_r=\dot\beta r,u_z=-2\dot\beta z$，解析表面雅可比和电荷为
+\begin{equation}
+ J_s=|\mat F^{-T}n_0|,\qquad q_s(X(t),t)=q_s(X_0,0)/J_s.
+\end{equation}
+检查极点、面元跨网格/重分片和总电荷；这是一项规定速度的运输验证，不声称该规定流动是无外力 NS 解。目标总电荷相对误差 $\le10^{-10}$，分布误差收敛；以此识别重映射是否降低时间/空间阶。
+
+\subsection{V3：小振幅黏性毛细波}
+直接对应论文第 6.3 节：域 $[-\lambda/2,\lambda/2]\times[-3\lambda/2,3\lambda/2]$，横向周期，初始 $\eta(x,0)=0.01\lambda\cos(2\pi x/\lambda)$，流体静止。外侧水平边界采用静止远场近似，并把上下距离再加倍确认边界误差。等密度、等动力黏度，$\mathrm{La}=\rho\sigma\lambda/\mu^2=3000$，分辨率每波长 $8,16,32,64,128$ 点。
+
+用 Prosperetti 的小振幅黏性初值解作独立参考\cite{prosperetti}，不能用单一指数阻尼余弦替代其涡量扩散历史项。无黏频率只用作时间尺度：
+\begin{equation}
+ k=2\pi/\lambda,\qquad\omega_0^2=\sigma k^3/(2\rho),\qquad
+ e_\eta=\frac1\lambda\sqrt{\frac{\omega_0}{25}\int_0^{25/\omega_0}
+ (h(t)-h_{\rm exact}(t))^2\dd t}.
+\end{equation}
+在实现前应冻结独立参考生成器、其参数和密集时间样本，并复核论文 Table 1 的归一化后再比较数值表，避免把表中相对百分数误当原始幅值。本文不直接把表中数字设为门限。时间阶使用 Fourier 一阶模态的有符号幅值；原文式误差另按最大高度统计。
+
+第二组按原文取密度比 $850$、动力黏度比 $55.72$，重相 La 为 $3000$。因 QUANTUM 保留 Hermite/Level Set 与现行物性构造，需记录与原文滤波体积分数物性的差别。验收目标：频率误差 $<1\%$、全历程相对幅值 $L_2$ 误差 $<2\%$（最细网格）；空间与时间误差独立下降，无持续增长的网格尺度速度。
+
+\subsection{V4：RZ 毛细射流的线性增长}
+对应论文第 6.5 节，采用轴对称适配：$r_0=0.2$，$k=\pi$，$kr_0\simeq0.628$，相对扰动 $\varepsilon=0.02$。轴向周期长度 $2\pi/k$，初始 $R(z)=r_0[1+\varepsilon\cos(kz)]$。为固定液体体积，可令平均半径为 $r_0/\sqrt{1+\varepsilon^2/2}$，并明确此为本方案的 $O(\varepsilon^2)$ 调整。外侧边界 $r_{\max}\ge4r_0$ 并做加倍域检查。
+
+取 $\mathrm{La}=\sigma r_0/(\rho\nu^2)=23.834,238.34,2000$，气液密度比 $1.2/998$，动力黏度比 $1.8\times10^{-5}/(1.003\times10^{-3})$。原文高 La 的无黏参考增长率为
+\begin{equation}
+ s^2=\frac{\sigma}{\rho r_0^3}\frac{I_1(kr_0)}{I_0(kr_0)}kr_0[1-(kr_0)^2].
+\end{equation}
+可用对应线性势流初始化速度以减少初始过渡：
+\begin{equation}
+ \Psi(r,z)=\frac{\varepsilon r_0s}{kI_1(kr_0)}I_0(kr)\cos(kz),\qquad\uu=\nabla\Psi,
+\end{equation}
+其液侧界面法向速度与增长模态一致；外相需独立构造满足界面速度连续和外边界的场，随后相容投影，不直接把液侧 $I_0$ 延伸到无限外域。黏性组应与包含黏性和外相效应的独立线性稳定解比较；无黏 Rayleigh 式只作为高 La 极限参考。
+
+取 $r_0/h=8,16,32,64$，拟合线性窗口 $0.02\le |\eta|/r_0\le0.08$ 的增长率，并用更小初幅 $0.005$ 复核线性误差。目标与匹配物性参考的增长率误差 $<2\%$。第一版止于线性和前期颈缩；当前界面拓扑未证明支持时，\textbf{不承诺复现论文断裂、微丝和卫星滴}。后续拓扑支持必须独立验收体积、电荷分配与失败传播。
+
+\section{电荷、电场与 Maxwell 耦合专用算例}
+\subsection{E1：两层平板充电，完整解析瞬态}
+令平界面 $z=0$，下层厚 $\ell_-$，上层厚 $\ell_+$，电势差 $V_d=\Phi(-\ell_-)-\Phi(\ell_+)$，$E$ 沿 $+z$。横向周期，界面静止。定义
+\begin{equation}
+ D_\epsilon=\epsilon_+\ell_-+\epsilon_-\ell_+,
+ \quad D_K=K_-\ell_++K_+\ell_-.
+\end{equation}
+由电势差及 $\epsilon_+E_+-\epsilon_-E_-=q_s$ 得
+\begin{align}
+ E_-&=(\epsilon_+V_d-\ell_+q_s)/D_\epsilon,\\
+ E_+&=(\epsilon_-V_d+\ell_-q_s)/D_\epsilon,\\
+ \dot q_s&=\frac{(K_-\epsilon_+-K_+\epsilon_-)V_d-D_Kq_s}{D_\epsilon}.
+\end{align}
+当 $D_K>0$，
+\begin{equation}
+ \tau=D_\epsilon/D_K,\quad
+ q_\infty=\frac{(K_-\epsilon_+-K_+\epsilon_-)V_d}{D_K},\quad
+ q_s(t)=q_\infty+(q_0-q_\infty)e^{-t/\tau}.
+\end{equation}
+选无量纲 $\ell_-=\ell_+=1,\epsilon_-=10,\epsilon_+=1,K_-=1,K_+=0,V_d=1,q_0=0$，则 $\tau=11,q_\infty=1$。计算 $q,E_\pm,\tau_n^E=[\epsilon E^2]/2$ 与电极电流，压力满足 $[p]=\tau_n^E$，流体应保持静止。这样既检查导电时间式，也检查同阶段 Maxwell 平衡。
+
+精度组 $\dt/\tau=1/10,1/20,1/40,1/80$，终时 $5\tau$；稳定性组 $1,10,100$ 单独比较 SDIRK 放大因子，不把大步稳定当作解析充电精确。目标精度组 $p_t\ge1.8$、电荷/电流闭合 $10^{-10}$，静态速度受力残差与线性容限相当。
+
+\subsection{E2：带电球滴的电压、牵引和压力平衡}
+RZ 球半径 $R=1$，总自由电荷 $Q$ 均匀分布，外相 $K_+=0$，内相 $K_->0$，无外加均匀场。令球心距离 $\mathcal R=\sqrt{r^2+(z-z_c)^2}$，与柱坐标半径 $r$ 区分，解析解为
+\begin{equation}
+ q_s=\frac{Q}{4\pi R^2},\quad E_-=0,\quad
+ \Phi_+(\mathcal R)=\frac{Q}{4\pi\epsilon_+\mathcal R},\quad
+ E_{n,+}(R)=\frac{q_s}{\epsilon_+}.
+\end{equation}
+内势为表面常值，有限矩形/RZ 外边界施加此解析球势而非近似“零远场”，轴线使用对称条件。取 $\rho_-=1,\sigma=1,\epsilon_+=1,\epsilon_-=10$，定义
+\begin{equation}
+ \chi=\frac{q_s^2R}{4\epsilon_+\sigma},\qquad
+ p_--p_+=\frac{2\sigma}{R}(1-\chi),\qquad\chi=0,0.1,0.5.
+\end{equation}
+$\chi$ 仅为电压应力/毛细压力的比值，不据此给出本有限物性模型的失稳阈值。选择 E1 已验证的导电参数，并令 $\mu_-$ 分别对应 V1 的三个 La；电流解析为零，$Q$ 应恒定。
+
+分别测相侧电场误差、电荷源跳跃误差、Maxwell 牵引、总压力跳跃、纯相梯度和寄生速度。先用解析曲率与解析电场测试投影平衡，再全部使用数值场测试空间误差。目标最细网格电场/牵引/压差误差 $<1\%$、$U_{\max}/U_\sigma<10^{-4}$、总电荷闭合 $10^{-10}$。这直接检验“两个较大界面力与压强能否稳定相消”，而非仅检验电势图像是否平滑。
+
+\subsection{E3：非零切向 Maxwell 力与动态耦合}
+仅通过 E1/E2 不能证明 $q_sE_t$ 路径正确。先在\emph{固定平界面模块测试}中叠加切向均匀场 $E_t$ 和满足 Gauss 跳跃的常 $q_s$，电势横向采用已知线性背景加周期扰动的仿射周期边界。取上下壁 $z=\pm1$ 静止，黏度 $\mu_-,\mu_+$，保持 $q_s$ 的解析源收支；这是有明确外部电荷源的牵引测试，源不得混入无源生产模型。
+
+稳态速度为两段直线：
+\begin{equation}
+ u_-(z)=U_I(z+1),\quad u_+(z)=U_I(1-z),\quad
+ U_I=\frac{q_sE_t}{\mu_-+\mu_+}.
+\end{equation}
+由 $[\mu\partial_zu]+q_sE_t=0$ 可得该解。该测试检查切向力正负、黏性跨相应力和投影不错误消除真实剪切流；目标 $U_I$ 与两相剪切应力误差 $<1\%$ 并收敛。若仿射周期边界未实现，先作为独立载荷/黏性制造解驱动，不虚构现行字典支持。
+
+完整无源动态测试取 E2 球滴加体积保持的 $l=2$ 小扰动：
+\begin{equation}
+ R(\theta,0)=R_0\,c_V[1+0.01P_2(\cos\theta)],\quad
+ c_V=\left\langle[1+0.01P_2]^3\right\rangle_{S^2}^{-1/3}.
+\end{equation}
+初始材料电荷按规定总 $Q$ 分配，重新求实际电场；随后自由推进界面、导电与流体。取 $\chi=0,0.1,0.5$，$\tau_e/T_\sigma=0.01,0.1,1$，密度比 $100$，La 为 $120,1200$。提取 $P_2$ 形变幅值、频率、阻尼、$q_s$ 沿界面分布、切向速度和能量余额。
+
+此有限导电、有限外相模型没有在本文中给出闭式频率，\textbf{不冒用理想导体真空液滴公式作为精确答案}。采用独立更细空间/时间参考解与零电场极限；细化到参考解相邻两级变化 $<0.2\%$，受测最细解形变历程误差目标 $<2\%$，光滑时间窗口观测阶目标 $\ge1.8$。必须保存参考生成方法；同一算法自收敛只验证一致收敛，物理可信度仍依赖 E1/E2/E3 静态解析基准及独立交叉验证。
+
+\subsection{E4：原喷嘴同输入回归}
+最后接回当前运动喷嘴：几何、物性、电极电压、入口/压力口、接触线、界面带宽和物理门限保持原输入。对旧格式与新格式分别列出流量、界面体积、总电荷及电极收支、尖端位置/曲率、峰值场强、Maxwell 法向/切向牵引、净受力和时间步代价。
+
+不同时间格式本来可能产生不同场值；不以逐位相同为目标，而以共同物理时刻的收敛和收支为依据。先做原短程基线，再延长到至少若干毛细/导电特征时间；既有失败证据保留，短程成功不替代低黏度长时或喷射物理验收。
+
+\section{实施顺序、成本与交付验收}
+\begingroup\renewcommand{\arraystretch}{1.05}
+\begin{longtable}{@{}p{.10\textwidth}p{.42\textwidth}p{.40\textwidth}@{}}
+\toprule 阶段 & 实施内容 & 进入下一阶段的条件\\\midrule\endhead
+P0 & 明确总压力状态、半层历史、候选和重启；在原 Hydro 内实现式\eqref{eq:steps} & V0 代数、静态相消及受迫模态时间阶通过；旧格式原门限保持。\\
+P1 & 补齐 BCG 半步对流、阶段 Level Set/材料轨迹与体积账本 & V1/V2/V3 的无电场均匀网格基准；确认动量一致性。\\
+P2 & 原生矩形、2:1、RZ/半对偶边界及净加速度转移 & V1/V3/V4；压力口、轴线与粗细接口分区验收。\\
+P3 & Electricity 内扩展 SDIRK 阶段与 P3/电荷块求解；材料映射适配 & E1 与 V2 电荷输运；电场、电流和电荷同阶段残差通过。\\
+P4 & 同半层 Maxwell 法向/切向受力与流体回馈 & E2/E3 解析平衡、真实切向流动、动态时间收敛。\\
+P5 & 命名 App 接回喷嘴；最后加入运行中 AMR & E4、网格转移账本及长时低黏度验证；更新实际输入消费者。\\\bottomrule
+\end{longtable}
+
+\endgroup
+每个正常宏步需要一次耦合速度 Helmholtz 求解、一次最终压力求解，BCG 若需要则另有一次辅助输运投影；电荷需要两个电势--电荷阶段块求解（电学子步会增加次数）。此成本高于“旧电场显式推进一次”，但没有每步完整 NS 鞍点修正。是否更快必须测实际装配、因子分解、内存与接受步成本，不能仅数方程次数。
+
+源文件继续按现有职责：Hydrodynamics 拥有动量/投影/净受力历史，Electricity 拥有电荷阶段方程与 P3 回调，Core/Level Set 提供权威几何与运输，Electrospray/EHD App 接线唯一时钟，IO 只输出。输入选项的名称、schema 与解析在实施时一并落地；本文不预先声明某个开关已经可用。
+
+规划算例可命名为 \code{popinet_split_v0_forced_mode}、\code{popinet_split_v1_static_drop}、\code{popinet_split_v3_capillary_wave}、\code{popinet_split_e1_planar_charge} 等，\textbf{这些是建议名称，不是现存可运行目录}。运行放在 \code{runs/checks/popinet_split_<batch>/}，物理阶段报告按主题放在 \code{docs/validation/}。每阶段保存输入、源码身份、真实输出帧清单、退出码和判据；完成相关 \code{architecture_layout}、\code{architecture_dependencies}，涉及输入时增加直接消费者检查。
+
+\clearpage
+\appendix
+\section{源码证据与复用入口}
+下面的行号为本次核查定位，不是对未来版本的承诺。配套 \code{QUANTUM_Popinet_EHD_Split_Scheme.sources.json} 保存这些文件的 SHA256。文档中的数学推导独立于未来代码行号变化。
+\begingroup\small
+\begin{longtable}{@{}p{.53\textwidth}p{.40\textwidth}@{}}
+\toprule 源码相对项目根目录路径 & 已核对的行为/应复用职责\\\midrule\endhead
+\code{include/Modules/Hydrodynamics/HydroNativeRZRow_impl.h} & radial/axial 矩阵交叉应力；约 99、145 行的原生通量和历史 RHS。\\
+\code{src/Modules/Hydrodynamics/HydroFittedMomentum.cpp} & 原生/贴合对偶几何和完整黏性应力装配。\\
+\code{src/Modules/Hydrodynamics/HydrodynamicsFitted.cpp} & 约 219 行减旧压；227 行起完整联立修正；277 行累加压力。本文改变该时间语义。\\
+\code{src/Modules/Hydrodynamics/HydroFittedProjection.cpp} & 25 行起面质量和压力矩阵；65 行速度校正；80 行完整耦合系统。\\
+\code{src/Modules/Hydrodynamics/HydroFittedDomain.cpp} & B、C 和原生粗细网格梯度；不假定所有网格 C=-B\textsuperscript{T}。\\
+\code{include/Solvers/Operators/QuadtreeFaceGradient.h} & 原生粗细接口梯度模板和一致调用入口。\\
+\code{src/Modules/Hydrodynamics/HydroFittedCapillary.cpp} & 约 89 行使用 C(H)，保留界面载荷带与压力口支持边界。\\
+\code{src/Modules/Hydrodynamics/HydroFittedInterfaceLoadGeometry.cpp} & 毛细/Maxwell 法向与切向共用的载荷几何。\\
+\code{include/Modules/Electricity/SurfaceChargeTransport.h} & 积分电荷、材料面元度量、重映射和相对切向通量契约。\\
+\code{include/Modules/Electricity/SurfaceChargeField.h} & 同几何 q 源、二次重构/导数、阶段试探电荷源及 RZ 极点。\\
+\code{src/Modules/Electricity/SurfaceChargeRelaxation.cpp} & 现有 BE/BDF2 型系数、实际导电回调和候选残差；不能直接称为 SDIRK。\\
+\code{src/Apps/Electrospray/Coupling/ElectrosprayConducting.cpp} & 显式 preflight、材料历史映射、P3 电流与候选状态。\\
+\code{src/Apps/Electrospray/ElectrosprayTimeLoop.cpp} & 约 200 行先 NS，再更新界面和电学；本方案重新接线半层顺序。\\
+\code{src/Apps/Electrospray/Setup/ElectrosprayMaterials.cpp} & 阶段几何到相物性的现有消费者。\\\bottomrule
+\end{longtable}
+
+\endgroup
+\clearpage
+\section{本次已经完成的数学核查}
+本次另外执行了小矩阵与标量 ODE 核查，脚本为
+\code{build/docs_popinet_ehd_scheme/verify_design.py}，结果为同目录
+\code{algebra_verification.json}。这不是生产 CFD 求解器的实现验收。
+
+在一个 9 个速度自由度、4 个压力自由度且 $C\ne-B^T$ 的小矩阵上，式\eqref{eq:defect}最大绝对误差为 $2.64\times10^{-16}$；最终连续性误差 $5.48\times10^{-18}$；制造梯度力静态平衡的速度误差 $6.94\times10^{-18}$。这些结果只支持推导的代数恒等式。
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule 标量试验 & 最后两级误差 & 最后一组观测阶\\\midrule
+无补偿受迫黏性模态 & $5.4113\times10^{-3},\ 2.7039\times10^{-3}$ & 1.001\\
+有补偿受迫黏性模态 & $7.0490\times10^{-6},\ 1.7622\times10^{-6}$ & 2.000\\
+SDIRK 平板充电时间式 & $8.5344\times10^{-7},\ 2.1312\times10^{-7}$ & 2.002\\\bottomrule
+\end{tabular}
+\end{center}
+受迫模态取 $\dot u=-2u+1,u(0)=0$，终时 1，最后两级为 80、160 步；充电方程以 $\tau$ 无量纲化，终时 $5\tau$，最后两级为 200、400 步。固定矩阵和标量方程中成立的阶数，不自动扩展为移动界面、电场离散或开放边界的阶数；第 10--11 节的完整验证仍须实施后运行。
+
+\section{一页式实现检查表}
+\begin{enumerate}
+\item 每个 $Q,E,\kappa,\rho,\mu,F$ 都有真实时间、几何身份和所有者；两个半层间推进一个完整 $\dt$。
+\item SDIRK 的两个电荷阶段各自解真实电场；只有阶段方程收敛后才能取 Maxwell 牵引。
+\item $q_s$、$E_{n,\pm}$、$E_t$ 和力使用同一阶段；不能先平均电场再平方来代替指定时刻的力。
+\item 同一 $M,C$ 作用于力增量和压力；恒法向力满足 $S_n(a)=aCH$。
+\item 保存已相消的净加速度；预测补偿采用 $\dt L\widehat a_b/2$，不是把旧压直接重新加到主预测 RHS。
+\item 预测矩阵保留完整 $u,v$ 应力耦合；最终解总压力并接受分裂速度，不做完整鞍点纠偏。
+\item BCG 半步对流、密度散度抵消和唯一粗细面通量实际实现并分别验收。
+\item $r_A,r_P,r_B,r_S$ 与电荷/体积账本独立检查；未分裂残差只作具名对照。
+\item 边界、启动、固定步长和重网格转移有专门测试；无通过证据时保持明确不支持。
+\item 压力跨界面跳跃与数值噪声分开；不以图像平滑、短程成功或线性残差单项替代物理验收。
+\end{enumerate}
+
+\clearpage
+\begin{thebibliography}{9}
+\bibitem{popinet} S. Popinet. An accurate adaptive solver for surface-tension-driven interfacial flows. \emph{Journal of Computational Physics}, 228 (2009), 5838--5866. \href{https://doi.org/10.1016/j.jcp.2009.04.042}{doi:10.1016/j.jcp.2009.04.042}. 本文核对用户提供的正式版，重点为第 2、4、6 节。副本位于 \code{build/docs_ns_projection/references/popinet_2009_local.pdf}；SHA256：\code{c636c4904a6d8d36f83f68b0de40142a43a0df3c8df7345c171586a1282724db}。
+\bibitem{bcg} J. B. Bell, P. Colella, H. M. Glaz. A second-order projection method for the incompressible Navier--Stokes equations. \emph{Journal of Computational Physics}, 85 (1989), 257--283. \href{https://doi.org/10.1016/0021-9991(89)90151-4}{doi:10.1016/0021-9991(89)90151-4}. 本文借鉴非分裂半步迎风构造，不宣称当前面布局等同于其全部实现。
+\bibitem{alexander} R. Alexander. Diagonally implicit Runge--Kutta methods for stiff O.D.E.'s. \emph{SIAM Journal on Numerical Analysis}, 14 (1977), 1006--1021. \href{https://doi.org/10.1137/0714068}{doi:10.1137/0714068}. 本文另行写出并验证所选两阶段系数、阶条件和稳定函数。
+\bibitem{prosperetti} A. Prosperetti. Motion of two superposed viscous fluids. \emph{Physics of Fluids}, 24 (1981), 1217--1223. Popinet 文献 [68] 所采用的小振幅黏性毛细波参考；实施时须冻结独立初值解数据及其归一化，本文尚未生成该参考数据。
+\bibitem{local} QUANTUM 本地源码、\code{docs/QUANTUM_Code_Organization_Standard.md}、\code{docs/QUANTUM_Dictionary_Reference.md}，以及既有时间格式和压力诊断文档。核查日期：2026-09-13。现行输入支持范围以实际解析和消费者为准。
+\end{thebibliography}
+\end{document}

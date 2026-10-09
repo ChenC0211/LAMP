@@ -1,0 +1,11 @@
+# Preserve existing source, reference data and historical evidence bytes on import.
+# A future line-ending migration must audit recorded hashes separately.
+* -text
+
+# New repository management files use LF consistently.
+/.gitattributes text eol=lf
+/.gitignore text eol=lf
+/.github/** text eol=lf
+/docs/guides/Git_Workflow.md text eol=lf
+/docs/guides/CMakeUserPresets.example.json text eol=lf
+/docs/task/GitHub_Bootstrap_Report.md text eol=lf

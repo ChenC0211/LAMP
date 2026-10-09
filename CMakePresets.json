@@ -1,0 +1,71 @@
+{
+  "version": 2,
+  "configurePresets": [
+    {
+      "name": "windows",
+      "displayName": "Windows x64 (Visual Studio 2022)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "LAMP_BUILD_BENCHMARKS": "OFF"
+      }
+    },
+    {
+      "name": "windows-debug",
+      "inherits": "windows",
+      "displayName": "Windows x64 with debug symbols",
+      "binaryDir": "${sourceDir}/build/windows-debug",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "windows-benchmarks",
+      "inherits": "windows",
+      "cacheVariables": {
+        "LAMP_BUILD_BENCHMARKS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "jobs": 1
+    },
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug",
+      "configuration": "RelWithDebInfo",
+      "jobs": 1
+    },
+    {
+      "name": "windows-benchmarks",
+      "configurePreset": "windows-benchmarks",
+      "configuration": "Release",
+      "jobs": 1
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug",
+      "configuration": "RelWithDebInfo",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
+

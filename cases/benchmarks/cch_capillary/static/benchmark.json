@@ -1,0 +1,6 @@
+{
+  "program": "LAMP_cch_capillary_benchmark.exe",
+  "study": "static",
+  "arguments": ["static"],
+  "description": "H13 candidate: 72 Hermite static-drop geometries, 1728 analytic/Hermite actual saddle solves; independent convergence audit required"
+}

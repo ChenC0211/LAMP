@@ -1,0 +1,480 @@
+﻿{
+    "task":  "S08",
+    "status":  "frozen_experimental_baseline",
+    "frozen_at":  "2026-10-01T00:20:36.0921528+08:00",
+    "policy":  {
+                   "allowed_uses":  [
+                                        "explicit A/B comparison",
+                                        "legacy case regression",
+                                        "comparable inputs/results for V2"
+                                    ],
+                   "prohibited_uses":  [
+                                           "V2 feature development in frozen implementations",
+                                           "implicit fallback from a failed V2 method",
+                                           "shared writable legacy/V2 state",
+                                           "growth of global high-order Hydro velocity state"
+                                       ],
+                   "runtime_disabled":  false,
+                   "schema_migration_performed":  false,
+                   "rules":  "docs/02_QUANTUM_Architecture_Rules.md",
+                   "task_source":  "docs/05_QUANTUM_Module_Task_Roadmap.md"
+               },
+    "baselines":  [
+                      {
+                          "method":  "parametricGals",
+                          "v2_target":  "conservativeHermiteGals",
+                          "owner":  "Interface",
+                          "legacy_state":  "global parametric curve/H2 projection",
+                          "selectors":  [
+                                            "Interface.transport=parametricGals",
+                                            "Interface.Benchmark.method=parametricGals"
+                                        ],
+                          "markers":  [
+                                          "include/Modules/Interface/InterfaceParametricProjection.h",
+                                          "include/Modules/Interface/InterfaceParametricTransport.h"
+                                      ],
+                          "frozen_files":  [
+                                               {
+                                                   "path":  "include/Apps/Interface/IO/InterfaceParametricOutput.h",
+                                                   "before_sha256":  "171C8B408D4CB6C41B81CA62BA18CE96CC6D0B91237FE4743F2B6225B1181A0E",
+                                                   "frozen_sha256":  "171C8B408D4CB6C41B81CA62BA18CE96CC6D0B91237FE4743F2B6225B1181A0E"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Interface/InterfaceParametricMotion.h",
+                                                   "before_sha256":  "09A7EC8E794DEDE8A37A8397F2CFF3F3F357FB54B4B9470EAC1F5F0637F81F93",
+                                                   "frozen_sha256":  "09A7EC8E794DEDE8A37A8397F2CFF3F3F357FB54B4B9470EAC1F5F0637F81F93"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Interface/InterfaceParametricNeck.h",
+                                                   "before_sha256":  "241335E0015FC776827F078003E6D2C873EDCBE306D61DE7FA4C105E045D2D61",
+                                                   "frozen_sha256":  "241335E0015FC776827F078003E6D2C873EDCBE306D61DE7FA4C105E045D2D61"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Interface/InterfaceParametricProjection.h",
+                                                   "before_sha256":  "C1713B454F523370EA2BF7898059E6E9D67907B5CB2542E3EC9DFEA15770A6D0",
+                                                   "frozen_sha256":  "7420D46E22E0515E2F032CC6AD20355C220CC74713874915D5E0192136C1F3F9"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Interface/InterfaceParametricTransport.h",
+                                                   "before_sha256":  "12870D0908F1872CFD7384FA43D5E23A51064F507B5CCB53576910ABEE22DBD1",
+                                                   "frozen_sha256":  "2922E09B583D121C2E55FC98E71DD56CB01A0280ACEC550A87B8E3B5652DD333"
+                                               },
+                                               {
+                                                   "path":  "src/Apps/Interface/IO/InterfaceParametricOutput.cpp",
+                                                   "before_sha256":  "A1A362D780C3D4A302DAA2A535131F2779024DFF510189CEFE806FE3B4DBE54E",
+                                                   "frozen_sha256":  "A1A362D780C3D4A302DAA2A535131F2779024DFF510189CEFE806FE3B4DBE54E"
+                                               },
+                                               {
+                                                   "path":  "src/Apps/Interface/Verification/InterfaceParametricBenchmark.cpp",
+                                                   "before_sha256":  "9AC0CE30A4FE6EF87FE081DEE012E178602832C5317468D2C9E28C9EBEA22E78",
+                                                   "frozen_sha256":  "9AC0CE30A4FE6EF87FE081DEE012E178602832C5317468D2C9E28C9EBEA22E78"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricFaceTimeFlux.cpp",
+                                                   "before_sha256":  "C3042E4954D85C8A442AFA9436532DBB901BB3B467B5E98CA3069CB6E9F10A2F",
+                                                   "frozen_sha256":  "C3042E4954D85C8A442AFA9436532DBB901BB3B467B5E98CA3069CB6E9F10A2F"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricImplicitData.cpp",
+                                                   "before_sha256":  "1B52B4DAA543891FB0A1142E822C54EAA8C6567AA98AB3A9481AA53D9E1D0907",
+                                                   "frozen_sha256":  "1B52B4DAA543891FB0A1142E822C54EAA8C6567AA98AB3A9481AA53D9E1D0907"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricInitialCurve.h",
+                                                   "before_sha256":  "BB7FA3202423F9152AC54C62C2F65240380E4EDD4756121F2274509119292149",
+                                                   "frozen_sha256":  "BB7FA3202423F9152AC54C62C2F65240380E4EDD4756121F2274509119292149"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricMotion.cpp",
+                                                   "before_sha256":  "67E64057BC5F5ACCBD8BB945CF80A7E3BEE0A9CC5F3D75029B7FCD99283F42AF",
+                                                   "frozen_sha256":  "67E64057BC5F5ACCBD8BB945CF80A7E3BEE0A9CC5F3D75029B7FCD99283F42AF"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricNeck.cpp",
+                                                   "before_sha256":  "4FBD6838E1D97CAA79E3404989F07A94372E8173D49928A9445D931A68615A80",
+                                                   "frozen_sha256":  "4FBD6838E1D97CAA79E3404989F07A94372E8173D49928A9445D931A68615A80"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricPrescribedData.cpp",
+                                                   "before_sha256":  "70C2CB3BD0738F7E697394FC46FD66C7AD72B939A050B1C271A622C0268CCCFA",
+                                                   "frozen_sha256":  "70C2CB3BD0738F7E697394FC46FD66C7AD72B939A050B1C271A622C0268CCCFA"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricProjection.cpp",
+                                                   "before_sha256":  "B97207E87E8F27A5A7D7318D0F2083F5CB35DB384745B948B157632D287E7D08",
+                                                   "frozen_sha256":  "B97207E87E8F27A5A7D7318D0F2083F5CB35DB384745B948B157632D287E7D08"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricReconstruction.cpp",
+                                                   "before_sha256":  "AD7BF6442B80FA4A10C6C905EA31C728E784E7E20725E94F3DD4CB4855736F27",
+                                                   "frozen_sha256":  "AD7BF6442B80FA4A10C6C905EA31C728E784E7E20725E94F3DD4CB4855736F27"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricResolution.cpp",
+                                                   "before_sha256":  "1BCBF43ECB31FCF5E9DD0BF0FC253E13EA407A785B6B00B1A09EA3F1E4B64665",
+                                                   "frozen_sha256":  "1BCBF43ECB31FCF5E9DD0BF0FC253E13EA407A785B6B00B1A09EA3F1E4B64665"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricResolution.h",
+                                                   "before_sha256":  "A893748E1F88A45093B0E31A13A8D3CE095CF48B143A26ED37D3755D02E0D3BF",
+                                                   "frozen_sha256":  "A893748E1F88A45093B0E31A13A8D3CE095CF48B143A26ED37D3755D02E0D3BF"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricSurfaceFlux.cpp",
+                                                   "before_sha256":  "AB9BB436D88B041ED7AB909DAC3FD376ED2A18E02FF6490E40273C46CC5E60AF",
+                                                   "frozen_sha256":  "AB9BB436D88B041ED7AB909DAC3FD376ED2A18E02FF6490E40273C46CC5E60AF"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricTransport.cpp",
+                                                   "before_sha256":  "5678703BEF898A21AD44ECCB5E8AAAF0A694A049103BA835B9B089F6E32780C4",
+                                                   "frozen_sha256":  "5678703BEF898A21AD44ECCB5E8AAAF0A694A049103BA835B9B089F6E32780C4"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Interface/InterfaceParametricWorldSheet.h",
+                                                   "before_sha256":  "2CCF0058360FEB145EA89ECE1FC6DBA00D39E3C48B6644A6E1CED5173A19BB00",
+                                                   "frozen_sha256":  "2CCF0058360FEB145EA89ECE1FC6DBA00D39E3C48B6644A6E1CED5173A19BB00"
+                                               }
+                                           ]
+                      },
+                      {
+                          "method":  "CompatibleMoment/cchMomentMidpoint",
+                          "v2_target":  "native staggered CCH",
+                          "owner":  "Hydrodynamics",
+                          "legacy_state":  "persistent global C1/Q8 velocity field and moment publication",
+                          "selectors":  [
+                                            "Hydrodynamics.timeScheme=cchMomentMidpoint"
+                                        ],
+                          "markers":  [
+                                          "include/Modules/Hydrodynamics/HydroCompatibleMomentFlow.h",
+                                          "include/Modules/Hydrodynamics/HydroCompatibleMomentSpline.h"
+                                      ],
+                          "frozen_files":  [
+                                               {
+                                                   "path":  "include/Apps/Hydrodynamics/HydroMomentCase.h",
+                                                   "before_sha256":  "EA8F508606B06E596526002A36500582C100513C9306E206E0A89824F6C734A3",
+                                                   "frozen_sha256":  "EA8F508606B06E596526002A36500582C100513C9306E206E0A89824F6C734A3"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentBoundary.h",
+                                                   "before_sha256":  "EFEF93DE59EC668D3E7C5217DF52B64FAC14B34CF3295A6D956D51AF3E09045C",
+                                                   "frozen_sha256":  "EFEF93DE59EC668D3E7C5217DF52B64FAC14B34CF3295A6D956D51AF3E09045C"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentComplement.h",
+                                                   "before_sha256":  "02B8A63290B5C2815B1379202200844965144D5C9CC9850BEEB91FF1D2E9940B",
+                                                   "frozen_sha256":  "02B8A63290B5C2815B1379202200844965144D5C9CC9850BEEB91FF1D2E9940B"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentFlow.h",
+                                                   "before_sha256":  "3DA171C0D8A83783F41010781332DC6801130CBC3640CB5F7304408A5352F182",
+                                                   "frozen_sha256":  "2938DFB7637353686213E6C8EDE57E2C722251F1902AB7AB1AC794A361D46E65"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentMassCurrent.h",
+                                                   "before_sha256":  "8579A1C273B4AECEE973D50E68177EE63C05B3C8DB9FE7AF93491386AF1B146C",
+                                                   "frozen_sha256":  "8579A1C273B4AECEE973D50E68177EE63C05B3C8DB9FE7AF93491386AF1B146C"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentMaterial.h",
+                                                   "before_sha256":  "40832BB34A1EC08F2DD5F8EF7BF8320FAAF9F8019152AE1587C55F4B1E46F8D3",
+                                                   "frozen_sha256":  "40832BB34A1EC08F2DD5F8EF7BF8320FAAF9F8019152AE1587C55F4B1E46F8D3"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentSpace.h",
+                                                   "before_sha256":  "DA12DC9E02CC45E97BD833664DB7D6C2CB1F17CF4219E3EB45B361B5CAF3E8C6",
+                                                   "frozen_sha256":  "DA12DC9E02CC45E97BD833664DB7D6C2CB1F17CF4219E3EB45B361B5CAF3E8C6"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentSpline.h",
+                                                   "before_sha256":  "F0C5BF25752DFEC3A821FE9DBEDF6DE6F3D4C42EE507041B4253F444E745F8E5",
+                                                   "frozen_sha256":  "EF5B2C062A2E104D96076DFAE59A4C5EF5EE307554EE53D8BDBCF1995DE33C29"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentTraction.h",
+                                                   "before_sha256":  "DC8B3197FBA3E1574CB8EA704C2AAF505DD68D5FC734F5AB6F43B16AD05CC609",
+                                                   "frozen_sha256":  "DC8B3197FBA3E1574CB8EA704C2AAF505DD68D5FC734F5AB6F43B16AD05CC609"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentTransport.h",
+                                                   "before_sha256":  "F360596645E9880873B8FAAEC9267DFDB74EA8A33BFC290C940683812D868AC7",
+                                                   "frozen_sha256":  "F360596645E9880873B8FAAEC9267DFDB74EA8A33BFC290C940683812D868AC7"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Hydrodynamics/HydroCompatibleMomentViscosity.h",
+                                                   "before_sha256":  "90F8C0F943E56FF2906B5C0A924A49E52C2240CEDE313A1AEC3FFBF0FDD59252",
+                                                   "frozen_sha256":  "90F8C0F943E56FF2906B5C0A924A49E52C2240CEDE313A1AEC3FFBF0FDD59252"
+                                               },
+                                               {
+                                                   "path":  "src/Apps/Hydrodynamics/HydroMomentCase.cpp",
+                                                   "before_sha256":  "F11F85AFFD2297053390BCB7B874A88F1AA8591280AF216F58D04755E83C6F8C",
+                                                   "frozen_sha256":  "F11F85AFFD2297053390BCB7B874A88F1AA8591280AF216F58D04755E83C6F8C"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentBlockSolve.cpp",
+                                                   "before_sha256":  "62BC8724D85096CAAB0C50C570D686B6D17AC4CEF9CBB5B616E9FA8C890C44F7",
+                                                   "frozen_sha256":  "62BC8724D85096CAAB0C50C570D686B6D17AC4CEF9CBB5B616E9FA8C890C44F7"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentBlockSolve.h",
+                                                   "before_sha256":  "3DA0359494A1CABB39F5A17334E9054C0B06CCC130EEFBF0BDBA53FA9BE0E1F3",
+                                                   "frozen_sha256":  "3DA0359494A1CABB39F5A17334E9054C0B06CCC130EEFBF0BDBA53FA9BE0E1F3"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentBoundary.cpp",
+                                                   "before_sha256":  "A9E2CDA7DBDFFE3277C2C25AD03297D8CF9DEB336E666222453F6B7483DEFF65",
+                                                   "frozen_sha256":  "A9E2CDA7DBDFFE3277C2C25AD03297D8CF9DEB336E666222453F6B7483DEFF65"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentComplement.cpp",
+                                                   "before_sha256":  "8F441D21C8694714B229D6EACA9D0906E1D6A4D5044D0D040C0203B09935ADD4",
+                                                   "frozen_sha256":  "8F441D21C8694714B229D6EACA9D0906E1D6A4D5044D0D040C0203B09935ADD4"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentFlow.cpp",
+                                                   "before_sha256":  "D6DAE05580C8152D154A0B5B67BF9D5D741F76EB30D93D88729A8D1139FA5610",
+                                                   "frozen_sha256":  "D6DAE05580C8152D154A0B5B67BF9D5D741F76EB30D93D88729A8D1139FA5610"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentMassCurrent.cpp",
+                                                   "before_sha256":  "5BDA7EFD53BFC85692E37B838A2E70C092EA482F57098B1F51B337DD5D90497D",
+                                                   "frozen_sha256":  "5BDA7EFD53BFC85692E37B838A2E70C092EA482F57098B1F51B337DD5D90497D"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentMaterial.cpp",
+                                                   "before_sha256":  "3CD4F441F290C4F8809FDCA87D524D8398CEF21F10B9140CC847C871DB40EDB5",
+                                                   "frozen_sha256":  "3CD4F441F290C4F8809FDCA87D524D8398CEF21F10B9140CC847C871DB40EDB5"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentNativeTransfer.cpp",
+                                                   "before_sha256":  "A28DE96D07F377FE4CEED1DEB5CF8BF3615E6E3EA9F5B9C31BF3F181B3589AD4",
+                                                   "frozen_sha256":  "A28DE96D07F377FE4CEED1DEB5CF8BF3615E6E3EA9F5B9C31BF3F181B3589AD4"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentPhysical.cpp",
+                                                   "before_sha256":  "C812CE64416AE53ACF1E3438B8BD59B6A790EBC40E0128263C65272B534CCC2C",
+                                                   "frozen_sha256":  "C812CE64416AE53ACF1E3438B8BD59B6A790EBC40E0128263C65272B534CCC2C"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentRadialMoments.cpp",
+                                                   "before_sha256":  "F87527E9AA6F19DCE2F5BE310FE41C22C65F0545D819D095F99B7ED4BD442E99",
+                                                   "frozen_sha256":  "F87527E9AA6F19DCE2F5BE310FE41C22C65F0545D819D095F99B7ED4BD442E99"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentSpace.cpp",
+                                                   "before_sha256":  "C6DABE616DCDD9177BA71C7BDFBC1943784197EDB26E52E490B5500D23227A97",
+                                                   "frozen_sha256":  "C6DABE616DCDD9177BA71C7BDFBC1943784197EDB26E52E490B5500D23227A97"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentSpline.cpp",
+                                                   "before_sha256":  "E9FE216FBBB586B748D397BAB62BC53F12D07A848C1F00E0658197E9ECB4F808",
+                                                   "frozen_sha256":  "E9FE216FBBB586B748D397BAB62BC53F12D07A848C1F00E0658197E9ECB4F808"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentSplineAssembly.cpp",
+                                                   "before_sha256":  "C36594A3309F804FF09BA16225320733557F1B8328D278E01754B4F50327C8A4",
+                                                   "frozen_sha256":  "C36594A3309F804FF09BA16225320733557F1B8328D278E01754B4F50327C8A4"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentSplineAssembly.h",
+                                                   "before_sha256":  "B2ADE3EFDC836FB7393E04B3FBC1B0CB9B7AF4A342EAECAA0EB045EAED0154FC",
+                                                   "frozen_sha256":  "B2ADE3EFDC836FB7393E04B3FBC1B0CB9B7AF4A342EAECAA0EB045EAED0154FC"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentSplineBasis.h",
+                                                   "before_sha256":  "1D51C0F22D5E28ADEBCC08C5E046198BEC653614A55C5B9C4C95A033102C2256",
+                                                   "frozen_sha256":  "1D51C0F22D5E28ADEBCC08C5E046198BEC653614A55C5B9C4C95A033102C2256"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentSplineMaterial.cpp",
+                                                   "before_sha256":  "1FB1242BB8DDD99B190CF683BF012D6944CEC5F99AA82F0D5D1DBE472892113B",
+                                                   "frozen_sha256":  "1FB1242BB8DDD99B190CF683BF012D6944CEC5F99AA82F0D5D1DBE472892113B"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentSplineNative.cpp",
+                                                   "before_sha256":  "238BA39281A272003FC4CCE44ADBF2FC690CC1C4EF22A8BF0BF4D9EAC8A4EBD5",
+                                                   "frozen_sha256":  "238BA39281A272003FC4CCE44ADBF2FC690CC1C4EF22A8BF0BF4D9EAC8A4EBD5"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentSplineNative.h",
+                                                   "before_sha256":  "44AE6861C0C0EEDA5C9D4DE7AD8D2DB4004FA4DDDC9AFC41A46E816880392177",
+                                                   "frozen_sha256":  "44AE6861C0C0EEDA5C9D4DE7AD8D2DB4004FA4DDDC9AFC41A46E816880392177"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentSplineTransport.cpp",
+                                                   "before_sha256":  "B63000E4C80160AA18AF6C31B27664246637790CF67741FCF852326CE9E6C2F2",
+                                                   "frozen_sha256":  "B63000E4C80160AA18AF6C31B27664246637790CF67741FCF852326CE9E6C2F2"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentTraction.cpp",
+                                                   "before_sha256":  "F1A230D16FCA6AE42D524FDFE826ACE046B2A6811066B772DAB5B0F7A8520C9F",
+                                                   "frozen_sha256":  "F1A230D16FCA6AE42D524FDFE826ACE046B2A6811066B772DAB5B0F7A8520C9F"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentTransfer.cpp",
+                                                   "before_sha256":  "54FA1A142151D63C159F9608D3A967955B9FEF84C691A1442622D6690D5CE27C",
+                                                   "frozen_sha256":  "54FA1A142151D63C159F9608D3A967955B9FEF84C691A1442622D6690D5CE27C"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentTransfer.h",
+                                                   "before_sha256":  "183AD52E6908D46770F05CBCCAA6DCB5EC0353689EAB8984C4AF9DD6065938DF",
+                                                   "frozen_sha256":  "183AD52E6908D46770F05CBCCAA6DCB5EC0353689EAB8984C4AF9DD6065938DF"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentTransport.cpp",
+                                                   "before_sha256":  "46E6A4BED23F42738B39D3B83EA34E8E8564E69AB50A2E767192729BBC762C48",
+                                                   "frozen_sha256":  "46E6A4BED23F42738B39D3B83EA34E8E8564E69AB50A2E767192729BBC762C48"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentTransportRZ.cpp",
+                                                   "before_sha256":  "D4887B00730D6250C7AAC4E03A34CAD178E13899730E108EF32BC7E35B5CF58F",
+                                                   "frozen_sha256":  "D4887B00730D6250C7AAC4E03A34CAD178E13899730E108EF32BC7E35B5CF58F"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentViscosity.cpp",
+                                                   "before_sha256":  "C53528F73CEB61299B780C2CFD1DBA42C11A018CD998EF0511F6EC356AB194FC",
+                                                   "frozen_sha256":  "C53528F73CEB61299B780C2CFD1DBA42C11A018CD998EF0511F6EC356AB194FC"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Hydrodynamics/HydroCompatibleMomentViscosityRZ.cpp",
+                                                   "before_sha256":  "E92AC4C0126DD8860BE2AD66597001386E18895C0B27FCDEF6D5D61116FEF3C4",
+                                                   "frozen_sha256":  "E92AC4C0126DD8860BE2AD66597001386E18895C0B27FCDEF6D5D61116FEF3C4"
+                                               }
+                                           ]
+                      },
+                      {
+                          "method":  "sharpHermiteP3",
+                          "v2_target":  "sharpHHO2 / SI-HHO-Q",
+                          "owner":  "Electricity",
+                          "legacy_state":  "sharp P3 FV correction, fitted field/current/charge path",
+                          "selectors":  [
+                                            "Electricity.interfaceDiscretization=sharpHermiteP3"
+                                        ],
+                          "markers":  [
+                                          "src/Modules/Electricity/SharpDielectricElectrostatics.cpp"
+                                      ],
+                          "frozen_files":  [
+                                               {
+                                                   "path":  "include/Modules/Electricity/Detail/DielectricAxisTransmission.h",
+                                                   "before_sha256":  "25F9D937CD901F8899253968993DB07BD0A1AA2BBEA758DD03E00BFD0B2BC7A4",
+                                                   "frozen_sha256":  "25F9D937CD901F8899253968993DB07BD0A1AA2BBEA758DD03E00BFD0B2BC7A4"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Electricity/Detail/DielectricCapTransmission.h",
+                                                   "before_sha256":  "169019F9E34C62BF815BFE7C8A4417C5464814A2630A7BDF731DF1F124747997",
+                                                   "frozen_sha256":  "169019F9E34C62BF815BFE7C8A4417C5464814A2630A7BDF731DF1F124747997"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Electricity/Detail/DielectricCubicTrace.h",
+                                                   "before_sha256":  "35109DCAF24743D1D741506D581D144BF2A50898402298F7498D262FD593436D",
+                                                   "frozen_sha256":  "35109DCAF24743D1D741506D581D144BF2A50898402298F7498D262FD593436D"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Electricity/Detail/DielectricInterfaceFlux.h",
+                                                   "before_sha256":  "2764DEF9EC865F8418954CEDCC644B43E893F638AC15342B4F79057F7FDBDFA4",
+                                                   "frozen_sha256":  "2764DEF9EC865F8418954CEDCC644B43E893F638AC15342B4F79057F7FDBDFA4"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Electricity/Detail/DielectricInterfaceTrace.h",
+                                                   "before_sha256":  "78B565814E1238E97559BAFBC2884400D9D710A94F009FD0D12577EE86E28A04",
+                                                   "frozen_sha256":  "78B565814E1238E97559BAFBC2884400D9D710A94F009FD0D12577EE86E28A04"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Electricity/Detail/DielectricTraceFaceGeometry.h",
+                                                   "before_sha256":  "6A941A8D2DB4EBDB061FCB4C4AB67ED5744066C623255863F558C2D28C7F907F",
+                                                   "frozen_sha256":  "6A941A8D2DB4EBDB061FCB4C4AB67ED5744066C623255863F558C2D28C7F907F"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Electricity/Detail/DielectricTraceSampling.h",
+                                                   "before_sha256":  "B76284290019485B297FEB9C19B74F33F4EC8D91592D0AD954F83006EB03A13B",
+                                                   "frozen_sha256":  "B76284290019485B297FEB9C19B74F33F4EC8D91592D0AD954F83006EB03A13B"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Electricity/FittedChargeEvolution.h",
+                                                   "before_sha256":  "E4C41E4502189F29232B79B313DFA85CE642A3B16F080AC58897D7BDD25C950B",
+                                                   "frozen_sha256":  "E4C41E4502189F29232B79B313DFA85CE642A3B16F080AC58897D7BDD25C950B"
+                                               },
+                                               {
+                                                   "path":  "include/Modules/Electricity/FittedSharpDielectricElectrostatics.h",
+                                                   "before_sha256":  "BDD9FA6DD75063EE477FB5F8FB328953984AE7D9F9B33E26FC396336DE5936A6",
+                                                   "frozen_sha256":  "BDD9FA6DD75063EE477FB5F8FB328953984AE7D9F9B33E26FC396336DE5936A6"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Electricity/FittedChargeEvolution.cpp",
+                                                   "before_sha256":  "DA87158BC507779ED7B26475935E17B78354FC6C26F96A6E2390196E2B2FBD6C",
+                                                   "frozen_sha256":  "DA87158BC507779ED7B26475935E17B78354FC6C26F96A6E2390196E2B2FBD6C"
+                                               },
+                                               {
+                                                   "path":  "src/Modules/Electricity/SharpDielectricElectrostatics.cpp",
+                                                   "before_sha256":  "83D674EB12F6AF6020CDB868E78EFD3621A685A9D026F48E6D7D8B45BDC1E88A",
+                                                   "frozen_sha256":  "4C61A0E2902CCECBF5D96EEE7ADA1185420B2B448999CFAAD0FEDE71DCB8D8E9"
+                                               }
+                                           ]
+                      }
+                  ],
+    "integration_reference_files":  [
+                                        {
+                                            "path":  "include/Core/Geometry/ParametricBoundary.h",
+                                            "before_sha256":  "9EFFFE4117398886793A7EEE9E8140796D483B250BA2B4AF37EB6A614ECE704F",
+                                            "frozen_sha256":  "9EFFFE4117398886793A7EEE9E8140796D483B250BA2B4AF37EB6A614ECE704F"
+                                        },
+                                        {
+                                            "path":  "include/Core/Geometry/ParametricHermiteCurve.h",
+                                            "before_sha256":  "0C47EFB7056319F180102C7EAE2C45B57D451E3A13BBDFC9A39D8A26A87D7051",
+                                            "frozen_sha256":  "0C47EFB7056319F180102C7EAE2C45B57D451E3A13BBDFC9A39D8A26A87D7051"
+                                        },
+                                        {
+                                            "path":  "src/Apps/Hydrodynamics/HydroCase.cpp",
+                                            "before_sha256":  "B8AC1DDBAFB0E1421876B4CC6396A3FA84B5435610352285514D3E8BC49FB401",
+                                            "frozen_sha256":  "B8AC1DDBAFB0E1421876B4CC6396A3FA84B5435610352285514D3E8BC49FB401"
+                                        },
+                                        {
+                                            "path":  "src/Apps/Interface/IO/InterfaceBenchmarkInput.cpp",
+                                            "before_sha256":  "AB4A23B43CA4E9F8AC8F9A39BBAB728A899A885A4BAD8390CE3C97512BEA0EDA",
+                                            "frozen_sha256":  "AB4A23B43CA4E9F8AC8F9A39BBAB728A899A885A4BAD8390CE3C97512BEA0EDA"
+                                        },
+                                        {
+                                            "path":  "src/Apps/Interface/Verification/InterfaceAdvectionBenchmark.cpp",
+                                            "before_sha256":  "88E2D365725EC655D8E96F2F4AD421DB6727A09B0ACF08B746E4B2C7CA764463",
+                                            "frozen_sha256":  "88E2D365725EC655D8E96F2F4AD421DB6727A09B0ACF08B746E4B2C7CA764463"
+                                        },
+                                        {
+                                            "path":  "src/Core/Geometry/ParametricBoundary.cpp",
+                                            "before_sha256":  "93C6180D66307BCF5D1F042BB14B6436F3CCFD25BD22EA5E304531A415EFAB7E",
+                                            "frozen_sha256":  "93C6180D66307BCF5D1F042BB14B6436F3CCFD25BD22EA5E304531A415EFAB7E"
+                                        },
+                                        {
+                                            "path":  "src/Core/Geometry/ParametricHermiteCurve.cpp",
+                                            "before_sha256":  "25B38F9C0657266EB7EA5B06B10BD2E63B2DB01C03803B12A46F20E4A3A48B7E",
+                                            "frozen_sha256":  "25B38F9C0657266EB7EA5B06B10BD2E63B2DB01C03803B12A46F20E4A3A48B7E"
+                                        },
+                                        {
+                                            "path":  "src/Modules/Electricity/DielectricElectrostatics.cpp",
+                                            "before_sha256":  "F74C78D4362C0F94721B1F79042965291F16F7E644428315F1C5EB85A299FDB2",
+                                            "frozen_sha256":  "F74C78D4362C0F94721B1F79042965291F16F7E644428315F1C5EB85A299FDB2"
+                                        },
+                                        {
+                                            "path":  "src/Modules/Electricity/IO/DictionaryDielectric.cpp",
+                                            "before_sha256":  "D6B417282DA4080DDFED8E50438C21F464714717AEDE9E3243155A69875715FB",
+                                            "frozen_sha256":  "D6B417282DA4080DDFED8E50438C21F464714717AEDE9E3243155A69875715FB"
+                                        },
+                                        {
+                                            "path":  "src/Modules/Electricity/IO/DictionaryFittedElectric.cpp",
+                                            "before_sha256":  "02799A692037479E9D5E8013FB9C8F4A215C2F931334233DD0FD03BD9DFC1BAC",
+                                            "frozen_sha256":  "02799A692037479E9D5E8013FB9C8F4A215C2F931334233DD0FD03BD9DFC1BAC"
+                                        },
+                                        {
+                                            "path":  "src/Modules/Hydrodynamics/DictionaryHydrodynamics.cpp",
+                                            "before_sha256":  "F63E33D14143A3D36C862E31C3C2C2424B6D24536476F466623BD3FB1CFE0FD9",
+                                            "frozen_sha256":  "F63E33D14143A3D36C862E31C3C2C2424B6D24536476F466623BD3FB1CFE0FD9"
+                                        },
+                                        {
+                                            "path":  "src/Modules/Interface/IO/DictionaryInterface.cpp",
+                                            "before_sha256":  "F79A38138BBE87DF97807DBEBB1772746AC118D59E7182FA33340584B3D22630",
+                                            "frozen_sha256":  "F79A38138BBE87DF97807DBEBB1772746AC118D59E7182FA33340584B3D22630"
+                                        }
+                                    ],
+    "shared_scope_note":  "Integration/reference entries record wiring and shared geometry identity, not a blanket freeze of Core/Solvers or all branches in readers. V2 must follow its own roadmap tasks and state ownership; no new production parametric route is authorized by reuse.",
+    "verification_scope":  "Only frozen baseline identity and unchanged executable code; not a claim of V2 numerical readiness.",
+    "evidence":  "runs/baselines/S08_20261001",
+    "report":  "docs/task/S08_Experimental_Baselines_Report.md"
+}

@@ -1,0 +1,8 @@
+{
+    "program":  "LAMP_hermite_gals_benchmark.exe",
+    "study":  "space",
+    "arguments":  [
+                      "space"
+                  ],
+    "description":  "Pure Hermite-GALS space study"
+}

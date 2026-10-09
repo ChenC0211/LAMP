@@ -1,0 +1,235 @@
+{
+    "source_index":  "https://wwwold.mathematik.tu-dortmund.de/~featflow/en/benchmarks/cfdbenchmarking/bubble/bubble_reference.html",
+    "columns":  [
+                    "time",
+                    "bubble_mass_or_area",
+                    "circularity",
+                    "centroid_y",
+                    "mean_rise_velocity"
+                ],
+    "groups":  {
+                   "g1":  "TU Dortmund / TP2D",
+                   "g2":  "EPFL Lausanne / FreeLIFE",
+                   "g3":  "Uni Magdeburg / MooNMD"
+               },
+    "selection":  "Highest listed refinement level for each of three groups and two cases",
+    "raw_files_unchanged":  true,
+    "notes":  [
+                  "MooNMD zero area column is unavailable for area-error comparisons, not a vanishing bubble.",
+                  "Raw files have different starting and ending times; compare only on overlapping times without extrapolation.",
+                  "Sample extrema describe these raw files, not exact extrema or acceptance thresholds.",
+                  "No QUANTUM numerical run or comparison has been performed."
+              ],
+    "files":  [
+                  {
+                      "file":  "c1g1l7.txt",
+                      "source":  "https://wwwold.mathematik.tu-dortmund.de/~featflow/media/bubble/quantities/c1g1l7.txt",
+                      "retrieved_utc":  "2026-09-28T13:07:15.7323945Z",
+                      "sha256":  "4EEF7D53BA2766C6250E31EC28C82CE3C16B33F1CC7D6D596FCE7EFA6C63F6CA",
+                      "bytes":  1935486,
+                      "rows":  15361,
+                      "first_row":  {
+                                        "value":  [
+                                                      0,
+                                                      0.196336,
+                                                      1,
+                                                      0.5,
+                                                      0
+                                                  ],
+                                        "Count":  5
+                                    },
+                      "last_row":  {
+                                       "value":  [
+                                                     3,
+                                                     0.196345,
+                                                     0.920648,
+                                                     1.08132,
+                                                     0.193793
+                                                 ],
+                                       "Count":  5
+                                   },
+                      "strictly_increasing_time":  true,
+                      "zero_area_rows":  0,
+                      "area_available":  true,
+                      "rows_before_zero":  0,
+                      "rows_after_three":  0,
+                      "sampled_circularity_min_in_0_3":  0.901246,
+                      "sampled_rise_velocity_max_in_0_3":  0.241696
+                  },
+                  {
+                      "file":  "c1g2l3.txt",
+                      "source":  "https://wwwold.mathematik.tu-dortmund.de/~featflow/media/bubble/quantities/c1g2l3.txt",
+                      "retrieved_utc":  "2026-09-28T13:07:19.1144599Z",
+                      "sha256":  "D7A5CD18A2D3CE329C2906BF2CFA9762B3CB13D61370ED0D0CF1AF9A9B7BE4D8",
+                      "bytes":  120960,
+                      "rows":  960,
+                      "first_row":  {
+                                        "value":  [
+                                                      0.003125,
+                                                      0.19632718,
+                                                      0.99997852,
+                                                      0.50000813,
+                                                      0.00109651
+                                                  ],
+                                        "Count":  5
+                                    },
+                      "last_row":  {
+                                       "value":  [
+                                                     3,
+                                                     0.19633103,
+                                                     0.92015725,
+                                                     1.07987208,
+                                                     0.19409824
+                                                 ],
+                                       "Count":  5
+                                   },
+                      "strictly_increasing_time":  true,
+                      "zero_area_rows":  0,
+                      "area_available":  true,
+                      "rows_before_zero":  0,
+                      "rows_after_three":  0,
+                      "sampled_circularity_min_in_0_3":  0.90109593,
+                      "sampled_rise_velocity_max_in_0_3":  0.24209521
+                  },
+                  {
+                      "file":  "c1g3l4.txt",
+                      "source":  "https://wwwold.mathematik.tu-dortmund.de/~featflow/media/bubble/quantities/c1g3l4.txt",
+                      "retrieved_utc":  "2026-09-28T13:07:23.6534844Z",
+                      "sha256":  "B738B47F3F426BF05F75C7AF55125E0BF9074E8BD05F9865D0231EC6FE349C12",
+                      "bytes":  264852,
+                      "rows":  2102,
+                      "first_row":  {
+                                        "value":  [
+                                                      0.002168239,
+                                                      0,
+                                                      1,
+                                                      0.5000012,
+                                                      0.001163607
+                                                  ],
+                                        "Count":  5
+                                    },
+                      "last_row":  {
+                                       "value":  [
+                                                     3.000985,
+                                                     0,
+                                                     0.9207041,
+                                                     1.081944,
+                                                     0.1938028
+                                                 ],
+                                       "Count":  5
+                                   },
+                      "strictly_increasing_time":  true,
+                      "zero_area_rows":  2102,
+                      "area_available":  false,
+                      "rows_before_zero":  0,
+                      "rows_after_three":  1,
+                      "sampled_circularity_min_in_0_3":  0.9012524,
+                      "sampled_rise_velocity_max_in_0_3":  0.2416576
+                  },
+                  {
+                      "file":  "c2g1l8.txt",
+                      "source":  "https://wwwold.mathematik.tu-dortmund.de/~featflow/media/bubble/quantities/c2g1l8.txt",
+                      "retrieved_utc":  "2026-09-28T13:07:30.0827375Z",
+                      "sha256":  "7D16FE0A1AC91E90BF564F6A709F40BB80C9EE7550DF85453551216A7363DB6B",
+                      "bytes":  3871098,
+                      "rows":  30723,
+                      "first_row":  {
+                                        "value":  [
+                                                      0,
+                                                      0.196348,
+                                                      1,
+                                                      0.5,
+                                                      0
+                                                  ],
+                                        "Count":  5
+                                    },
+                      "last_row":  {
+                                       "value":  [
+                                                     3.0002,
+                                                     0.196348,
+                                                     0.714641,
+                                                     1.13807,
+                                                     0.216818
+                                                 ],
+                                       "Count":  5
+                                   },
+                      "strictly_increasing_time":  true,
+                      "zero_area_rows":  0,
+                      "area_available":  true,
+                      "rows_before_zero":  0,
+                      "rows_after_three":  2,
+                      "sampled_circularity_min_in_0_3":  0.586868,
+                      "sampled_rise_velocity_max_in_0_3":  0.252397
+                  },
+                  {
+                      "file":  "c2g2l3.txt",
+                      "source":  "https://wwwold.mathematik.tu-dortmund.de/~featflow/media/bubble/quantities/c2g2l3.txt",
+                      "retrieved_utc":  "2026-09-28T13:07:33.8047164Z",
+                      "sha256":  "E24FE39CE44F4EEB709F1C0B84481604FA97F24030A256AD653B5DD6F5A7283B",
+                      "bytes":  120960,
+                      "rows":  960,
+                      "first_row":  {
+                                        "value":  [
+                                                      0.003125,
+                                                      0.19633035,
+                                                      0.99997466,
+                                                      0.50001893,
+                                                      0.00113803
+                                                  ],
+                                        "Count":  5
+                                    },
+                      "last_row":  {
+                                       "value":  [
+                                                     3,
+                                                     0.19635391,
+                                                     0.46470793,
+                                                     1.12492366,
+                                                     0.20535565
+                                                 ],
+                                       "Count":  5
+                                   },
+                      "strictly_increasing_time":  true,
+                      "zero_area_rows":  0,
+                      "area_available":  true,
+                      "rows_before_zero":  0,
+                      "rows_after_three":  0,
+                      "sampled_circularity_min_in_0_3":  0.46470793,
+                      "sampled_rise_velocity_max_in_0_3":  0.25142701
+                  },
+                  {
+                      "file":  "c2g3l4.txt",
+                      "source":  "https://wwwold.mathematik.tu-dortmund.de/~featflow/media/bubble/quantities/c2g3l4.txt",
+                      "retrieved_utc":  "2026-09-28T13:07:36.8184788Z",
+                      "sha256":  "3D840A5406BD3362BFF608812ADB775A2C33FBA0E721A490E1D9D5CB97C56D1F",
+                      "bytes":  100800,
+                      "rows":  800,
+                      "first_row":  {
+                                        "value":  [
+                                                      0.004336477,
+                                                      0,
+                                                      0.9999967,
+                                                      0.5000056,
+                                                      0.002759174
+                                                  ],
+                                        "Count":  5
+                                    },
+                      "last_row":  {
+                                       "value":  [
+                                                     4.039896,
+                                                     0,
+                                                     0.4436783,
+                                                     1.358821,
+                                                     0.2102216
+                                                 ],
+                                       "Count":  5
+                                   },
+                      "strictly_increasing_time":  true,
+                      "zero_area_rows":  800,
+                      "area_available":  false,
+                      "rows_before_zero":  0,
+                      "rows_after_three":  206,
+                      "sampled_circularity_min_in_0_3":  0.5144436,
+                      "sampled_rise_velocity_max_in_0_3":  0.2502181
+                  }
+              ]
+}

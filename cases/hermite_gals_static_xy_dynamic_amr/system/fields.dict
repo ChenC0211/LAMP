@@ -1,0 +1,5 @@
+Fields
+{
+    Constants { radius .19; cy .51; cx .43; }
+    Velocity { type constant; value (0 0); }
+}

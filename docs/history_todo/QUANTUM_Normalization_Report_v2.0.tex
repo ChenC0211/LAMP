@@ -1,0 +1,295 @@
+% !TEX program = xelatex
+\documentclass[11pt,a4paper]{ctexart}
+
+\usepackage{geometry}
+\geometry{margin=2.2cm}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{siunitx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  frame=single,
+  framerule=0.4pt,
+  rulecolor=\color{black!30},
+  backgroundcolor=\color{black!2},
+  breaklines=true,
+  xleftmargin=1em,
+  xrightmargin=1em
+}
+
+\title{QUANTUM 量纲与无量纲化（Normalization）闭环规范\\\small 面向 v3 输入字典布局与 ExplicitPIC 模块}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{目的与结论（需要哪些局部调整）}
+在 v3 输入字典布局（\texttt{geometry/mesh/pic/mcc}）确定后，\textbf{原先的单位/无量纲化机制需要做局部调整与明确约束}，否则非常容易出现“形式上能跑但物理量级不对”的问题。
+
+\paragraph{结论 1：必须把“单位系统(Units)”与“无量纲闭环(Normalization)”分层并固化}
+QUANTUM 现有的 \texttt{UnitsContext} 与 \texttt{NormalizationContext} 已具备雏形，但需要在规范中明确：
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{UnitsContext：}负责\emph{输入输出}的 SI/code 换算（包括解析 \texttt{value+unit}）。
+  \item \textbf{NormalizationContext：}负责\emph{方程闭环}所需的参考尺度与派生尺度（$\rho_0,E_0,v_0$ 等），并提供 Poisson RHS、粒子推进、碰撞概率等的统一换算。
+\end{itemize}
+这两者必须共享同一套基准尺度 $\{L_0,T_0,\Phi_0,n_0\}$。
+
+\paragraph{结论 2：2D 情形必须显式给出 slab 厚度，否则电荷密度无法闭合}
+ExplicitPIC 目前大量算例是 2D（面积网格）。沉积得到的是 cell 内电荷量 $Q_c$，要得到体电荷密度 $\rho$ 必须引入体积 $V=A\,h_\mathrm{slab}$。
+因此\textbf{必须在字典中显式提供 \texttt{slabThickness}}（带长度单位），并在代码中统一用于 $V$ 的计算。
+
+\paragraph{结论 3：向量量（如 drift）也必须支持带单位输入，否则“全量纲输入”无法成立}
+当前 \texttt{DictionaryPIC} 对 \texttt{drift (vx,vy)} 仍按无单位纯数字解析（\texttt{parseCoord}），这与“所有输入带量纲”的约束冲突。
+需要为速度、加速度等向量量增加带单位解析（例如 \texttt{drift (1e5,0) m/s}）。
+
+\paragraph{结论 4：时间/长度的 SI 转换来源必须唯一，避免 Units 与 Normalization 双重换算}
+代码中同时出现 \texttt{units->TimeCodeToSI} 与 $t_{\mathrm{SI}}=T_0\,t_{\mathrm{code}}$ 两种写法。
+规范应要求：\textbf{对物理闭环只使用 Normalization 的 $T_0$；对 I/O 显示可使用 UnitsContext，但二者必须来源一致。}
+
+\section{数学问题定义（方法层面）}
+本文针对静电 PIC（ExplicitPIC）模块，给出与代码一致的数学问题与闭环规范。
+
+\subsection{物理量与单位}
+采用 SI 作为物理基准：
+\begin{itemize}[leftmargin=2em]
+  \item 位置 $\bm{x}$：\si{m}；时间 $t$：\si{s}；电势 $\Phi$：\si{V}；电场 $\bm{E}$：\si{V/m}。
+  \item 体电荷密度 $\rho$：\si{C/m^3}；数密度 $n$：\si{1/m^3}。
+  \item 粒子质量 $m$：\si{kg}；电荷 $q$：\si{C}（支持用 \texttt{e} 表示元电荷）。
+  \item 能量/温度：默认用 \si{eV} 输入（内部可换算到 \si{J}）。
+\end{itemize}
+
+\subsection{电势方程（含多相介质/导体）}
+静电近似下：
+\begin{align}
+-\nabla\cdot\bigl(\varepsilon_0\,\varepsilon_r(\bm{x})\,\nabla\Phi\bigr) &= \rho,\\
+\bm{E} &= -\nabla\Phi.
+\end{align}
+其中 $\varepsilon_r(\bm{x})$ 由几何相（phase）标记确定。
+
+\paragraph{边界条件}
+针对由 \texttt{geometry.dict} 定义的边界实体（domainBoundary / fixedBoundary / movingBoundary），在物理模块字典（\texttt{pic.dict}）中通过 \texttt{boundaryId} 引用来施加边界条件：
+\begin{itemize}[leftmargin=2em]
+  \item Dirichlet：$\Phi=\Phi_b(t)$ 或 $\phi=\phi_b(t)$（见后文无量纲化）。
+  \item Neumann：$\bm{n}\cdot(\varepsilon_r\nabla\Phi)=g$（静电常见为 $g=0$）。
+  \item Robin：$a\,\Phi+b\,\bm{n}\cdot\nabla\Phi=c$（用于等效电阻/介质层等扩展）。
+\end{itemize}
+
+\subsection{粒子方程与 PIC 沉积}
+每个宏粒子代表 $w_p$ 个真实粒子（无量纲计数）。对 species $s$：
+\begin{align}
+\frac{d\bm{x}_p}{dt} &= \bm{v}_p,\\
+\frac{d\bm{v}_p}{dt} &= \frac{q_s}{m_s}\,\bm{E}(\bm{x}_p,t) + \text{(collisions / sources)}.
+\end{align}
+
+\paragraph{沉积（推荐闭环形式）}
+先累计 cell 电荷量（SI）：
+\begin{equation}
+Q_c = \sum_{p\in\text{cell}} q_s\,w_p\,S_{cp},
+\end{equation}
+其中 $S_{cp}$ 为形函数权重（NGP/CIC 等）。再由体积 $V_c$ 得到体电荷密度：
+\begin{equation}
+\rho_c = \frac{Q_c}{V_c}.
+\end{equation}
+\textbf{2D slab 闭合：}若网格是 2D（面积 $A_c$），则 $V_c=A_c\,h_{\mathrm{slab}}$。
+
+\subsection{MCC/反应（概念层面）}
+碰撞频率（SI）典型形式：
+\begin{equation}
+\nu(\bm{x}) = n_{\mathrm{gas}}(\bm{x})\,\sigma(E)\,v, \qquad [\nu]=\si{s^{-1}}.
+\end{equation}
+碰撞概率：$P=1-\exp(-\nu\,\Delta t)$。
+
+\section{无量纲化（Normalization）规范（方法层面）}
+\subsection{基准尺度与派生尺度}
+选择最小且通用的四个基准尺度：
+\begin{equation}
+L_0\,[\si{m}],\quad T_0\,[\si{s}],\quad \Phi_0\,[\si{V}],\quad n_0\,[\si{1/m^3}].
+\end{equation}
+派生尺度（建议由代码自动计算）：
+\begin{equation}
+ v_0=\frac{L_0}{T_0},\qquad E_0=\frac{\Phi_0}{L_0},\qquad \rho_0=\varepsilon_0\frac{\Phi_0}{L_0^2},\qquad J_0=\rho_0 v_0.
+\end{equation}
+
+\paragraph{2D slab 厚度}
+对于 2D 网格，必须定义 $h_{\mathrm{slab}}$（\si{m}），以便
+\begin{equation}
+V_c = A_c\,h_{\mathrm{slab}}.
+\end{equation}
+
+\subsection{无量纲变量}
+定义
+\begin{equation}
+\bm{x}=L_0\,\tilde{\bm{x}},\quad t=T_0\,\tilde{t},\quad \Phi=\Phi_0\,\phi,
+\quad \bm{E}=E_0\,\tilde{\bm{E}},\quad \rho=\rho_0\,\tilde{\rho}.
+\end{equation}
+
+\subsection{Poisson 方程的闭环}
+由 $\rho_0=\varepsilon_0\Phi_0/L_0^2$ 可得无量纲 Poisson：
+\begin{equation}
+-\tilde{\nabla}\cdot\bigl(\varepsilon_r\,\tilde{\nabla}\phi\bigr)=\tilde{\rho}.
+\end{equation}
+\textbf{工程含义：}离散 Poisson 求解器内部的未知量应为 $\phi$，RHS 应为 $\tilde{\rho}$。
+
+\subsection{粒子推进的闭环（每个 species 的推进系数）}
+在无量纲变量下：
+\begin{equation}
+\frac{d\tilde{\bm{v}}}{d\tilde{t}}=\kappa_s\,\tilde{\bm{E}},
+\qquad \kappa_s=\frac{q_s}{m_s}\,\frac{\Phi_0 T_0^2}{L_0^2}.
+\end{equation}
+Leapfrog 形式（与代码注释一致）：
+\begin{equation}
+\tilde{\bm{v}}^{n+1/2}=\tilde{\bm{v}}^{n-1/2}+\kappa_s\,\tilde{\bm{E}}(\tilde{\bm{x}}^n)\,\Delta\tilde{t}.
+\end{equation}
+
+\subsection{碰撞/反应的闭环}
+建议内部统一使用无量纲频率
+\begin{equation}
+\tilde{\nu}=\nu\,T_0,
+\end{equation}
+则 $P=1-\exp(-\tilde{\nu}\,\Delta\tilde{t})$。
+
+\section{与 v3 输入字典的对应关系（方案层面）}
+\subsection{分层原则：哪些量写在何处}
+\begin{itemize}[leftmargin=2em]
+  \item \texttt{geometry.dict}：只负责几何拓扑、相（phase）、以及边界实体的编号。\textbf{所有几何长度必须带单位。}
+  \item \texttt{mesh.dict}：只负责网格策略（BackgroundMesh + Quadtree refinement policy），不再重复 domain。
+  \item \texttt{pic.dict}：只负责 ExplicitPIC 的物理设置与边界条件（引用几何的 \texttt{boundaryId}）。
+  \item \texttt{mcc.dict}：只负责碰撞/反应/MCC 输入（能量单位 eV、截面单位 m$^2$ 等）。
+\end{itemize}
+
+\subsection{Units 与 Normalization 的字典规范}
+当前运行时（\texttt{RunController}）必须从 \texttt{pic.dict} 中提取 \texttt{Units} 与 \texttt{Normalization} 块。
+
+\paragraph{Units 块（推荐必须提供）}
+\begin{lstlisting}
+Units
+{
+  mode SI
+  # Reference scales
+  L0   3 cm
+  T0   1 ns
+  Phi0 500 V
+  n0   1e16 1/m^3
+  writeSIOutputs true
+}
+\end{lstlisting}
+\textbf{解释：}Units 用于把带单位输入转为 code 值（即除以对应参考尺度）。例如长度输入 \texttt{3 cm} 会变为 $x_{\mathrm{code}}=0.03/L_0$。
+
+\paragraph{Normalization 块（2D 必须提供 slabThickness）}
+\begin{lstlisting}
+Normalization
+{
+  strategy manual            # manual | plasmaFrequency | thermal
+  dimension 2                # 2 or 3
+  slabThickness 1 mm         # required for 2D
+  # optional (for strategy != manual)
+  refSpecies electron
+  Te0 3 eV
+}
+\end{lstlisting}
+\textbf{解释：}
+\begin{itemize}[leftmargin=2em]
+  \item \texttt{strategy=manual}：直接采用 Units 给定的 $\{L_0,T_0,\Phi_0,n_0\}$。
+  \item \texttt{plasmaFrequency}：由 $n_0$ 与参考 species 自动取 $T_0=1/\omega_{p0}$。
+  \item \texttt{thermal}：由 $T_{e0}$ 自动取 $\Phi_0=T_{e0}/|q_{\mathrm{ref}}|$，并可取 $T_0=L_0/v_{th}$。
+\end{itemize}
+
+\subsection{在 pic.dict 中使用无量纲（code）还是 SI？}
+\textbf{规范建议：用户侧一律使用带单位输入（SI 或常用工程单位），程序内部统一转为 code 并求解。}
+这样可同时满足：
+\begin{itemize}[leftmargin=2em]
+  \item 用户表达清晰（避免“这串数字到底是米还是无量纲”）。
+  \item 内部方程闭环（RHS、推进、碰撞都通过同一组 $L_0,T_0,\Phi_0$ 换算）。
+  \item 仍可兼容 legacy：若用户输入纯数字且 \texttt{Units.mode=CodeUnits}，则按旧行为解释。
+\end{itemize}
+
+\section{代码实现要点与建议修改点（方案层面）}
+本节面向开发者，说明闭环在代码中的落点，并列出与“全量纲输入”匹配所需的局部调整。
+
+\subsection{现有实现的关键换算链}
+\paragraph{沉积到 Poisson RHS}
+ExplicitPIC 当前逻辑等价于：
+\begin{equation}
+\tilde{\rho}_c = \frac{Q_c}{\rho_0\,V_c},\qquad V_c = (\text{cell area in code})\cdot (L_0^2)\cdot h_{\mathrm{slab}}.
+\end{equation}
+其中 $\rho_0=\varepsilon_0\Phi_0/L_0^2$。
+
+\paragraph{推进系数 $\kappa_s$}
+当前实现按
+\begin{equation}
+\kappa_s = (q_s/m_s)\,(\Phi_0 T_0^2/L_0^2)
+\end{equation}
+计算并缓存到 \texttt{ParticleType}，Leapfrog 使用 $\kappa_s\,\tilde{E}\,\Delta\tilde{t}$。
+
+\paragraph{MCC 的时间尺度}
+碰撞模块应始终使用
+\begin{equation}
+\Delta t_{\mathrm{SI}} = T_0\,\Delta\tilde{t},
+\end{equation}
+再用 $\nu_{\mathrm{SI}}$ 计算概率。
+
+\subsection{必须落实的局部调整清单（建议作为开发验收项）}
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{2D slabThickness 强制：}当 \texttt{dimension=2} 时，若未给 \texttt{slabThickness}，应在启动时报错或至少显式警告并打印默认值（当前默认 \si{1 m} 风险很大）。
+  \item \textbf{drift 速度向量带单位解析：}扩展 \texttt{DictionaryPIC}，支持
+  \texttt{drift (vx,vy) m/s} 或 \texttt{drift (vx,vy) cm/s}；内部存为 SI（\si{m/s}），再由 $v_0=L_0/T_0$ 映射到 code。
+  \item \textbf{统一时间 SI 计算：}模块内部涉及物理时间（如时变边界、功率/通量统计、碰撞）时，统一用
+  $t_{\mathrm{SI}}=T_0\,t_{\mathrm{code}}$、$\Delta t_{\mathrm{SI}}=T_0\,\Delta t_{\mathrm{code}}$；避免在同一模块混用 \texttt{units->TimeCodeToSI}。
+  \item \textbf{启动诊断：}在 \texttt{normalization\_report.txt} 中额外输出关键无量纲数：
+  $\Delta t\,\omega_{pe,0}$、$\lambda_{D,0}/\Delta x_{\min}$、每个 species 的 $\kappa_s$。
+  \item \textbf{字典规范约束：}明确 \texttt{value+unit} 的允许单位集合（长度、时间、电势、压强、温度、能量、截面、密度），并在解析失败时给出清晰错误信息（包含行号与期望单位）。
+\end{enumerate}
+
+\section{推荐默认值与用户指南（简明）}
+\subsection{推荐的 Units/Normalization 选择}
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{工程直观（SI 数值运行）：}取 $L_0=\SI{1}{m},\ T_0=\SI{1}{s},\ \Phi_0=\SI{1}{V},\ n_0=\SI{1}{1/m^3}$。此时 code 数值等于 SI 数值，闭环仍成立。
+  \item \textbf{数值友好（量级归一）：}取 $L_0$ 为特征几何尺度（如极板间距），$\Phi_0$ 为偏置电压量级，$T_0$ 取 $1/\omega_{pe,0}$ 或 $L_0/v_{th}$。
+\end{itemize}
+
+\subsection{最小可跑模板（只展示与 Normalization 相关部分）}
+\begin{lstlisting}
+PIC { dt 5e-11 s  steps 1000 }
+
+Units
+{
+  mode SI
+  L0   3 cm
+  T0   1 ns
+  Phi0 500 V
+  n0   1e16 1/m^3
+}
+
+Normalization
+{
+  dimension 2
+  slabThickness 1 mm
+  strategy manual
+}
+\end{lstlisting}
+
+\section{附录：物理量与 code 量的换算速查}
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+物理量（SI） & code 定义 & 说明 \\
+\midrule
+$\bm{x}$ [m] & $\tilde{\bm{x}}=\bm{x}/L_0$ & 几何、网格坐标 \\
+$t$ [s] & $\tilde{t}=t/T_0$ & 时间推进 \\
+$\Phi$ [V] & $\phi=\Phi/\Phi_0$ & Poisson unknown \\
+$\bm{E}$ [V/m] & $\tilde{\bm{E}}=\bm{E}/(\Phi_0/L_0)$ & 插值到粒子 \\
+$\rho$ [C/m$^3$] & $\tilde{\rho}=\rho/(\varepsilon_0\Phi_0/L_0^2)$ & Poisson RHS \\
+$\nu$ [s$^{-1}$] & $\tilde{\nu}=\nu T_0$ & 碰撞频率 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

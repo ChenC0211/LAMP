@@ -1,0 +1,16 @@
+Hydrodynamics
+{
+    coordinateSystem axisymmetricRZ;
+    timeScheme cchMomentMidpoint;
+    materialModel constant;
+    density 1;
+    viscosity 0.02;
+    initialVelocity zero;
+    linearResidualTolerance 1e-10;
+    Moment { maximumIterations 24; convection central; }
+    boundaryPatches
+    {
+        supply { side south; type normalVelocity; start 0; end 1; value -0.1; }
+        outlet { side north; type pressureOutlet; start 0; end 1; value 0.2; }
+    }
+}

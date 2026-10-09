@@ -1,0 +1,6 @@
+Interface
+{
+    transport parametricGals;
+    advectInterface true;
+    reinitializeEvery 0;
+}

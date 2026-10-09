@@ -1,0 +1,5 @@
+Fields
+{
+    Constants { radius .13; cy .53; cx .65; omega 2; }
+    Velocity { type polynomial; origin (.5 .5); scale (1 1); Coefficients { c01 { x "-omega"; y "0"; } c10 { x "0"; y "omega"; } } }
+}

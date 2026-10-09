@@ -1,0 +1,7 @@
+adaptiveMesh false
+BackgroundMesh { divide (4, 4); }
+QuadtreeMesh { maxCellNum 4096; maxInitialIterations 0; }
+RefineBoxes
+{
+    upper_axis { min (0, 0.5); max (0.5, 1); level 1; }
+}

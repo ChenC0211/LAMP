@@ -1,0 +1,15 @@
+# 运动液面名称、移动边界、材料输运与钉扎接触线，由 Interface/IO 直接读取。
+# 按 schema 2 分文件格式从 hydro.dict 的 Hydrodynamics.Interface 原样拆出；
+# 液面 levelSet 编号与 geometry.dict 中 moving=true 的 "1" 一致。
+Interface
+{
+    levelSet "1"
+    movingBoundary 4
+    transport activeHermiteMaterial
+    # 点 6 固定在喷口唇缘；不指定或锁定接触角。
+    ContactLine
+    {
+        model pinned
+        points (6)
+    }
+}

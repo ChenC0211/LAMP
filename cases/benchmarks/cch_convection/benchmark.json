@@ -1,0 +1,6 @@
+{
+  "program": "LAMP_cch_convection_benchmark.exe",
+  "study": "full",
+  "arguments": ["full"],
+  "description": "H10b smooth inviscid frozen-advector convection: XY/RZ uniform/2:1 full periods, space/time convergence and donor control"
+}

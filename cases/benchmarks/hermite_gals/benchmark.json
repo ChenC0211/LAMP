@@ -1,0 +1,6 @@
+{
+  "program": "LAMP_hermite_gals_benchmark.exe",
+  "study": "full",
+  "arguments": ["full"],
+  "description": "Pure Hermite-GALS complete fixed-mesh verification windows"
+}

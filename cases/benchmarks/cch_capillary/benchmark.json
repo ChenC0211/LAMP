@@ -1,0 +1,6 @@
+{
+  "program": "LAMP_cch_capillary_benchmark.exe",
+  "study": "wave",
+  "arguments": ["wave"],
+  "description": "H13 candidate: actual capillary/FirstJet waves on XY uniform/AMR grids; data completion is not H13 acceptance"
+}

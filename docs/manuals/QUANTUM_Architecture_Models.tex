@@ -1,0 +1,256 @@
+% !TEX program = xelatex
+% Compile from docs/manuals; shared style: quantum-manual.sty.
+\documentclass[a4paper,11pt]{article}
+\usepackage{quantum-manual}
+\begin{document}
+\manualtitle{整体架构与数学模型}{第一册}{理解程序由什么组成、各模块求解什么，以及耦合计算的适用范围。}
+
+\section{先认识 QUANTUM}
+QUANTUM 是 C++17 多物理场程序，当前主要包含不可压缩两相流、界面运动、准静电与表面充电、电静力粒子模拟四类物理能力。用户通过算例目录中的字典选择应用入口（App），由 App 组织所需模块。并非把几个模块名称写在一起，就能自动得到新的耦合模型。
+
+本册面向使用者解释实际实现，不逐函数讲代码。第二册说明编译、运行和结果阅读；第三册说明输入格式、物性、边界、单位和数值控制。文中公式采用物理量书写，实际输入是否使用 SI 由具体入口决定。
+
+\subsection{可选工作流}
+\begin{longtable}{L{.24\linewidth}L{.34\linewidth}L{.34\linewidth}}
+\toprule 入口 & 解决的问题 & 当前主要边界 \\\midrule\endhead
+Hydrodynamics（经 SingleModule） & 单相或两相不可压缩流，压力投影、毛细载荷、可选界面运动 & 普通完整域 XY/RZ；新分文件格式使用代码单位 \\
+Electrohydrodynamics & 普通域电场、界面电荷与流动耦合 & 固定均匀网格上的既有普通域路径 \\
+Electrospray & 固定喷嘴中的供液、运动自由液面、毛细力、电力和充电 & schema 2；无旋流 RZ，一条开放液面，固定接触点 \\
+Interface & 只推进规定速度驱动的界面，观察体积收支 & 均匀 RZ，钉扎抛物面；不求 NS \\
+Electricity & 固定界面的介电电势场或显式表面充电 & XY/RZ 均匀矩形域；不求流场 \\
+ExplicitPIC / ImplicitPIC & 带电宏粒子与自洽电场，按设置加入碰撞和粒子边界 & 各自保留原 PIC 输入与数值策略 \\
+MeshVerification / PicVerification & 网格或 PIC 数值功能的独立核对 & 验证专用入口，不是新的物理模型 \\
+\bottomrule
+\end{longtable}
+
+\subsection{支持范围与物理完成度}
+流体/EHD 主线考虑等温、不可压缩、牛顿流体；空间是二维 XY 或轴对称 RZ。RZ 没有旋流速度分量。电场采用准静电近似，不求解电磁波传播。喷雾当前支持理想介电或漏电介质，不包含任意拓扑破裂、完整液滴发射及其空间电荷反馈。
+
+结构整理已按主计划完成九项收口条件。这表示职责、接口、输入归属和既有工作流已整理，并不表示全部物理问题已经通过收敛研究。接触点启动的网格敏感性、原生粗细网格黏性动量缺陷以及长时间射流仍待研究。三步小算例主要用于学习输入和确认运行接线。
+
+\section{分层架构与数据归属}
+\subsection{五层结构}
+\begin{center}
+\begin{tikzpicture}[box/.style={draw=accent,rounded corners,fill=pale,align=center,text width=11.7cm,minimum height=11mm,font=\small},node distance=5mm,>=Stealth]
+\node[box] (app) {Apps：选择问题、绑定几何与单位、主时钟、模块交换、输出调度};
+\node[box,below=of app] (mod) {Modules：Hydrodynamics / Interface / Electricity / Plasma\\各自拥有物理状态、方程装配和推进过程};
+\node[box,below=of mod] (sol) {Solvers：稀疏线性系统、Poisson 与离散算子、求解报告};
+\node[box,below=of sol] (core) {Core：网格、几何、公共场、材料记录、单位、基础 IO};
+\draw[->] (app)--(mod); \draw[->] (mod)--(sol); \draw[->] (sol)--(core);
+\end{tikzpicture}
+\end{center}
+上图表示主要依赖方向；App 和模块也可直接使用 Core。Runtime 提供注册、运行协议和通用时间/输出配置，不包含具体物理模型。物理模块不反向包含 App。Hydro 可以使用 Interface 的几何与材料映射服务；Electricity 与 Plasma 分别使用公共求解器，不通过彼此实现求场。
+
+\begin{longtable}{L{.20\linewidth}L{.42\linewidth}L{.30\linewidth}}
+\toprule 层/目录 & 拥有的职责 & 用户感知的结果 \\\midrule\endhead
+\code{Core} & 四叉树叶单元、面拓扑、水平集几何、材料/单位公共记录 & 几何能否绑定、网格分辨率、体积/面积度量 \\
+\code{Solvers} & 线性系统与离散算子；残差、直接解法服务 & 求解成功与代数残差；不决定物理时间步 \\
+\code{Modules} & 各物理状态和历史、推进候选、物理收支 & 速度、压力、界面、电势、电荷、粒子状态 \\
+\code{Apps} & 读入组合、身份与单位绑定、主循环、耦合时层 & 选哪个入口、哪些字典合法、何时保存结果 \\
+\code{Apps/Runtime} & 通用注册与运行控制 & App 选择、公共时间/输出规则 \\
+\bottomrule
+\end{longtable}
+
+\subsection{一个状态的含义}
+Hydro 持有流场及所需速度历史；Interface 持有液面几何、节点或拟合表示、运动历史和体积修正；Electricity 持有电势、表面电荷及充电历史；Plasma 持有粒子、场、碰撞与相关恢复状态。App 交换这些状态的视图或模块准备的结果，不维护另一套独立液面或电荷。
+
+状态的“已接受”与内迭代的临时结果不同。拟合喷雾与 AMR 在必要数据准备和检查完成后提交候选。PIC 会话保留原整步执行与输出顺序；中途失败会停止会话，但不能假定粒子状态、文件或已执行阶段全部回滚。用户应以退出码、接受步记录和完整检查点判断运行状态。
+
+\subsection{主要源码入口}
+\sourceentry{include/Modules/Hydrodynamics/HydroStep.h}{公共流体整步输入/结果；完整域和拟合域使用各自离散实现。}
+\sourceentry{include/Modules/Interface/InterfaceState.h}{拟合界面状态；普通节点界面另由 InterfaceNodalState 管理。}
+\sourceentry{include/Modules/Interface/InterfaceMotion.h}{钉扎到轴的运动准备，供喷雾和规定速度 Interface 复用。}
+\sourceentry{include/Modules/Electricity/DielectricEvolution.h}{普通域介电场与表面充电服务；拟合域另由 FittedChargeEvolution 等服务负责。}
+\sourceentry{include/Modules/Plasma/PicStepSession.h}{App 控制宏步循环，模块保持粒子子步、完整推进及检查点完成顺序。}
+
+\section{Core：几何、网格与度量}
+\subsection{几何不是一张背景图片}
+\code{geometry.dict} 定义计算域、点、线、水平集、相和边界身份。点/线/相/边界编号具有实际绑定意义。表面张力作用于相对；电极绑定导体相或域边界；流体压力口绑定流体边界。移动液面与固定固壁必须保持各自身份。
+
+水平集记为 $\psi(\vct{x})$，界面为 $\psi=0$。普通双相设置按 negative/positive 对应 $\psi<0$ 与 $\psi>0$。喷雾通过显式相编号和几何约束确定液体、气体、固体，不能仅凭材料标签推断。
+
+背景网格给出初始划分，四叉树叶网格支持局部细化/粗化。2:1 邻接、面覆盖、固体隔离和差分支撑约束是离散有效性的组成部分。Core 有自适应能力，并不意味着每个 App 都支持在物理时间循环中改变网格。
+
+\subsection{XY 与 RZ}
+XY 为平面坐标；二维量的积分厚度按入口的约定处理。RZ 使用 $r,z$，网格中的 x/y 对应 r/z。完整旋转体体积及界面面积为
+\begin{equation}
+\dd V=2\pi r\,\dd r\,\dd z,\qquad \dd A=2\pi r\,\dd s.
+\end{equation}
+轴对称无旋流的连续性为
+\begin{equation}
+\frac{1}{r}\frac{\partial(ru_r)}{\partial r}+\frac{\partial u_z}{\partial z}=0.
+\end{equation}
+$r=0$ 按轴对称极限处理，不是普通有面积入口。轴对称曲率同时包含子午线和周向贡献。几何的 \code{dimension 2} 描述二维坐标网格；喷雾归一化的 \code{dimension 3} 描述完整回转体积，两者并不冲突。
+
+\section{Hydrodynamics：不可压缩两相流}
+\subsection{连续模型与未知量}
+在各相内部，基本方程为
+\begin{align}
+\nabla\cdot\vct{u}&=0,\\
+\rho\left(\frac{\partial\vct{u}}{\partial t}+\vct{u}\cdot\nabla\vct{u}\right)
+&=-\nabla p+\nabla\cdot\vct{\tau}+\vct{f},
+\qquad \vct{\tau}=\mu\left(\nabla\vct{u}+\nabla\vct{u}^{T}\right).
+\end{align}
+$\rho$ 是质量密度，$\mu$ 是动力黏度，$p$ 是物理压力。两相使用各相常数物性并按界面表示映射到离散域。$\vct{f}$ 表示当前入口实际提供的载荷；不能由方程写有载荷项推断某种外力已有字典开关。
+
+毛细作用可用界面应力跳跃或等效集中力理解。采用与法向相容的曲率符号时，其形式为 $\gamma\kappa\vct{n}\delta_\Gamma$，其中 $\gamma$ 为常数表面张力。实际代码按所选界面几何和加载策略形成离散载荷，不直接把形式上的 Dirac 函数当作网格值。
+
+\subsection{求解步骤和残差}
+程序使用动量预测、压力/连续性修正以及适用路径的速度--压力联合修正。可用下面的投影关系理解压力修正的作用：
+\begin{equation}
+\vct{u}^{n+1}=\vct{u}^{*}-\Delta t\,\rho^{-1}\nabla\pi,
+\qquad \nabla\cdot\vct{u}^{n+1}=0.
+\end{equation}
+这只是说明关系。完整域、拟合域、原生粗细网格的实际矩阵、压力模板和历史项不同；$\pi$ 也不能直接当作输出物理压力。尤其 AMR 的零时间连续性修正不应累加到物理压力。
+
+线性残差小，说明某个组装系统求解得足够准确；不单独证明完整 NS 动量平衡、相通量或质量收支正确。正式输入因此分别配置线性容限和物理容限。原生粗细网格部分黏性路径仍有完整动量缺陷，不能用更严格 SuperLU 残差掩盖。
+
+\subsection{边界与界面力}
+普通域可使用已支持的速度/压力边界片。法向速度按外法向约定，负值代表流入。喷雾供液口给定压力，流量由解产生；增加供液压力与指定固定流量是不同问题。压力出口可能出现回流，必须按入口规则配置回流相或接受拒绝回流的限制。
+
+喷雾固壁采用 noSlip，压力端口的动量延拓使用现有 \code{interiorContinuationZeroShear} 模型。接触点钉扎不等于指定接触角，也不包含接触线迁移模型。\code{halfWidthCells} 是数值载荷带宽，不是物理液气过渡层厚度。
+
+\section{Interface：界面运动与体积}
+\subsection{输运方程}
+物质界面随速度运动的基本描述为
+\begin{equation}
+\frac{\partial\psi}{\partial t}+\vct{u}\cdot\nabla\psi=0.
+\end{equation}
+普通节点界面路径提供输运、可选重初始化和几何重构。重初始化周期不改变物理时间步，它用于维护界面表示质量。拟合喷雾使用已有的活跃 Hermite 材料输运、钉扎约束和体积修正，不能与普通节点 reader 的字段混用。
+
+以液相占据函数 $\chi_l$ 表示相体积，开放域应满足
+\begin{equation}
+\frac{\dd}{\dd t}\int_{\Omega}\chi_l\,\dd V
+=-\int_{\partial\Omega}\chi_l\vct{u}\cdot\vct{n}_\Omega\,\dd A.
+\end{equation}
+封闭域右端为零；供液喷嘴右端一般不为零。体积修正应与实际边界液体通量比较，不能简单要求液体体积始终不变。线性体积修正子问题的残差也不替代局部与全局体积检查。
+
+\subsection{三种入口的区别}
+\begin{longtable}{L{.23\linewidth}L{.33\linewidth}L{.36\linewidth}}
+\toprule 入口 & 界面数据 & 速度来源 \\\midrule\endhead
+普通 Hydro/EHD & 水平集名称、节点输运、可选重初始化；接触输入限适用 Hydro & Hydro 的实际流场 \\
+喷雾 schema 2 & 开放液面、移动边界 ID、固定接触点、材料轨迹 & 拟合 Hydro 原生速度与通量 \\
+独立 Interface & 初始抛物面、固定唇缘、轴线/壁面/端口组 & 人为规定的轴向速度，不求流动方程 \\
+\bottomrule
+\end{longtable}
+独立样例初态和速度为
+\begin{align}
+\psi(r,z)&=z-z_{\rm pin}-h\left(1-r^2/R^2\right),\\
+u_r&=0,\qquad u_z=U\left(1-r^2/R^2\right)^5\quad(0\le r<R),
+\end{align}
+且 $r\ge R$ 时速度为零。这里 $R$ 来自钉扎点半径。这是界面输运样例，不是喷嘴流动的解析解。
+
+\section{Electricity：电场、表面电荷与电力}
+\subsection{准静电模型}
+以 $\varphi$ 表示电势，避免与水平集 $\psi$ 混淆：
+\begin{equation}
+\vct{E}=-\nabla\varphi,\qquad
+\nabla\cdot(\epsilon\vct{E})=\rho_e,\qquad
+-\nabla\cdot(\epsilon\nabla\varphi)=\rho_e.
+\end{equation}
+普通介电/漏电流体模型主要考虑分相介电性质和界面自由电荷，不推进一般体空间电荷输运。PIC 中的体电荷由粒子沉积产生，是另一个工作流。
+
+设界面法向从负相指向正相、跳跃记为 $[a]=a_+-a_-$，则理想连续界面满足
+\begin{equation}
+[\varphi]=0,\qquad [\epsilon\vct{E}\cdot\vct{n}]=q_s.
+\end{equation}
+$q_s$ 是面电荷密度，不是体电荷密度。\code{perfectDielectric} 的当前喷雾路径取自由面电荷为零，但介电常数跳跃仍产生极化作用。\code{leakyDielectric} 引入欧姆电流 $\vct{J}=\sigma\vct{E}$ 及面电荷演化。
+
+\subsection{表面电荷守恒与时间推进}
+对随界面移动的材料面片 $S(t)$，其守恒形式为
+\begin{equation}
+\frac{\dd}{\dd t}\int_{S(t)}q_s\,\dd A
+=\int_{S(t)}(\vct{J}_{-}-\vct{J}_{+})\cdot\vct{n}\,\dd A.
+\end{equation}
+左侧包含材料输运和面积变化；固定界面没有该几何运动。喷雾显式充电使用旧场电流，再沿共用材料轨迹搬运电荷。隐式充电在新液面上迭代电荷与电场；等步长时对应首步后向 Euler、随后二阶后向差分的形式：
+\begin{equation}
+\frac{Q^{n+1}-Q^n}{\Delta t}=I^{n+1},\qquad
+\frac{3Q^{n+1}-4Q^n+Q^{n-1}}{2\Delta t}=I^{n+1}.
+\end{equation}
+这里的 $Q$ 是一致搬运到对应材料面片上的积分电荷；不能把不同网格下同一下标的密度直接代入。隐式迭代同时要求变化量与完整离散方程通过，并保留电极收支检查。
+
+当前充电路径仍保留 $\Delta t\max(\sigma/\epsilon)\le0.25$ 限制。使用隐式选项并不意味着可任意放大时间步。正式独立 Electricity 只提供固定界面的显式充电，输出电荷与重新求得的电场属于同一发布时层。
+
+\subsection{离散模型与力的传递}
+\begin{longtable}{L{.26\linewidth}L{.32\linewidth}L{.34\linewidth}}
+\toprule 选择 & 用途 & 当前组合 \\\midrule\endhead
+\code{diffuseTanh} & 平滑介电材料过渡 & 普通 XY 理想介电路径 \\
+\code{sharpHermiteP3} & 锐界面重构，显式处理跳跃/面电荷 & 普通 RZ/导电及拟合导电路径 \\
+\code{cellHarmonic} & 拟合域单元调和介电求场 & 喷雾理想介电、零自由面电荷 \\
+\bottomrule
+\end{longtable}
+宏观电应力可用 Maxwell 张量说明：
+\begin{equation}
+\vct{T}^{e}=\epsilon\left(\vct{E}\otimes\vct{E}-\tfrac12|\vct{E}|^2\vct{I}\right).
+\end{equation}
+界面应力跳跃产生电牵引，电学模块提供与其离散模型一致的电场/牵引数据，Hydro 负责映射到动量方程。平滑极化体力和锐界面牵引是不同表示，不应当作两份独立电力重复加载。
+
+\section{Plasma：电静力 PIC 与碰撞}
+\subsection{粒子--网格模型}
+物种 $s$ 的电静力动理学描述为
+\begin{equation}
+\frac{\partial f_s}{\partial t}+\vct{v}\cdot\nabla_x f_s
++\frac{q_s}{m_s}\vct{E}\cdot\nabla_v f_s=C_s[f].
+\end{equation}
+PIC 用有限个宏粒子表示分布函数。宏粒子的权重 $w_p$ 表示所代表的实际粒子数；它不同于网格插值权重。运动与电荷沉积可概括为
+\begin{equation}
+\frac{\dd\vct{x}_p}{\dd t}=\vct{v}_p,\quad
+\frac{\dd\vct{v}_p}{\dd t}=\frac{q_s}{m_s}\vct{E}(\vct{x}_p),\quad
+\rho_{e,i}=\frac{1}{V_i}\sum_p w_pq_s W_{ip}.
+\end{equation}
+$W_{ip}$ 为实际网格、切割域和粒子位置所对应的沉积权重。沉积电荷后求 Poisson，再把电场插值回粒子。嵌入边界、匹配 gather、轨道平均及粒子边界都有各自实现，不能仅凭上式选择任意插值方式。
+
+\subsection{显式与隐式}
+ExplicitPIC 使用已有 leapfrog 推进及沉积--求场--插值链。ImplicitPIC 使用预测轨道、轨道平均权重和粒子响应形成的极化系数来修正场方程，再完成粒子推进。隐式路径的 \code{muCell}/\code{muFace} 是该极化响应的诊断量，不是流体动力黏度。
+
+两条路径共用若干场、边界、碰撞和 IO 服务，但首末帧规则、部分默认值及诊断时间窗口仍有差异。不能仅替换模块名便假定所有输出文件逐行相同。独立 PIC 当前也不等于已经完成喷雾发射粒子与空间电荷的双向耦合。
+
+\subsection{碰撞、边界和恢复}
+开启 MCC 时，程序按背景气体、截面与反应定义随机碰撞。单一碰撞频率 $\nu$ 对应时间窗概率 $1-\exp(-\nu\Delta t)$；实际实现还使用各反应截面、相对速度、null-collision 和碰撞后模型。基础 \code{pic_smoke} 没有启用 MCC；测试片段提供 Ar 弹性碰撞的具体接线。
+
+粒子源、吸收/反射、二次电子发射和运动嵌入边界是否启用，取决于原 PIC 字典和所选路径。恢复计算需要完整检查点，可能包括粒子、网格、场、随机数及碰撞历史。空间场 DAT 或历史 CSV 不能替代检查点。
+
+\section{耦合顺序：怎样理解一个时间步}
+\subsection{普通 Hydro 与 EHD}
+普通 Hydro 组合物性、界面载荷和流动边界，调用流体推进，再按工作流更新界面与诊断。普通 EHD 还在既有时层求电场/电荷并绑定电力。其电场/载荷与完成流场保留原先各自的时间层；不能只按文件名步号把所有列解释成严格同步的单体隐式解。
+
+\subsection{喷雾运动液面}
+可按下列责任链阅读当前喷雾流程：
+\begin{enumerate}
+\item 由已接受状态和已有载荷推进 NS，形成流体候选。
+\item Interface 使用同源速度与边界通量准备液面运动、钉扎及体积修正。
+\item Electricity 结合所选显式/隐式策略搬运并推进电荷，重求电场和界面载荷。
+\item App 汇合跨模块接受条件，提交结果，更新历程并按频率写场。
+\item 若启用且满足条件，在后续步前准备 AMR 候选，联合转移场、界面与时间历史。
+\end{enumerate}
+这是顺序耦合，新的电场/载荷供后续 NS 步使用。隐式表面充电并未把整个 NS--界面--电场系统改成单一整体隐式方程。
+
+当前喷雾 AMR 限于已接通的导电原生 Q4 粗细网格路径，保护液面、边界和差分支撑，主要在允许的单相区域改变层级。不能把它解释为自由拆分液面单元或拓扑破裂算法。
+
+\section{单位、时间尺度与结果可信度}
+\subsection{喷雾的主要尺度}
+严格 SI 输入使用长度 $L_0$、时间 $T_0$、电势 $\Phi_0$，导出
+\begin{align}
+U_0&=L_0/T_0,&E_0&=\Phi_0/L_0,\\
+p_0&=\rho_lU_0^2,&\mu_0&=\rho_lU_0L_0,\\
+q_{s0}&=\epsilon_0\Phi_0/L_0,&Q_0&=\epsilon_0\Phi_0L_0.
+\end{align}
+其中 $\rho_l$ 来自液体质量密度。\code{Units.rho0} 是保留的体电荷参考字段，不是质量密度，也不是当前喷雾实际电荷尺度；\code{rho0/n0} 在喷雾生效报告中标为未消费。公共归一化派生体电荷尺度为 $\epsilon_0\Phi_0/L_0^2$。
+
+\subsection{区分三类“通过”}
+\begin{enumerate}
+\item 输入预检查：文件、字段、组合和几何身份在支持范围内；尚未证明离散网格质量。
+\item 计算接受：当前步实际线性求解、模块与跨模块收支检查通过。
+\item 物理验证：网格/时间步收敛、解析或实验对照、足够长的演化窗口；需针对研究问题另做。
+\end{enumerate}
+日常调整可按完整工作包集中核对，无需每改一个注释或拆一个函数就跑整套检查。做物理研究时，应同时看界面形状、速度/压力、电荷/电流、体积与完整残差，而不是仅看程序退出成功。
+
+\section{查阅依据与维护}
+本册依据 2026-09-19 的源码和现行输入归属编写。精确字段以第三册及现行字典参考为入口；新增功能后应同步更新 reader、消费者与文档。
+\sourceentry{docs/QUANTUM_Code_Organization_Standard.md}{第 1--4 节：职责、依赖和状态所有权规则。}
+\sourceentry{docs/QUANTUM_Dictionary_Reference.md}{第 5--7、15 节：当前喷雾、独立模块和普通域语法。}
+\sourceentry{docs/QUANTUM_Modular_Consolidation_Plan.md}{第 4.3、5.1、8 节：源码责任链、输入消费者和结构完成条件。}
+\sourceentry{docs/QUANTUM_Hydro_EHD_Progress.md}{当前尚未关闭的数值/物理问题。}
+\sourceentry{src/Modules/Plasma/ImplicitPIC/ImplicitPicPolarization.cpp}{隐式 PIC 极化响应的实际实现；显式推进见同模块 ExplicitPIC 目录。}
+\sourceentry{src/Modules/Electricity/FittedChargeEvolution.cpp}{拟合充电的材料历史搬运、隐式迭代和电荷方程检查。}
+\end{document}

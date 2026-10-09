@@ -1,0 +1,6 @@
+{
+  "program": "LAMP_cch_convection_benchmark.exe",
+  "study": "controlled",
+  "arguments": ["controlled"],
+  "description": "H11 local controlled dissipation: smooth convergence and localized unresolved wave packet, XY/RZ uniform/2:1, T=1; prescribed-advector verification, not full Euler/NS"
+}

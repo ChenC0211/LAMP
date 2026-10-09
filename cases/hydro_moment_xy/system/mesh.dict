@@ -1,0 +1,8 @@
+adaptiveMesh false
+BackgroundMesh { divide (8, 10); }
+QuadtreeMesh { maxCellNum 2048; maxInitialIterations 0; }
+RefineBoxes
+{
+    center { min (0.25, 0.25); max (0.75, 0.75); level 1; }
+    core { min (0.4375, 0.375); max (0.625, 0.5625); level 2; }
+}

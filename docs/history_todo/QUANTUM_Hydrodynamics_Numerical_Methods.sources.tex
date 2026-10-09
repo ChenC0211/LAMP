@@ -1,0 +1,222 @@
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S01：接口、选项、求解报告与状态语义}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/Hydrodynamics.h}\par
+\noindent 定位：第 27 行；\code{class Hydrodynamics}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroSolveReport.h}\par
+\noindent 定位：第 12 行；\code{struct HydroSolveOptions}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/Hydrodynamics.cpp}\par
+\noindent 定位：第 37 行；\code{Eigen::VectorXd Hydrodynamics::checkedLinearSolve}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S02：完整域时间步、物性与旧耦合实现}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/Hydrodynamics_impl.h}\par
+\noindent 定位：第 92 行；\code{HydroSolveReport Hydrodynamics::solveStep}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/Hydrodynamics_impl.h}\par
+\noindent 定位：第 2059 行；\code{void Hydrodynamics::buildMomenRHS}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/Hydrodynamics_impl.h}\par
+\noindent 定位：第 449 行；\code{void Hydrodynamics::updateProperties}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/Hydrodynamics_impl.h}\par
+\noindent 定位：第 6495 行；\code{void Hydrodynamics::applyDirectForce}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S03：粗细面虚拟子中心、压力和材料插值}\par
+{\small\noindent\path{include/Solvers/Operators/QuadtreeFaceGradient.h}\par
+\noindent 定位：第 18 行；\code{supCoeff childCenter}。\par}
+{\small\noindent\path{include/Solvers/Operators/QuadtreeFaceGradient.h}\par
+\noindent 定位：第 76 行；\code{void visitGradient}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroNativePressureStencil.h}\par
+\noindent 定位：第 22 行；\code{FaceData faceData}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S04：原生粗细压力投影与历史压力加载}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydrodynamicsPressure_impl.h}\par
+\noindent 定位：第 8 行；\code{void Hydrodynamics::solveNativeAdaptivePressure}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydrodynamicsPressure_impl.h}\par
+\noindent 定位：第 95 行；\code{void Hydrodynamics::addHistoricalPressure}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S05：开放边界、压力投影与 RZ 环向应力}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroBoundary_impl.h}\par
+\noindent 定位：第 100 行；\code{void Hydrodynamics::addBoundaryMomentum}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroBoundary_impl.h}\par
+\noindent 定位：第 249 行；\code{void Hydrodynamics::addNativeRZHoop}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S06：完整均匀域附加耦合修正}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydrodynamicsCoupled_impl.h}\par
+\noindent 定位：第 9 行；\code{void Hydrodynamics::correctCoupledBalance}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S07：同层 RZ 原生动量行与 CN/AB2}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroNativeRZRow_impl.h}\par
+\noindent 定位：第 56 行；\code{void appendRadialMatrix}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroNativeRZRow_impl.h}\par
+\noindent 定位：第 99 行；\code{inline double radialRhs}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydrodynamicsRZ_impl.h}\par
+\noindent 定位：第 140 行；\code{void Hydrodynamics::buildMomenMatrixRZ}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S08：贴合动量行、边界半对偶体与环向项}\par
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedMomentum.cpp}\par
+\noindent 定位：第 33 行；\code{class Assembly}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedMomentum.cpp}\par
+\noindent 定位：第 553 行；\code{void hoop(}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S09：贴合域完整求解顺序和候选检查}\par
+{\small\noindent\path{src/Modules/Hydrodynamics/HydrodynamicsFitted.cpp}\par
+\noindent 定位：第 105 行；\code{HydroSolveReport Hydrodynamics::solveFittedRZ}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S10：活动域、原生面映射与 B/C 算子}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroFittedDomain.h}\par
+\noindent 定位：第 19 行；\code{enum class BoundaryType}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedDomain.cpp}\par
+\noindent 定位：第 404 行；\code{result.divergence_.resize}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S11：贴合域压力与鞍点系统}\par
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedProjection.cpp}\par
+\noindent 定位：第 25 行；\code{System assemble(}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedProjection.cpp}\par
+\noindent 定位：第 80 行；\code{CoupledSystem assembleCoupledCorrection}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S12：普通 Hydro 配置与 tanh 指标}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydrodynamicsConfig.h}\par
+\noindent 定位：第 26 行；\code{struct HydrodynamicsConfig}。\par}
+{\small\noindent\path{src/Core/Geometry/LevelSet.cpp}\par
+\noindent 定位：第 9 行；\code{LevelSet::convertToHyperTan}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S13：毛细力共用公式及历史轮廓符号}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroBalancedForce.h}\par
+\noindent 定位：第 118 行；\code{Report buildCapillaryFaceForce}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroBalancedForce.h}\par
+\noindent 定位：第 228 行；\code{const double force = sigma * curvature * gradient}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S14：Hermite 标量、快照与悬挂节点约束}\par
+{\small\noindent\path{include/Core/Geometry/LevelSetHermiteGeometry.h}\par
+\noindent 定位：第 133 行；\code{class Snapshot}。\par}
+{\small\noindent\path{include/Core/Geometry/Detail/LevelSetLeafHermiteScalar.h}\par
+\noindent 定位：第 21 行；\code{namespace}。\par}
+{\small\noindent\path{include/Core/Geometry/ActiveHermitePatch.h}\par
+\noindent 定位：第 11 行；\code{struct}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S15：几何 PL 和紧支撑正相指标}\par
+{\small\noindent\path{include/Core/Geometry/LevelSetPhaseFraction.h}\par
+\noindent 定位：第 78 行；\code{inline double regularizedPositiveIndicator}。\par}
+{\small\noindent\path{include/Core/Geometry/InterfaceLoadGeometry.h}\par
+\noindent 定位：第 22 行；\code{class InterfaceLoadGeometry}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S16：贴合毛细力、压力相容梯度和 RZ 曲率}\par
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedCapillary.cpp}\par
+\noindent 定位：第 131 行；\code{face.surfaceCurvature}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedInterfaceLoadGeometry.cpp}\par
+\noindent 定位：第 91 行；\code{double wallIndicatorGradient}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedInterfaceLoadGeometry.cpp}\par
+\noindent 定位：第 486 行；\code{buildNativeFittedInterfaceLoadGeometry}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S17：普通 Hydro 时间循环、力端口和界面更新}\par
+{\small\noindent\path{src/Modules/Hydrodynamics/HydrodynamicsModule.cpp}\par
+\noindent 定位：第 39 行；\code{void prepareMesh}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydrodynamicsModule.cpp}\par
+\noindent 定位：第 848 行；\code{forceDiagnostic.forceTime =}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroCoupling.h}\par
+\noindent 定位：第 17 行；\code{class HydroCoupling}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S18：通量兼容速度重构与面原函数}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroFittedVelocity.h}\par
+\noindent 定位：第 27 行；\code{class HydroFittedVelocitySampler}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedVelocity.cpp}\par
+\noindent 定位：第 137 行；\code{struct HydroFittedVelocitySampler::Impl}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroFittedFaceFlux.h}\par
+\noindent 定位：第 12 行；\code{class HydroFittedFaceFlux}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S19：相分段、通量账本与通量灵敏度}\par
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedPhaseMeasure.cpp}\par
+\noindent 定位：第 270 行；\code{FluxBudget phaseFluxBudget}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedPhaseMeasure.cpp}\par
+\noindent 定位：第 373 行；\code{FluxSensitivity phaseFluxSensitivity}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S20：喷嘴 NS--界面--电学时间层与提交}\par
+{\small\noindent\path{src/Apps/Electrospray/ElectrosprayTimeLoop.cpp}\par
+\noindent 定位：第 197 行；\code{hydro.solveFittedRZ}。\par}
+{\small\noindent\path{src/Apps/Electrospray/ElectrosprayTimeLoop.cpp}\par
+\noindent 定位：第 225 行；\code{prepareElectrosprayInterfaceMotion}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S21：喷嘴相身份与机械无量纲尺度}\par
+{\small\noindent\path{src/Apps/Electrospray/Setup/ElectrosprayMaterials.cpp}\par
+\noindent 定位：第 131 行；\code{ElectrosprayHydroScales::ElectrosprayHydroScales}。\par}
+{\small\noindent\path{src/Apps/Electrospray/Setup/ElectrosprayMaterials.cpp}\par
+\noindent 定位：第 144 行；\code{void updateElectrosprayHydroMaterials}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S22：活动水平集特征线与 Q4 增量重构}\par
+{\small\noindent\path{src/Core/Geometry/ActiveLevelSetTransport.cpp}\par
+\noindent 定位：第 320 行；\code{Candidate advance}。\par}
+{\small\noindent\path{src/Core/Geometry/ActiveLevelSetTransport.cpp}\par
+\noindent 定位：第 424 行；\code{Candidate advanceNative}。\par}
+{\small\noindent\path{include/Core/Geometry/LevelSetBoundaryTrace.h}\par
+\noindent 定位：第 243 行；\code{inline Result trace}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S23：零时间质量加权兼容初值投影}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroInitialization_impl.h}\par
+\noindent 定位：第 7 行；\code{Hydrodynamics::initializeCompatibleVelocity}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S24：开放边界法向速度和完整牵引契约}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroBoundary.h}\par
+\noindent 定位：第 36 行；\code{struct HydroBoundaryPatch}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S25：普通水平集双二次插值、回溯与重距离}\par
+{\small\noindent\path{include/Core/Geometry/ImmersedGeometry_impl.h}\par
+\noindent 定位：第 1585 行；\code{void ImmersedGeometry<Mesh>::updateLevelSets}。\par}
+{\small\noindent\path{include/Core/Geometry/ImmersedGeometry_impl.h}\par
+\noindent 定位：第 1879 行；\code{Vector2D ImmersedGeometry<Mesh>::getPreCoordDetailed}。\par}
+{\small\noindent\path{include/Core/Geometry/ImmersedGeometry_impl.h}\par
+\noindent 定位：第 1550 行；\code{void ImmersedGeometry<Mesh>::exactRedistanceMovingLevelSets}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S26：体积修正线性系统与默认收支门}\par
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedVolumeCorrection.cpp}\par
+\noindent 定位：第 36 行；\code{Result solveImpl}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedVolumeCorrection.cpp}\par
+\noindent 定位：第 306 行；\code{Result solveBalanceDefect}。\par}
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroFittedVolumeCorrection.h}\par
+\noindent 定位：第 85 行；\code{struct Options}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S27：同源 Hermite 微分与曲线表示}\par
+{\small\noindent\path{include/Core/Geometry/Detail/LevelSetHermiteDifferential.h}\par
+\noindent 定位：第 8 行；\code{namespace}。\par}
+{\small\noindent\path{src/Core/Geometry/LevelSetInterfacePanels.cpp}\par
+\noindent 定位：第 20 行；\code{namespace}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S28：非线性体积候选、原生完整收支 Jacobian}\par
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedVolumeCorrectionStep.cpp}\par
+\noindent 定位：第 354 行；\code{const auto linear = layout==SourceLayout::NativeLeaves}。\par}
+{\small\noindent\path{src/Modules/Hydrodynamics/HydroFittedVolumeCorrectionStep.cpp}\par
+\noindent 定位：第 135 行；\code{bool balanceConverged}。\par}
+{\small\noindent\path{src/Modules/Interface/InterfaceCellMeasure.cpp}\par
+\noindent 定位：第 19 行；\code{namespace}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S29：贴合数值容限的独立参数}\par
+{\small\noindent\path{include/Modules/Hydrodynamics/HydroFittedNumerics.h}\par
+\noindent 定位：第 9 行；\code{struct HydroFittedNumerics}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S30：旧双二次/双线性插值与压力最小二乘基}\par
+{\small\noindent\path{include/Core/Base/Interpolation_impl.h}\par
+\noindent 定位：第 10 行；\code{double biQuadInterpolation}。\par}
+{\small\noindent\path{src/Core/Base/Interpolation.cpp}\par
+\noindent 定位：第 120 行；\code{vector<double> leastSquareInterpolationCoeff}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{S31：共享 Q4 系数、QR 及物理导数缩放}\par
+{\small\noindent\path{include/Core/Geometry/LevelSetPolynomialReconstruction.h}\par
+\noindent 定位：第 46 行；\code{class Reconstruction}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{V01：原生压力通量历史验证记录}\par
+{\small\noindent\path{docs/validation/hydro/QUANTUM_Hydro_Adaptive_Pressure_20260913.md}\par
+\noindent 定位：第 33 行；\code{## 3.}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{V02：贴合域/原生几何：旧失败与通量导数修复验证}\par
+{\small\noindent\path{docs/validation/hydro/QUANTUM_Hydro_Fitted_Adaptive_20260913.md}\par
+\noindent 定位：第 307 行；\code{## 16.}。\par}
+{\small\noindent\path{docs/validation/hydro/QUANTUM_Hydro_Fitted_Adaptive_20260913.md}\par
+\noindent 定位：第 331 行；\code{## 17.}。\par}
+{\small\noindent\path{docs/validation/hydro/QUANTUM_Hydro_Fitted_Adaptive_20260913.md}\par
+\noindent 定位：第 361 行；\code{## 18.}。\par}
+{\small\noindent\path{docs/validation/hydro/QUANTUM_Hydro_Fitted_Adaptive_20260913.md}\par
+\noindent 定位：第 468 行；\code{## 22.}。\par}
+{\small\noindent\path{docs/validation/hydro/QUANTUM_Hydro_Fitted_Adaptive_20260913.md}\par
+\noindent 定位：第 496 行；\code{## 23.}。\par}
+{\small\noindent\path{runs/levelset_native_scalar_20260913/native_flux_jacobian/ctest_verified.log}\par
+\noindent 定位：第 279 行；\code{0 tests failed out of 7}。\par}
+\end{minipage}\par
+\par\medskip\noindent\begin{minipage}{\textwidth}\textbf{V03：现行案例指南及历史物理限制}\par
+{\small\noindent\path{docs/QUANTUM_Hydro_EHD_Case_Guide.md}\par
+\noindent 定位：第 107 行；\code{## 5.}。\par}
+\end{minipage}\par

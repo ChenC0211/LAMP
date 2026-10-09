@@ -1,0 +1,7 @@
+Interface
+{
+    advectInterface true;
+    transport parametricGals;
+    reinitializeEvery 0;
+    portPhases { supply liquid; outlet gas; }
+}

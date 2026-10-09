@@ -1,0 +1,231 @@
+% !TEX program = xelatex
+\documentclass[a4paper,11pt]{article}
+\usepackage{quantum-manual}
+\begin{document}
+\manualtitle{运行与结果阅读}{第二册}{从编译、选择算例到读取场与收支；给出可直接照做的本机操作。}
+
+\section{阅读路线与目录}
+第一次使用，先按本册跑通一个普通 EHD 小算例，再按第三册修改物性和输出设置；需要理解方程与模块关系时阅读第一册。全部命令以项目根目录 \code{C:/Chen/QUANTUM} 为工作目录，除非明确另有说明。
+
+\begin{longtable}{L{.23\linewidth}L{.69\linewidth}}
+\toprule 目录/文件 & 用途 \\\midrule\endhead
+\code{src/}, \code{include/} & 实现与头文件；按 Core、Solvers、Modules、Apps 分层 \\
+\code{cases/} & 十五套精简输入；保留标准输入，不直接在这里产生日常计算结果 \\
+\code{runs/} & 每次计算独立的输入副本、日志、输出和缓存 \\
+\code{bin/QUANTUM.exe} & 当前主程序 \\
+\code{build/} & CMake 构建及文档排版中间文件 \\
+\code{tools/build.ps1} & 本机编译入口；按需加 Test 开关 \\
+\code{CMakeUserPresets.json} & 本机依赖路径，换电脑时优先检查此文件 \\
+\code{docs/manuals/} & 本套三册 PDF、LaTeX 和共用排版样式 \\
+\code{tests/} & 已有检查及必要夹具，不是用户计算的输出位置 \\
+\bottomrule
+\end{longtable}
+
+\section{编译与本机环境}
+\subsection{通常只需要这一条命令}
+\begin{lstlisting}
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1
+\end{lstlisting}
+脚本查找 Visual Studio 2022 自带 CMake，构建 Release 程序，并处理已有 OpenMP 运行库。它不安装依赖、不修改系统 PATH，也不永久修改执行策略。成功后程序位于 \code{bin/QUANTUM.exe}。迁移来的 \code{.venv} 指向旧电脑 Python，不用于本机构建。
+
+本机已有依赖如下；它们是本机配置，不应写死进公共 \code{CMakeLists.txt}：
+\begin{lstlisting}
+EIGEN3_INCLUDE_DIR
+  C:/Chen/openLib/eigen-3.3.9
+QUANTUM_SUPERLU_INCLUDE_DIR
+  C:/Chen/openLib/superlu-master/SRC
+QUANTUM_SUPERLU_LIBRARY
+  C:/Chen/openLib/superlu-master/lib/superLU_Rel.lib
+QUANTUM_BLAS_LIBRARY
+  C:/Chen/openLib/superlu-master/lib/CBLAS_Rel.lib
+\end{lstlisting}
+当前本机配置使用 x64 Release 库。换机后更新用户 preset，或用 \code{windows} preset 配合现有依赖的 \code{CMAKE_PREFIX_PATH}/\code{CMAKE_TOOLCHAIN_FILE}。程序不再根据 \code{VCPKG_ROOT} 自动选择工具链。发现 SuperLU 路径错误时先修配置并查找已有库。
+
+\subsection{何时做检查}
+学习运行只需一次构建、适用入口的输入预检查和实际短程运行。修改源码时按一个完整工作包集中运行受影响检查；跨模块变更或阶段收尾才考虑全部检查：
+\begin{lstlisting}
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1 -Test
+\end{lstlisting}
+截至本册日期注册 56 项检查。它们覆盖构建接线、输入契约、部分解析/守恒对照与恢复流程，不代表所有参数范围已做物理验证。
+
+\section{第一次运行：普通 EHD}
+\subsection{建立独立运行目录}
+以下样例使用新的分文件输入：圆形液滴、介电电场、毛细/电力、三步界面运动。
+\begin{lstlisting}
+$caseRun = 'runs/my_first_ehd'
+if (Test-Path -LiteralPath $caseRun) {
+    throw 'Choose a new run directory'
+}
+New-Item -ItemType Directory -Path $caseRun | Out-Null
+Copy-Item -LiteralPath cases/ehd_diffuse_smoke/system `
+    -Destination $caseRun -Recurse
+$env:OMP_NUM_THREADS = '2'
+$env:OMP_THREAD_LIMIT = '2'
+./bin/QUANTUM.exe --case $caseRun --check-case
+if ($LASTEXITCODE -ne 0) { throw 'Case check failed' }
+./bin/QUANTUM.exe --case $caseRun
+if ($LASTEXITCODE -ne 0) { throw 'Run failed' }
+\end{lstlisting}
+PowerShell 的反引号是续行符，后面不要再留空格。也可以把 Copy-Item 两行合并。预检查通过后才执行求解；运行后检查 \code{output/fields}、\code{output/series} 和 \code{output/meta}。若第二次尝试同名目录，先选择新的目录名以保留原结果。
+
+\subsection{记录日志}
+需要留存控制台信息时，用下列命令替代上面实际求解的那一行，不要在成功计算后再重复执行一遍：
+\begin{lstlisting}
+./bin/QUANTUM.exe --case $caseRun *> "$caseRun/run.log"
+if ($LASTEXITCODE -ne 0) { throw 'See run.log' }
+\end{lstlisting}
+日志放在运行目录根部。喷雾显式重新开始可能清空 \code{output/}，因此不要把当前日志放在其内部。
+
+\subsection{预检查能说明什么}
+\code{--check-case} 支持当前 Hydro/EHD、独立 Interface/Electricity、schema 2 喷雾以及 MeshVerification 的输入检查。它不创建物理网格、不求解、不写 output/cache。几何对齐、差分模板、曲率质量和时间稳定性仍需实际运行判断。不要把这个命令当成 ExplicitPIC/ImplicitPIC 的通用预检查入口。
+
+\section{怎样选择样例}
+所有样例都是迁移后重建的小输入，并非原电脑完整物理基线。可按下面顺序选择；复制 system 后执行相应入口即可。
+\begin{longtable}{L{.37\linewidth}L{.55\linewidth}}
+\toprule \code{cases/} 下的名称 & 学习目的和特征 \\\midrule\endhead
+\code{hydro_smoke} & 16$\times$16 单相、非零初速度，三步压力投影 \\
+\code{hydro_interface_smoke} & 运动圆滴、毛细流动；三步中第 2 步重初始化 \\
+\code{ehd_interface_smoke} & 普通锐界面电荷--电场--流体耦合 \\
+\code{ehd_diffuse_smoke} & 新分文件格式；XY 理想介电平滑过渡、三步运动 \\
+\code{hydro_axis_smoke} & 与轴相交的 RZ 球面液滴流动 \\
+\code{ehd_axis_smoke} & RZ 带电液面运动 \\
+\code{hydro_contact_smoke} & 新分文件格式；南侧规定流入、固定接触点、北侧压力出口 \\
+\code{interface_prescribed_cap_rz} & 32$\times$64 RZ，规定速度推动钉扎液面；不求流场 \\
+\code{electricity_uniform} & 独立电学；两侧介电常数相同，与线性电势解析解对照 \\
+\code{electricity_charging_rz} & 固定 RZ 球面、非零初始面电荷、三步显式导电 \\
+\code{spray_dielectric_smoke} & 32$\times$64 RZ 喷嘴、理想介电运动液面；也可复用作固定状态验证 \\
+\code{spray_explicit_smoke} & 同类喷嘴，显式导电面电荷推进 \\
+\code{spray_implicit_smoke} & 同类喷嘴，隐式面电荷迭代和历史 \\
+\code{pic_smoke} & 8$\times$8、32 个电子、固定随机种子，三步 PIC；默认显式 \\
+\code{mesh_refinement} & 只验证网格细化/粗化与缓存读回，不推进物理时间 \\
+\bottomrule
+\end{longtable}
+
+\subsection{喷雾的启动方式}
+复制 \code{spray_implicit_smoke/system} 到新的运行目录，预检查后运行。交互终端可能询问“从初态重新计算/接上次/取消”；新目录可用 \code{--start new} 明确选择从初态开始。
+\begin{lstlisting}
+./bin/QUANTUM.exe --case runs/my_spray --check-case
+./bin/QUANTUM.exe --case runs/my_spray --start new
+\end{lstlisting}
+\textbf{已有结果时，\code{--start new} 会清空该算例整个 output 目录。} 它不限于同前缀文件；system 和 cache 保留。非交互启动且没有指定模式时，已有输出会导致拒绝。\code{--start resume} 当前明确不支持，并保留旧结果。预检查即使同时指定 new 也不会清理。
+
+喷雾同一目录有进程锁，不能并发重算。独立 Interface/Electricity 不消费这些启动参数，应使用新的运行目录；MeshVerification 要求 output 和 cache 都不存在。
+
+\subsection{切换显式/隐式 PIC}
+复制 \code{pic_smoke/system} 后，默认直接运行。要选隐式分支，将运行副本的 \code{run.dict} 改成：
+\begin{lstlisting}
+Run { app SingleModule; }
+SingleModule { modules (ImplicitPIC); }
+\end{lstlisting}
+基础 PIC 的时间、粒子与输出参数在 \code{pic.dict}，不要再加入喷雾的 \code{Time/Output} 格式。需要 Ar 弹性碰撞时，向新运行目录复制 \code{tests/fixtures/plasma/mcc.dict}；该片段的气体、反应、截面和碰撞设置是配套的。仅打开反应诊断不会自动启用碰撞。
+
+\section{改变算例时先找对设置位置}
+\begin{longtable}{L{.26\linewidth}L{.31\linewidth}L{.35\linewidth}}
+\toprule 要改什么 & 普通分文件 Hydro/EHD & 喷雾 schema 2 \\\midrule\endhead
+计算多长、步长 & \code{run.dict/Time} & 同左；可按所选时间单位填写 \\
+网格划分、几何 & \code{mesh.dict}、\code{geometry.dict} & 同左，但相/边界身份需要配套 \\
+密度、黏度、张力 & \code{hydro.dict} & \code{materials.dict} \\
+界面运动/接触 & \code{interface.dict} 节点格式 & \code{interface.dict} 拟合格式 \\
+压力/速度条件 & \code{hydro.dict/boundaryPatches} & \code{hydro.dict/BoundaryConditions} \\
+介电常数/电导率 & \code{electricity.dict} & \code{materials.dict} \\
+电极、电荷模型 & \code{electricity.dict} & 同左，字段层级不同 \\
+线性求解容限 & 对应模块的 \code{linearResidualTolerance} & \code{solvers.dict} 五个具名系统 \\
+场输出频率 & \code{run.dict/Output/Fields} & 同左；额外有 diagnostic 配置 \\
+\bottomrule
+\end{longtable}
+一次完整参数调整后统一预检查并短程运行。改变时间步时同步检查终止时间的整数步条件；改变网格时同步检查接触点对齐和支撑；改变电模型时同步调整面电荷、守恒项与离散模型。详细的可用组合见第三册。
+
+\section{输出目录与阅读顺序}
+\subsection{先看记录，再看云图}
+\begin{lstlisting}
+runs/<case>/
+  system/              # input copy
+  run.log              # optional console log
+  output/
+    fields/            # spatial fields / interfaces / meshes
+    series/            # time histories / balances
+    meta/              # effective settings / frame indexes
+  cache/               # app-specific caches or checkpoints
+\end{lstlisting}
+cache 不保证总在算例内部；例如 PIC 旧检查点默认路径是 \code{../cache}，建议显式设为 \code{cache}。并非每个 App 都产生上图的所有文件。
+
+建议先确认退出码和最后接受步，再读 meta 的实际设置与单位，然后查看 series 的收支，最后打开 fields 的形状与分布。\code{resolved.json} 等记录是求解前配置快照，文件存在不代表时间步成功。
+
+\subsection{喷雾输出}
+默认 \code{profile physical} 保留 flow、interface、forces：流场中已合并电势、单元积分电荷和相关导电量；forces 包含界面两侧电场及载荷。\code{diagnostic} 额外保存原生电学网格/面/单元等明细，适合定位数值问题。输出配置只影响写出，不改变方程。
+
+\begin{longtable}{L{.31\linewidth}L{.61\linewidth}}
+\toprule 数据类别 & 正确读法 \\\midrule\endhead
+\code{fields/*flow.dat} & 连续空间场；留意 VARIABLES 中的单位与实际列名 \\
+\code{fields/*interface*} & 液面几何与形状；按帧清单比较对应时刻 \\
+\code{fields/*forces*} & 界面电场/牵引等，和流体网格可能使用不同位置 \\
+\code{series/*.dat} & 逐步收支与 AMR 表，Tecplot ordered POINT；按 XY Line 绘图 \\
+\code{meta/*_series.csv} & 含字符串路径的帧清单，不能当作空间场 \\
+\code{meta/*_resolved.json} & 原请求、实际模型、尺度、来源和消费者；未用项有明确标注 \\
+\bottomrule
+\end{longtable}
+physical 帧清单的 \code{electric_file} 可以指向同帧 flow；\code{face_flux_file} 为空表示未请求面明细，不表示没有计算电通量。默认 DAT 可直接使用，不另生成重复 PLT。
+
+\subsection{在 Tecplot 中看场与曲线}
+空间场加载 \code{output/fields} 中同一类帧，先显示网格/相区与液面，再选择速度、电势或压力变量。不同类文件不要仅靠导入顺序强行配对；使用文件时刻、Zone 信息和 meta 帧清单。
+
+逐步表加载 \code{output/series/*.dat} 后选 XY Line，横轴选实际时间列，纵轴选体积、通量、电荷、电流或残差。表中一个点是一条接受步记录，不是空间坐标。AMR 表的事件行数也不等于物理总步数。
+
+关闭场输出后仍会产生必要收支。只看场帧可能漏掉帧间峰值，应先在逐步表定位，再按需要提高场输出频率。
+
+\subsection{独立模块与 PIC 输出}
+独立 Interface 保存标量/界面场、体积收支和配置来源。独立 Electricity 保存单元电势、介电系数、电场、水平集与面元平均电荷诊断。\code{interface_panel_mean_charge} 是界面单元内的面元平均面电荷密度，不是体电荷。
+
+PIC 的空间场、历史 CSV、剖面、电流及能谱受各自设置控制。显式字段列表默认/必写密度规则与隐式不同。例如场间隔为 2、共三步时，已有显式路径可写 0、2、3 帧，隐式路径可只写第 2 帧；不要套用普通 App 的 writeInitial/writeFinal 规则。
+
+\section{时间与单位的常见误读}
+普通分文件 Hydro/EHD、独立 Interface/Electricity 使用代码单位。将目录名改为 SI 或在图中手写“秒”并不会转换物理量。喷雾物性、电极、尺度使用显式 SI，时间可选择 code 或 SI；\code{Time.units} 只选择运行时间的解释，不更改材料字段的量纲要求。
+
+PIC 保留原 Units/Normalization 体系。\code{PIC.dt} 的裸数按代码时间读；带时间单位时经 Units 转换。物种 charge/mass 的裸数则按其原物理字段规则解释。不同字段不能统一假定“裸数全是 SI”。
+
+输出前缀只命名计算过程，不选择物理模型。步号是调度编号，实际时层需结合工作流：独立充电发布同层电场/电荷；普通 EHD 保留电力和完成流场的原时层。固定状态验证的帧数也不能当作运动液面演化证据。
+
+\section{PIC 检查点和续算}
+在运行副本的 \code{pic.dict} 加入顶层多行块：
+\begin{lstlisting}
+Checkpoint
+{
+    enabled true
+    every 2
+    keep 2
+    path cache
+    saveRng true
+    restart false
+    restartStep -1
+}
+\end{lstlisting}
+启用且 every 为正时，按周期和末步请求保存。成功目录名为 \code{pic.<nextStep>}，其中 nextStep 是下一步号。恢复时保留运行目录及设置，将 restart 改为 true，必要时增大总 steps；负 restartStep 选择最新可用项，非负值指定目录编号。不要把“下一步号”误写成“已完成步数”。
+
+带 \code{.pic_checkpoint_incomplete} 标记的目录不可恢复。写入失败会结束运行，部分状态/普通输出不回滚。\code{saveRng true} 对随机过程续算很重要；counterBased MCC 还要求完整碰撞状态。数据帧和 QMC2 网格缓存均不是完整 PIC 检查点。上述设置只适用于 PIC，不能用于当前喷雾续算。
+
+\section{遇到问题时怎样定位}
+\begin{longtable}{L{.28\linewidth}L{.64\linewidth}}
+\toprule 现象 & 先检查什么 \\\midrule\endhead
+找不到库/无法链接 & 用户 preset 的已有 Eigen、SuperLU、BLAS 路径；x64 与 Release 配置是否一致 \\
+未知键、重复块、额外文件 & 是否把喷雾、普通域、独立 Interface 或 PIC 的格式混用；新入口可能严格拒绝多余字典 \\
+预检查成功但初始化失败 & 实际网格对齐、接触点、曲率、面覆盖、支撑带；预检查不构建网格 \\
+没有场文件 & Fields 是否启用、间隔是否命中、是否为隐式 PIC 空字段列表；先查 series 和退出码 \\
+程序拒绝重跑 & 是否已有 output/cache；优先换新运行目录，喷雾仅在确实要覆盖时使用 new \\
+电荷 CFL 或迭代失败 & 时间步、电导率/介电率、隐式松弛和方程残差；隐式仍保留现有 CFL 限制 \\
+压力出口出现回流错误 & 边界符号、供液压力和回流相设置；压力口不是恒定流量源 \\
+体积/电荷/动量不闭合 & 查完整收支、单位、几何、时层和数值策略；先确定原因，再决定是否改容限 \\
+磁盘写入或检查点失败 & 可用空间、输出位置和当前日志；文件已生成不代表完整成功 \\
+细网格速度反而更大 & 对比接触点附近分布与时空收敛；当前喷嘴已有未关闭的网格敏感性 \\
+\bottomrule
+\end{longtable}
+
+\section{继续查阅与重建 PDF}
+字段和模型选项见第三册；结构和方程见第一册。更多 PIC 诊断、AMR 及兼容规则见 \repo{docs/QUANTUM_Dictionary_Reference.md}。当前物理问题见 \repo{docs/QUANTUM_Hydro_EHD_Progress.md}，算例入口见 \repo{cases/README.md}。
+
+本套文档使用 XeLaTeX，三个 tex 与 \code{quantum-manual.sty} 同目录。Windows 优先使用本机宋体/黑体/楷体，其他环境可使用 Fandol。项目根目录执行：
+\begin{lstlisting}
+powershell -NoProfile -ExecutionPolicy Bypass `
+    -File tools/docs/build_manuals.ps1
+\end{lstlisting}
+脚本只编译本套文档，中间文件写入 \code{build/docs/manuals}，最终 PDF 写回 \code{docs/manuals}；不会运行物理测试，也不会安装宏包。换环境时需已有 XeLaTeX 及样式文件所列常用宏包。
+\end{document}

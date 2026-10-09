@@ -1,0 +1,8 @@
+{
+    "program":  "LAMP_hermite_gals_benchmark.exe",
+    "study":  "coarsening",
+    "arguments":  [
+                      "coarsening"
+                  ],
+    "description":  "Pure Hermite-GALS coarsening study"
+}

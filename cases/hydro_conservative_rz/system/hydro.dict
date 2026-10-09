@@ -1,0 +1,23 @@
+Hydrodynamics
+{
+    coordinateSystem axisymmetricRZ;
+    materialModel twoPhase; interfaceLevelSet liquid;
+    densityNegative 1000; densityPositive 1;
+    viscosityNegative 0.01; viscosityPositive 0.001;
+    interfaceForceGeometry conservative; interfaceForceLayer inventory;
+    // Curvature projection search half-width; C material is not smoothed.
+    interfaceThickness 0.125;
+    surfaceTension 0.01;
+    initialVelocity zero;
+    linearResidualTolerance 1e-8;
+    Conservation
+    {
+        momentumBalance 1e-8; initialContinuity 1e-8;
+        outletAdmissibility 1e-8; boundaryFluxBalance 1e-8;
+    }
+    boundaryPatches
+    {
+        supply { side south; type normalVelocity; start 0; end 1; value -0.02; }
+        outlet { side north; type pressureOutlet; start 0; end 1; value 0; }
+    }
+}

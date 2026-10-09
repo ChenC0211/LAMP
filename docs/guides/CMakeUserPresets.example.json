@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "configurePresets": [
+    {
+      "name": "local",
+      "inherits": "windows",
+      "binaryDir": "${sourceDir}/build/windows-local",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "EIGEN3_INCLUDE_DIR": "D:/Chen/openLib/eigen-3.3.9",
+        "LAMP_SUPERLU_INCLUDE_DIR": "D:/Chen/openLib/superlu-master/SRC",
+        "LAMP_SUPERLU_LIBRARY": "D:/Chen/openLib/superlu-master/lib/superLU_Rel.lib",
+        "LAMP_BLAS_LIBRARY": "D:/Chen/openLib/superlu-master/lib/CBLAS_Rel.lib"
+      }
+    },
+    {
+      "name": "local-debug",
+      "inherits": "local",
+      "binaryDir": "${sourceDir}/build/windows-local-debug",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "local-benchmarks",
+      "inherits": "local",
+      "binaryDir": "${sourceDir}/build/windows-local-benchmarks",
+      "cacheVariables": {
+        "LAMP_BUILD_BENCHMARKS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "local",
+      "configurePreset": "local",
+      "configuration": "Release",
+      "jobs": 1
+    },
+    {
+      "name": "local-debug",
+      "configurePreset": "local-debug",
+      "configuration": "RelWithDebInfo",
+      "jobs": 1
+    },
+    {
+      "name": "local-benchmarks",
+      "configurePreset": "local-benchmarks",
+      "configuration": "Release",
+      "jobs": 1
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "local",
+      "configurePreset": "local",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "local-debug",
+      "configurePreset": "local-debug",
+      "configuration": "RelWithDebInfo",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
+

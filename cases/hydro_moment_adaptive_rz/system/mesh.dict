@@ -1,0 +1,15 @@
+adaptiveMesh true
+BackgroundMesh { divide (4, 4); }
+QuadtreeMesh { maxInitialIterations 0; }
+Adaptation
+{
+    maximumLevel 1;
+    cellBudget 128;
+    maxCurvatureCells 0.5;
+    minimumGapCells 2;
+    Coarsening
+    {
+        hysteresis 0.5;
+        relativeVelocityError 0.001;
+    }
+}

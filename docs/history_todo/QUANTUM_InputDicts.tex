@@ -1,0 +1,945 @@
+﻿% !TEX program = xelatex
+\documentclass[UTF8,a4paper,11pt]{ctexart}
+
+\usepackage{geometry}
+\geometry{left=22mm,right=22mm,top=20mm,bottom=22mm}
+
+\usepackage{hyperref}
+\usepackage{xurl}
+\usepackage{pdfpages}
+\urlstyle{tt}
+% --- Robust line breaking for long tokens in tables ---
+% Many dict keys/options are long (camelCase / dotted paths). In tables this can
+% otherwise spill into adjacent columns. We therefore render ``code'' strings
+% with discretionary breaks between characters.
+\usepackage{seqsplit}
+% Render dict keys/options in monospaced font with safe line-breaking.
+% (\seqsplit inserts discretionary breaks between characters, preventing
+% overflow/overlap across adjacent columns in narrow tables.)
+\newcommand{\code}[1]{\texttt{\seqsplit{#1}}}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage{multicol}
+\usepackage{tabularx}
+\usepackage{float}
+\usepackage{makecell}
+\usepackage{etoolbox}
+
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+\setlength{\tabcolsep}{1.5pt}
+\renewcommand{\arraystretch}{1.25}
+\AtBeginEnvironment{longtable}{\footnotesize\sloppy\setlength{\emergencystretch}{2em}}
+
+\pagestyle{fancy}
+\setlength{\headheight}{14pt}
+\fancyhf{}
+\lhead{QUANTUM 杈撳叆瀛楀吀缂栧啓璇存槑锛堝瓧娈典笌閫夐」锛墋
+\rhead{\thepage}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  frame=single,
+  breaklines=true,
+  postbreak=\mbox{\textcolor{gray}{$\hookrightarrow$}\space},
+  commentstyle=\itshape\color{gray!70},
+  keywordstyle=\bfseries\color{black},
+  showstringspaces=false
+}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+\title{QUANTUM 杈撳叆瀛楀吀缂栧啓璇存槑鏂囨。\\
+\large geometry.dict / mesh.dict / run.dict / pic.dict / mcc.dict锛圫ingleModule + ExplicitPIC锛墋
+\author{Chong Chen}
+\date{2026-02-22}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{4mm}
+
+\section{鏂囨。鑼冨洿涓庣増鏈鏄巬
+
+鏈鏄庢枃妗ｉ潰鍚?QUANTUM 褰撳墠涓荤嚎瀹炵幇锛圽texttt{SingleModule} 杩愯鍣?+ \texttt{ExplicitPIC} 妯″潡锛夛紝瑕嗙洊浠ヤ笅杈撳叆瀛楀吀锛?\begin{itemize}[leftmargin=2.2em]
+  \item \texttt{system/run.dict}锛氶€夋嫨 App锛堥粯璁?\texttt{SingleModule}锛変笌妯″潡鍒楄〃锛?  \item \texttt{system/geometry.dict}锛氬煙銆佺偣绾裤€佹按骞抽泦銆佺浉銆佽竟鐣屼互鍙婂彲閫?periodic 閰嶅锛?  \item \texttt{system/mesh.dict}锛氳儗鏅綉鏍间笌鍥涘弶鏍戞帶鍒讹紝鍑犱綍/鐗╃悊鑷€傚簲鐨勫０鏄庯紙涓嶅啓鐗╃悊閲忥級锛?  \item \texttt{system/pic.dict}锛氭椂闂存銆佸崟浣嶃€佸綊涓€鍖栥€丳oisson 姹傝В鍣ㄩ€夐」銆丳IC/EB/娌夌Н/鐗╃/杈撳嚭绛夛紱
+  \item \texttt{system/mcc.dict}锛氳儗鏅皵浣撱€佹埅闈㈠簱銆佸弽搴旈泦銆佺鎾為厤缃紙鍙笌 \texttt{pic.dict} 鍚堝苟锛夈€?\end{itemize}
+
+\noindent
+\textbf{鍏充簬 ``闇€瑕佹洿鏂?' 鐨勬棫鎶ュ憡锛殅浣犳彁渚涚殑 \texttt{QUANTUM\_InputDicts\_Spec\_Report.tex} 鏇村亸 ``璁捐+瀹炵幇'' 瑙嗚銆傛湰鏂囦欢鍦ㄥ叾鍩虹涓婂仛浜嗕袱绫绘洿鏂帮細
+\begin{itemize}[leftmargin=2.2em]
+  \item 闈㈠悜\textbf{鐢ㄦ埛缂栧啓}锛氭妸姣忎釜瀛楁鐨刓textbf{蹇呭～鎬с€侀粯璁ゅ€笺€佸彲閫夊€间笌璇箟}鍐欐竻锛?  \item 闈㈠悜\textbf{鏈€鏂颁唬鐮亇锛氳ˉ鍏呬簡 \texttt{Domain/dimension, slabThickness}銆乗texttt{PeriodicPairs}銆乗texttt{Solvers cache}銆乗texttt{Output 璇婃柇瀛愬潡}銆乗texttt{MCC 鐨?CrossSections/Reactions/Collisions 缁嗚妭} 绛夊綋鍓嶅疄鐜板凡鏀寔鐨勮兘鍔涖€?\end{itemize}
+
+\section{蹇€熶笂鎵嬶細鏈€灏忓彲杩愯楠ㄦ灦}
+
+涓€涓渶灏忓彲杩愯绠椾緥鑷冲皯闇€瑕侊細
+\begin{itemize}[leftmargin=2.2em]
+  \item \texttt{system/geometry.dict}锛氱粰鍑?\texttt{Domain\{min/max\}} 涓?4 鏉″煙杈圭晫绾匡紝骞跺湪 \texttt{Boundary/domainBoundary} 涓粰鍑?boundaryId锛?  \item \texttt{system/mesh.dict}锛氱粰鍑?\texttt{BackgroundMesh/divide}锛?  \item \texttt{system/pic.dict}锛氱粰鍑?\texttt{PIC\{dt,steps\}}锛屼互鍙?\texttt{BC/Field} 涓澶栬竟鐣岀殑 Dirichlet/Neumann锛?  \item \texttt{system/run.dict} 鍙€夛紙缂虹渷涓?\texttt{SingleModule}锛屾ā鍧楅粯璁ゅ彲鐢級銆?\end{itemize}
+
+\noindent
+褰撲綘瑕佺敤 EB锛堝祵鍏ュ浣?浠嬭川锛夋椂锛屾渶灏忚繕闇€瑕侊細
+\begin{itemize}[leftmargin=2.2em]
+  \item \texttt{geometry.dict} 涓畾涔夎嚦灏戜竴涓?\texttt{LevelSet}锛屽苟鍦?\texttt{Boundary/fixedBoundary} 涓粰鍑哄搴?boundaryId锛?  \item \texttt{pic.dict} 涓?\texttt{EmbeddedGeometry\{enabled true\}}锛屽苟鎸囧畾 \texttt{levelSetIndex} 鎴?\texttt{boundaryIds}銆?\end{itemize}
+
+\section{閫氱敤璇硶涓庣害瀹殅
+
+\subsection{鏂囦欢涓庣洰褰曠害瀹氾紙寮虹儓寤鸿閬靛畧锛墋
+\begin{itemize}[leftmargin=2.2em]
+  \item \texttt{system/}锛歕textbf{鍙斁鎵嬪啓瀛楀吀}锛坮un/geometry/mesh/pic/mcc锛夛紝涓嶈鎶婅緭鍑烘枃浠舵贩杩涙潵銆?  \item \texttt{output/}锛氳繍琛岃緭鍑猴紙鍦恒€佽瘖鏂?CSV銆乺eport.txt 绛夛級銆?  \item \texttt{cache/}锛氳繍琛屽櫒鑷姩鐢熸垚鐨勪腑闂村瓧鍏革紙渚嬪 \texttt{pic\_units.dict}锛変笌 checkpoint銆俓textbf{涓嶈鎵嬫敼}銆?  \item \texttt{data/}锛氭埅闈㈣〃銆佸閮ㄨ祫浜х瓑銆?\end{itemize}
+
+\subsection{鍧楃粨鏋勪笌閿€紏
+瀛楀吀鏂囦欢鏄?``鑺辨嫭鍙峰潡 + 閿€艰'' 鐨勫眰绾х粨鏋勶細
+\begin{lstlisting}
+BlockName
+{
+  key value
+  key2 value2
+
+  SubBlock
+  {
+    ...
+  }
+}
+\end{lstlisting}
+
+\noindent 鏀寔鐨勫父瑙佸啓娉曪細
+\begin{itemize}[leftmargin=2.2em]
+  \item \textbf{鍐呰仈鍧楋細} \texttt{boundary 1 \{ type Dirichlet value 0 V \}}锛?  \item \textbf{鍒楄〃锛殅 \texttt{fields ( phi rho E )}锛屽渾鎷彿鍐呬负绌烘牸鍒嗛殧锛?  \item \textbf{浜岀淮鍚戦噺锛殅 \texttt{(x,y)}锛?  \item \textbf{瀛楃涓诧細} 鎺ㄨ崘鐢ㄥ弻寮曞彿鍖呰９锛屼緥濡?\texttt{"Xe\_plus"}銆?\end{itemize}
+
+\subsection{绱㈠紩涓庣紪鍙凤紙鏈€瀹规槗韪╁潙锛墋
+\begin{itemize}[leftmargin=2.2em]
+  \item \texttt{geometry.dict} 涓樉寮忕紪鍙凤紙Point/Line/Boundary 绛夛級鎸塡textbf{1 寮€濮媫锛?  \item 鍦?\texttt{pic.dict} / \texttt{mesh.dict} 涓紩鐢?boundaryId/phaseId/levelSetIndex锛?    \begin{itemize}[leftmargin=2.2em]
+      \item \textbf{boundaryId锛殅濮嬬粓鎸塡textbf{杈撳叆鐨?1-based}锛堣繍琛屾椂閫氳繃 map 鍏宠仈锛夛紱
+      \item \textbf{levelSetIndex / phase锛殅鍦ㄥ嚑浣曟枃浠朵腑浣犻€氬父鐢?1-based 鍐欙紝浣嗗湪鏌愪簺鍧楅噷瑙ｆ瀽鍣ㄤ細鑷姩鍑?1锛堜緥濡?\texttt{EmbeddedGeometry.levelSetIndex}锛夈€傚洜姝ゆ帹鑽愪紭鍏堢敤 \texttt{boundaryIds} 鏉ョ粦瀹?EB锛堟洿涓嶅鏄撻敊锛夈€?    \end{itemize}
+\end{itemize}
+
+\subsection{鍗曚綅涓庨噺绾瞹
+QUANTUM 鏀寔鍦ㄥ鏁版爣閲?鍧愭爣鍚庡啓鍗曚綅锛堜緥濡?\texttt{6.7 cm}銆乗texttt{13.56 MHz}銆乗texttt{50 mTorr}锛夈€?\begin{itemize}[leftmargin=2.2em]
+  \item 褰?\texttt{Units.mode = SI}锛氳緭鍏ユ寜 SI 瑙ｉ噴骞惰浆鎹负 code units锛?  \item 褰?\texttt{Units.mode = CodeUnits}锛氳緭鍏ョ洿鎺ヤ綔涓?code units锛堝崟浣嶅悗缂€鍙渷鐣ワ級銆?\end{itemize}
+
+\noindent 甯哥敤鍗曚綅锛堥潪绌峰敖锛夛細
+\begin{itemize}[leftmargin=2.2em]
+  \item 闀垮害锛歮, cm, mm, um, nm锛沑quad 鏃堕棿锛歴, ms, us, ns锛沑quad 棰戠巼锛欻z, kHz, MHz, GHz锛?  \item 鐢靛娍锛歏锛沑quad 鐢靛満锛歏/m锛沑quad 璐ㄩ噺锛歬g, amu, me锛沑quad 鐢佃嵎锛欳, e锛?  \item 鑳介噺/娓╁害锛歟V, K锛沑quad 鍘嬪己锛歅a, Torr, mTorr锛沑quad 鏁板瘑搴︼細1/m\^{}3銆?\end{itemize}
+
+\section{run.dict 鍙傝€冿紙SingleModule锛墋
+\label{sec:run}
+
+\begin{longtable}{L{0.18\linewidth} L{0.16\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.34\linewidth}}
+\caption{\texttt{run.dict} 瀛楁璇存槑锛圫ingleModule锛墋\\
+\toprule
+瀛楁锛堜綅缃級 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?绀轰緥 & 鍚箟涓庢敞鎰?\\
+\midrule
+\endfirsthead
+\toprule
+瀛楁锛堜綅缃級 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?绀轰緥 & 鍚箟涓庢敞鎰?\\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{Run.app} & string & 鍚?& \code{SingleModule} & 閫夋嫨 App銆傜己鐪佹椂杩愯鍣ㄩ粯璁?\code{SingleModule}銆俓\
+\code{SingleModule.modules} & \code{list(string)} & 鍚?& \code{( ExplicitPIC )} & 閫夋嫨妯″潡骞舵寜椤哄簭鎵ц銆傛敮鎸佸埆鍚嶏細\code{PIC} 绛夈€俓\
+\end{longtable}
+
+\section{geometry.dict 鍙傝€儅
+\label{sec:geom}
+
+\subsection{鎬讳綋缁撴瀯}
+鎺ㄨ崘缁撴瀯锛歕texttt{Domain}銆佸彲閫?\texttt{PeriodicPairs}銆乗texttt{Point}銆乗texttt{Line}銆乗texttt{LevelSet}銆乗texttt{Phase}銆乗texttt{Boundary}銆?
+\subsection{Domain 鍧梷
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{geometry.dict/Domain} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+min & (x,y) 闀垮害 & 鏄?& 渚嬪 \code{(0 cm,0 cm)} & 璁＄畻鍩熷乏涓嬭銆俓\
+max & (x,y) 闀垮害 & 鏄?& 渚嬪 \code{(6.7 cm,0.5 mm)} & 璁＄畻鍩熷彸涓婅銆俓\
+\code{dimension / dim} & int & 鍚?& 2 鎴?3锛涢粯璁?2 & 缁存暟闂悎鍏冩暟鎹細2 琛ㄧず 2D slab銆俓\
+\code{slabThickness / thickness / h0} & 闀垮害锛圫I锛?& 鍚?& 榛樿 1 m & 2D slab 鐨勫嚭骞抽潰鍘氬害锛屽奖鍝嶇數娴?鐢佃嵎鐨?``闈㈢Н-浣撶Н'' 鎹㈢畻銆傚彲涓?\code{Normalization.slabThickness} 绛変环銆俓\
+\end{longtable}
+
+\subsection{PeriodicPairs锛堝彲閫夛級}
+褰撻渶瑕佸懆鏈熻竟鐣岋紙渚嬪 2D 妯℃嫙 1D CCP benchmark 鐨?y 鏂瑰悜鍛ㄦ湡锛夛紝蹇呴』鍦ㄥ嚑浣曟枃浠堕噷澹版槑閰嶅涓庡钩绉伙細
+\begin{lstlisting}
+PeriodicPairs
+{
+  pair 1
+  {
+    boundaryA 3
+    boundaryB 4
+    shift (0, Ly)
+    mode strict
+  }
+}
+\end{lstlisting}
+
+\begin{longtable}{L{0.24\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.32\linewidth}}
+\caption{\texttt{geometry.dict/PeriodicPairs} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+pair <id> & block & 鍚?& 渚嬪 \code{pair 1 \{...\}} & 閰嶅鏉＄洰銆俰d 浠呬綔鏍囪瘑銆俓\
+\code{boundaryA, boundaryB} & \code{int(boundaryId)} & 鏄?& 渚嬪 3/4 & 琚厤瀵圭殑 domain boundary id銆俓\
+shift & (dx,dy) 闀垮害 & 鏄?& 渚嬪 \code{(0, Ly)} & A 鍒?B 鐨勫钩绉伙紱鍙嶅悜涓鸿礋銆俓\
+mode & string & 鍚?& strict锛堥粯璁わ級 & 棰勭暀瀛楁锛涘綋鍓嶅疄鐜颁富瑕佷娇鐢?strict銆俓\
+\end{longtable}
+
+\subsection{Point 鍧梷
+\texttt{Point\{...\}} 鍐呮瘡琛屼竴涓偣鍧愭爣銆傜偣鏈韩鎸夊嚭鐜伴『搴忕紪鍙凤紙id 浠?1 寮€濮嬶級銆傚缓璁妸 domain 鍥涜鐐规斁鍦ㄦ渶鍓嶃€?
+\subsection{Line 鍧梷
+姣忔潯绾跨敱涓ょ偣缂栧彿瀹氫箟锛歕texttt{(i,j) \{ ... \}}锛屽苟鍙寚瀹氬嚑浣曠被鍨嬨€?
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{geometry.dict/Line} 瀛愬潡瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+(i,j) & \code{(pointId,pointId)} & 鏄?& 渚嬪 \code{(1,2)} & 绾挎绔偣锛?-based锛夈€俓\
+type & enum & 鍚?& straight锛堥粯璁わ級/ arc / spline & 绾垮瀷銆俓\
+name & string & 鍚?& \code{left} 绛?& 浠呬究浜庨槄璇汇€俓\
+center & (x,y) & arc 蹇呭～ & 渚嬪 \code{(0,0)} & 鍦嗗姬鍦嗗績銆俓\
+radius & double & arc 蹇呭～ & 渚嬪 \code{1 mm} & 褰撳墠瀹炵幇 radius 璇讳綔鏁板€硷紙寤鸿閰嶅悎鍧愭爣鍗曚綅涓€鑷达級銆俓\
+radian & double & 鍚?& 渚嬪 0.5 & 鍦嗗姬寮犺锛屽崟浣嶄负 ``pi 鐨勫€嶆暟''锛坙egacy 绾﹀畾锛夈€俓\
+\code{featurePoints} & list((x,y)) & spline 蹇呭～ & 渚嬪 \code{( ... )} & 鏍锋潯鐗瑰緛鐐瑰垪琛ㄣ€俓\
+\end{longtable}
+
+\subsection{LevelSet 鍧梷
+涓€涓?LevelSet 鐢变竴缁?Line 缁勬垚锛屽苟鎻愪緵涓€涓?\texttt{innerPoint} 鎸囩ず ``鍐呴儴'' 鏂瑰悜銆俓textbf{褰撳墠 EB 涓昏浣跨敤 LevelSet 鏉ヨ绠?cut-cell 鍑犱綍搴﹂噺銆倉
+
+\begin{longtable}{L{0.20\linewidth} L{0.16\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.34\linewidth}}
+\caption{\texttt{geometry.dict/LevelSet} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+"name" & string & 鏄?& 渚嬪 \code{"LS\_probe"} & 姘村钩闆嗗悕绉般€俓\
+lines & \code{list(lineId)} & 鏄?& 渚嬪 \code{(5,6,7)} & 绾块泦鍚堛€傛敮鎸佸甫绗﹀彿绱㈠紩锛堥鐣欙級銆俓\
+innerPoint & (x,y) & 鎺ㄨ崘 & 渚嬪 \code{(0.05,0)} & 鍐呯偣锛岀敤浜庣‘瀹氱鍙枫€俓\
+moving & bool & 鍚?& false锛堥粯璁わ級 & 棰勭暀锛堢Щ鍔ㄧ晫闈級銆俓\
+\end{longtable}
+
+\subsection{Phase 鍧梷
+\textbf{娉ㄦ剰锛殅褰撳墠瀹炵幇鐨?Phase 瑙ｆ瀽浠呯ǔ瀹氭敮鎸?``鍗曚竴绾︽潫''锛堝绾︽潫浼氳鍛婂苟鍙彇绗竴涓級銆傚洜姝?Phase 鍦ㄧ幇闃舵鏇村鐢ㄤ簬 ``鏍囪瘑'' 涓庡悗缁墿灞曪紱EB 鐨勫疄闄呯粦瀹氬缓璁€氳繃 \texttt{Boundary} 鎴?\texttt{EmbeddedGeometry.boundaryIds}銆?
+\begin{longtable}{L{0.20\linewidth} L{0.16\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.34\linewidth}}
+\caption{\texttt{geometry.dict/Phase} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+"name" & string & 鏄?& 渚嬪 \code{"plasma"} & 鐩稿悕绉般€俓\
+constraints & list(expr) & 鏄?& 渚嬪 \code{("LS\_a"<0)} & 鐩墠浠呬娇鐢ㄧ涓€涓害鏉熴€傛敮鎸?\code{<0} 鎴?\code{>0}銆俓\
+\code{(boundaries)} & \code{list(lineId)} & 鍚?& & legacy/棰勭暀锛氱浉杈圭晫绾块泦鍚堛€俓\
+\end{longtable}
+
+\subsection{Boundary 鍧楋紙BC 鐨勫敮涓€鍩虹璁炬柦锛墋
+\texttt{Boundary} 瀹氫箟 boundaryId 鍒?``鍑犱綍绾块泦鍚?+ 鐩镐俊鎭?' 鐨勬槧灏勩€傚 Poisson銆佺矑瀛愯竟鐣屻€佸懆鏈熼厤瀵圭瓑锛宐oundaryId 鏄痋textbf{璺ㄦ枃浠跺敮涓€寮曠敤}銆?
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{geometry.dict/Boundary} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{Boundary/domainBoundary} & block & 鏄?& & domain 澶栬竟鐣岄泦鍚堬紙閫氬父 1-4锛夈€俓\
+\code{Boundary/fixedBoundary} & block & 鍙€?& & 鍥哄畾宓屽叆杈圭晫闆嗗悎锛堝浣?浠嬭川绛夛級銆俓\
+\code{Boundary/movingBoundary} & block & 鍙€?& & 棰勭暀锛氱Щ鍔ㄨ竟鐣屻€俓\
+
+boundary <id> & block & 鏄?& id 涓?int & boundaryId锛?-based锛夈€俓\
+name & string & 鍚?& \code{left} 绛?& 浠呯敤浜庡彲璇绘€с€俓\
+lines & \code{list(lineId)} & 鏄?& 渚嬪 \code{(4)} & 璇?boundary 鐢卞摢浜?Line 缁勬垚銆俓\
+\code{adjacentPhase} & int & domain 蹇呭～ & 渚嬪 4 & domainBoundary锛氬杈圭晫鐩搁偦鐨勭浉缂栧彿锛堣緭鍏?1-based锛屽唴閮ㄨ浆 0-based锛夈€俓\
+\code{levelSetIndex} & int & \makecell[c]{fixed\\moving\\鎺ㄨ崘} & 渚嬪 1 & 璇?boundary 灞炰簬鍝釜 level set锛?-based 杈撳叆锛夈€俓\
+phase & int & \makecell[c]{fixed\\moving\\鎺ㄨ崘} & 渚嬪 1 & boundary 鎵€鍦ㄥ浐浣撶浉缂栧彿锛?-based 杈撳叆锛夈€俓\
+\code{opposedPhase} & int & \makecell[c]{fixed\\moving\\鎺ㄨ崘} & 渚嬪 4 & boundary 鍙︿竴渚х浉缂栧彿锛堥€氬父 plasma 鐩革級銆俓\
+immersed & bool & 鍚?& true锛堥粯璁わ級 & 鏄惁浣滀负 immersed boundary 鍙備笌 EB銆俓\
+ignored & bool & 鍚?& false锛堥粯璁わ級 & 鑻ヤ负 true锛岃 boundary 铏藉瓨鍦ㄤ絾鍦ㄨ绠椾腑蹇界暐锛堣皟璇曠敤锛夈€俓\
+\end{longtable}
+
+\section{mesh.dict 鍙傝€儅
+\label{sec:mesh}
+
+\subsection{BackgroundMesh 涓?adaptiveMesh}
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{mesh.dict} 椤跺眰瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{BackgroundMesh.divide} & (int,int) & 鏄?& 渚嬪 \code{(512,4)} & 鑳屾櫙鍧囧寑缃戞牸鍒嗗壊鏁?(Nx,Ny)銆俤omain 鑼冨洿鏉ヨ嚜 geometry.dict銆俓\
+\code{adaptiveMesh} & bool & 鍚?& false锛堥粯璁わ級 & 鏄惁鍚敤鍥涘弶鏍戣嚜閫傚簲銆俓\
+\end{longtable}
+
+\subsection{QuadtreeMesh 鍧梷
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{mesh.dict/QuadtreeMesh} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+maxCellNum & int & 鎺ㄨ崘 & 渚嬪 300000 & 鑷€傚簲鍚庣殑鍗曞厓涓婇檺锛堢‖涓婇檺锛夈€俓\
+\code{maxInitialIterations} & int & 鍚?& 3锛堥粯璁わ級 & 鍒濆 refinement/骞宠　杩唬娆℃暟銆俓\
+ \code{C\_Lipschitz} & double & 鍚?& 2.6锛堥粯璁わ級 & Lipschitz 甯告暟锛堢綉鏍煎钩琛?缁嗗寲瑙勫垯锛夈€俓\
+\end{longtable}
+
+\subsection{GeometryRefinement锛堟帹鑽愪紭鍏堜娇鐢級}
+鍑犱綍椹卞姩鐨勭綉鏍煎姞瀵嗗绋冲畾鎬у拰鍙鐜版€ф渶濂斤紙閬垮厤瀵瑰櫔澹版晱鎰燂級銆傚吀鍨嬪啓娉曪細
+\begin{lstlisting}
+GeometryRefinement
+{
+  enabled true
+  refineBoundary
+  {
+    entry { boundaryId 10 C_Gamma 1.0 maxLevel 3 }
+  }
+}
+\end{lstlisting}
+
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{mesh.dict/QuadtreeMesh/GeometryRefinement} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+enabled & bool & 鍚?& false锛堥粯璁わ級 & 鏄惁鍚敤銆俓\
+\code{refineBoundary.entry.boundaryId} & int & 鍙€?& 渚嬪 10 & 瑕佸姞瀵嗙殑 boundaryId锛堟潵鑷?geometry锛夈€俓\
+ \code{refineBoundary.entry.C\_Gamma} & double & 鍚?& 1.0锛堥粯璁わ級 & 鍑犱綍鍔犲瘑绯绘暟銆俓\
+\code{refineBoundary.entry.maxLevel} & int & 鎺ㄨ崘 & 渚嬪 3 & 璇ヨ竟鐣岄檮杩戠殑鏈€澶х粏鍖栧眰绾с€俓\
+\end{longtable}
+
+\subsection{PhysicsRefinement锛堝彲閫夛紝楂橀樁鐢ㄦ硶锛墋
+\textbf{璇存槑锛殅\texttt{mesh.dict} 涓殑 PhysicsRefinement 浠呯敤浜庡０鏄?``瑕佷娇鐢ㄥ摢浜涙寚绀哄櫒/棰戠巼/闄愬箙''锛涘疄闄呮寚绀哄櫒鐨勭墿鐞嗗弬鏁伴€氬父浠嶅湪 \texttt{pic.dict/AMR} 閲岀粰鍑猴紙渚嬪 Debye 鏉′欢锛夈€?
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{mesh.dict/QuadtreeMesh/PhysicsRefinement} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+enabled & bool & 鍚?& false锛堥粯璁わ級 & 鏄惁鍚敤銆俓\
+indicators & \code{list(string)} & 鍚?& 渚嬪 \code{( DebyeLength ElectricField )} & 鎸囩ず鍣ㄥ悕绉帮紙棰勭暀锛夈€俓\
+\code{adaptEverySteps} & int & 鍚?& 0 & 棰勭暀锛氳嚜閫傚簲棰戠巼銆俓\
+\code{indicatorEverySteps} & int & 鍚?& 0 & 棰勭暀锛氭寚绀哄櫒鏇存柊棰戠巼銆俓\
+reportEvery & int & 鍚?& 0 & 棰勭暀锛氭姤鍛婇鐜囥€俓\
+hysteresis & double & 鍚?& \code{-1} & 棰勭暀锛氳繜婊炲甫銆俓\
+\code{persistenceSteps} & int & 鍚?& 0 & 棰勭暀锛氭寔缁鏁般€俓\
+\end{longtable}
+
+\section{pic.dict 鍙傝€冿紙ExplicitPIC锛墋
+\label{sec:pic}
+
+\subsection{椤跺眰鍧椾竴瑙坿
+\texttt{pic.dict} 鎺ㄨ崘鍖呭惈锛歕texttt{PIC}銆乗texttt{Units}锛堝彲閫夛級銆乗texttt{Normalization}锛堝彲閫夛級銆乗texttt{Solvers}锛堝彲閫夛級銆乗texttt{BC}銆乗texttt{EmbeddedGeometry}锛堝彲閫夛級銆乗texttt{Deposition}銆乗texttt{Species}銆乗texttt{Output}銆乗texttt{ParticleManagement}銆乗texttt{Checkpoint}銆乗texttt{AMR}锛堝彲閫夛級绛夈€?
+\noindent 杩愯鍣ㄦ敮鎸?``鎷嗗垎''锛歕texttt{Units/Solvers/Normalization} 鏃㈠彲鍐欏湪 \texttt{pic.dict}锛屼篃鍙斁鍒?\texttt{system/units.dict}銆乗texttt{system/solvers.dict}銆乗texttt{system/normalization.dict}銆?
+\subsection{PIC 鍧楋紙鏃堕棿鎺ㄨ繘涓庡苟琛岋級}
+\begin{longtable}{L{0.20\linewidth} L{0.16\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.34\linewidth}}
+\caption{\texttt{pic.dict/PIC} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+dt & 鏃堕棿 & 鏄?& 渚嬪 \code{4.6e-11 s} & 鏃堕棿姝ラ暱銆俓\
+steps & int & 鏄?& 渚嬪 \code{1000000} & 鎬绘鏁般€俓\
+seed & int & 鍚?& \code{0/12345} & 闅忔満绉嶅瓙锛堢敤浜庡垵濮嬮噰鏍?纰版挒锛夈€俓\
+omp & int & 鍚?& \code{0/15} & 瑕嗙洊 ExplicitPIC 鐨?OpenMP 绾跨▼鏁帮紙0 琛ㄧず涓嶅己鍒讹級銆俓\
+\end{longtable}
+
+\subsection{Units 鍧楋紙鎺ㄨ崘鍐欐竻锛岄伩鍏嶆涔夛級}
+\begin{longtable}{L{0.24\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.32\linewidth}}
+\caption{\texttt{Units} 瀛楁锛堝彲鍦?pic.dict 鎴?units.dict锛墋\\
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+mode & enum & 鍚?& SI / CodeUnits锛堥粯璁わ級 & 鍗曚綅瑙ｉ噴妯″紡銆俓\
+\code{writeSIOutputs / writeSI} & bool & 鍚?& false锛堥粯璁わ級 & 鏌愪簺杈撳嚭鍚屾椂鍐?code 涓?SI銆俓\
+L0 & 闀垮害 & 鍚?& 榛樿 1 m & 鍙傝€冮暱搴︺€俓\
+T0 & 鏃堕棿 & 鍚?& 榛樿 1 s & 鍙傝€冩椂闂淬€俓\
+Phi0 & 鐢靛娍 & 鍚?& 榛樿 1 V & 鍙傝€冪數鍔裤€俓\
+n0 & 鏁板瘑搴?& 鍚?& 榛樿 1 1/m\^{}3 & 鍙傝€冩暟瀵嗗害銆俓\
+v0 & 閫熷害 & 鍚?& 榛樿 L0/T0 & 鍙樉寮忔寚瀹氶€熷害灏哄害銆俓\
+E0 & 鐢靛満 & 鍚?& 榛樿 Phi0/L0 & 鍙樉寮忔寚瀹氱數鍦哄昂搴︺€俓\
+rho0 & 鐢佃嵎瀵嗗害 & 鍚?& 榛樿 1 C/m\^{}3 & 鍙樉寮忔寚瀹氱數鑽峰瘑搴﹀昂搴︺€俓\
+\code{slabThickness} & 闀垮害锛圫I锛?& 鎺ㄨ崘 & 榛樿 1 m & 2D slab 鐨勫嚭骞抽潰鍘氬害銆傚彲鍐欏湪 Units 鎴?Normalization 鎴?Geometry.Domain銆俓\
+\end{longtable}
+
+\subsection{Normalization 鍧楋紙鍙€夛紝浣嗗缓璁樉寮忕粰鍑猴級}
+\textbf{鐩殑锛殅鏄庣‘ ``2D slab 鍘氬害'' 绛夐棴鍚堜俊鎭紝閬垮厤杩愯鏃惰鍛娿€?\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{Normalization} 瀛楁锛堝彲鍦?pic.dict 鎴?normalization.dict锛墋\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+strategy & enum & 鍚?& manual锛堥粯璁わ級 & 棰勭暀锛氬綊涓€鍖栫瓥鐣ャ€俓\
+dimension & int & 鍚?& 2锛堥粯璁わ級/3 & 缁存暟闂悎銆俓\
+\code{slabThickness} & 闀垮害锛圫I锛?& \makecell[c]{dimension=2\\鎺ㄨ崘} & 榛樿 1 m & 2D slab 鍘氬害銆俓\
+\end{longtable}
+
+\subsection{Solvers 鍧楋紙PoissonCellCentered锛墋
+\begin{longtable}{L{0.24\linewidth} L{0.12\linewidth} C{0.08\linewidth} L{0.22\linewidth} L{0.30\linewidth}}
+\caption{\texttt{Solvers/PoissonCellCentered} 瀛楁锛堝彲鍦?pic.dict 鎴?solvers.dict锛墋\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+useSuperLU & bool & 鍚?& \code{true/false} & 鏄惁浣跨敤 SuperLU锛堢洿鎺ユ硶/鍒嗚В锛夈€俓\
+useCG & bool & 鍚?& \code{true/false} & 鏄惁鍏佽 CG 杩唬娉曘€俓\
+useIC & bool & 鍚?& \code{true/false} & 鏄惁鍏佽 IC 棰勬潯浠讹紙涓?CG 閰嶅悎锛夈€俓\
+maxIter & int & 鍚?& \code{2000/4000} & 杩唬涓婇檺銆俓\
+\code{relTol / relTolerance} & double & 鍚?& \code{1e-10} & 鐩稿娈嬪樊瀹归檺銆俓\
+verbose & bool & 鍚?& false & 姹傝В鍣ㄨ緭鍑恒€俓\
+\code{cacheEnabled} & bool & 鍚?& false锛堥粯璁や緷瀹炵幇锛?& 鍥犲瓙鍒嗚В缂撳瓨锛堥噸澶嶆眰瑙ｅ姞閫燂級銆俓\
+\code{cacheRebuildEvery} & int & 鍚?& 0 & 0 琛ㄧず浠呴娆℃瀯寤恒€俓\
+\code{cacheLogEvery} & int & 鍚?& 0 & 鏃ュ織杈撳嚭棰戠巼銆俓\
+\code{cacheLogOnMiss} & bool & 鍚?& \code{true/false} & cache miss 鏃舵槸鍚︽棩蹇椼€俓\
+\code{embeddedBCMissingPolicy} & enum & 鍚?& \code{error/skip} & EB 杈圭晫鏉′欢缂哄け鏃剁殑绛栫暐銆俓\
+\end{longtable}
+
+\subsection{BC 鍧楋紙Field/Particle锛屾寜 boundaryId锛墋
+\subsubsection{Field BC}
+\texttt{BC/Field} 浠?boundaryId 鏂藉姞 Poisson 杈圭晫鏉′欢锛?\begin{lstlisting}
+BC
+{
+  Field
+  {
+    boundary 1
+    {
+      type Dirichlet
+      value 0 V
+      waveform sine Vdc 0 V Vac 150 V freq 13.56 MHz phase 0 deg
+    }
+  }
+}
+\end{lstlisting}
+
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{BC/Field/boundary <id>} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+type & enum & 鏄?& \code{Dirichlet/Neumann/Robin/Periodic} & Poisson 杈圭晫绫诲瀷銆侾eriodic 闇€瑕?geometry.dict 鐨?PeriodicPairs 閰嶅銆俓\
+value & 鐢靛娍/姊害 & \makecell[c]{Dirichlet\\Neumann\\蹇呭～} & 渚嬪 \code{0 V} & Dirichlet: \(\phi\)锛汵eumann: \(\partial\phi/\partial n\)銆俓\
+\code{waveform / time / timeDirichlet / rf} & token list & 鍚?& \code{sine ...} & 浠呭 Dirichlet 鐢熸晥锛氭椂闂村彉鍖栫數鍔裤€傝В鏋愬櫒鏀寔锛歕newline \code{sine|cosine|constant}锛屽苟璇嗗埆閿細\code{Vdc,V\_dc,Vac,Vpp,freq,phase,t0}锛堝崟浣嶆敮鎸?MHz/deg/ns 绛夛級銆俓\
+\end{longtable}
+
+\subsubsection{Particle BC}
+\texttt{BC/Particle} 鎻忚堪绮掑瓙涓庤竟鐣岀殑鐩镐簰浣滅敤銆俓textbf{褰撳墠瀹炵幇浠呮敮鎸佸惛鏀讹細}\texttt{model absorb}銆?
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{BC/Particle/boundary <id>} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+model & string & 鍚?& absorb锛堥粯璁わ級 & 绮掑瓙杈圭晫妯″瀷銆傚綋鍓嶄粎 absorb 宸插疄鐜般€俓\
+SEE & block & 鍚?& 瑙?\S\ref{sec:see} & 鍙€夛細瀵硅 boundary 瑕嗙洊 SEE 鍙傛暟銆俓\
+\end{longtable}
+
+\subsection{SEE锛圫econdary Electron Emission锛墋
+\label{sec:see}
+SEE 鍙湪鍏ㄥ眬 \texttt{SEE\{...\}} 鎴栧崟涓?boundary 鐨?\texttt{SEE\{...\}} 涓寚瀹氥€?
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{SEE 涓昏瀛楁锛堝叏灞€鎴?per-boundary锛墋\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+enabled & bool & 鍚?& false & 鏄惁鍚敤 SEE銆俓\
+\code{cathodeSides} & \code{list(string)} & 鍚?& \code{(left/right/bottom/top)} & 鍙戝皠渚ч泦鍚堛€傝嫢绌哄垯浣跨敤 cathodeSide銆俓\
+cathodeSide & string & 鍚?& left锛堥粯璁わ級 & 鍏煎鏃у啓娉曘€俓\
+\code{emittedSpecies} & string & 鍚?& electron & 鍙戝皠鐨勭墿绉嶅悕绉般€俓\
+gammaModel & enum & 鍚?& \code{constant/powerlaw/piecewise} & 鍙戝皠绯绘暟妯″瀷銆俓\
+gamma & double & constant & \code{0.0} & constant 妯″瀷鐨勫父鏁板彂灏勭巼銆俓\
+\code{(gamma0,Eref,alpha,gammaMax,Emin)} & double & powerlaw & & powerlaw 鍙傛暟锛圗 鍗曚綅 eV锛夈€俓\
+\code{piecewisePoints} & list(pair) & piecewise & & \code{(E1 gamma1 E2 gamma2 ...)}銆俓\
+\code{emittedEnergyModel} & enum & 鍚?& \code{mono/maxwell/exponential} & 鍙戝皠鐢靛瓙鑳介噺妯″瀷銆俓\
+\code{emittedEnergy (eV)} & double & mono & \code{2.0} & 鍗曡兘鍙戝皠鑳介噺銆俓\
+\code{emittedTe (eV)} & double & maxwell & \code{2.0} & Maxwellian 鐨?kT銆俓\
+\code{emittedEmean (eV)} & double & \code{exponential} & \code{2.0} & 鎸囨暟鍒嗗竷鍧囧€笺€俓\
+\code{injectEps (m)} & double & 鍚?& \code{1e-6} & 浠庡闈㈠悜鍐呭亸绉昏窛绂伙紙闃叉钀藉湪鍥轰綋鍐咃級銆俓\
+\code{maxEmitMacro} & int & 鍚?& 100 & 姣忔鎾炲嚮鏈€澶氬彂灏勫畯绮掑瓙鏁般€俓\
+angular & enum & 鍚?& \code{cosine/isotropic/fixed} & 瑙掑垎甯冿細榛樿 cosine 鍗婄悆銆俓\
+\end{longtable}
+
+\subsection{EmbeddedGeometry锛圗B 缁戝畾涓庡惛鏀剁瓥鐣ワ級}
+\begin{longtable}{L{0.24\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.32\linewidth}}
+\caption{\texttt{EmbeddedGeometry} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+enabled & bool & 鍚?& false & 鏄惁鍚敤 EB cut-cell銆俓\
+\code{levelSetIndex} & int & 鍚?& 0 & 缁戝畾鍗曚釜 level set锛堣緭鍏ラ€氬父鍐?1-based锛屽唴閮ㄨ浆 0-based锛涙槗閿欙級銆俓\
+\code{levelSetIndices} & list(int) & 鍚?& & 缁戝畾澶氫釜 level set锛?-based锛夈€傝嫢闈炵┖浼樺厛浜?levelSetIndex銆俓\
+boundaryIds & list(int) & 鎺ㄨ崘 & 渚嬪 (10,11,15) & \textbf{鎺ㄨ崘鍐欐硶锛殅鎸?geometry 鐨?boundaryId 缁戝畾 EB锛屽唴閮ㄤ細鏄犲皠鍒板悇鑷?levelSetIndex銆俓\
+\code{insideIsNegative} & bool & 鍚?& true & solid 鏄惁涓?\(\psi<0\)銆俓\
+\code{absorbParticles} & bool & 鍚?& true & 杩涘叆鍥轰綋鐨勭矑瀛愭槸鍚﹀惛鏀躲€俓\
+\code{absorbCrossing} & bool & 鍚?& false & 杞ㄨ抗璺ㄨ秺 EB 涔熷惛鏀讹紙鏇村己绾︽潫锛夈€俓\
+\code{alphaSampleN} & int & 鍚?& 6 & cut-cell 鐨勯潰绉垎鏁伴噰鏍峰垎杈ㄧ巼锛圢 x N锛夈€俓\
+\end{longtable}
+
+\subsection{Deposition锛堟矇绉笌 matched weights锛墋
+\begin{longtable}{L{0.24\linewidth} L{0.11\linewidth} C{0.07\linewidth} L{0.18\linewidth} L{0.30\linewidth}}
+\caption{\texttt{Deposition} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+shape & enum & 鍚?& NGP/CIC/TSC锛堥鐣欙級 & 褰㈠嚱鏁般€傚綋鍓嶄互 CIC 涓轰富銆俓\
+\code{useMatchedWeights} & bool & 鍚?& true & 鏄惁鍚敤 matched deposit/gather銆俓\
+cutRenorm & bool & 鍚?& true & cut-cell 鍐呮潈閲嶉噸褰掍竴鍖栥€俓\
+\code{compositeBand} & bool & 鍚?& false & 鏄惁鍚敤 coarse-fine composite band 鏍℃銆俓\
+\code{momentExactCut} & bool & 鍚?& false & 鏄惁鍚敤 moment-exact cut 鏉冮噸锛堣嫢瀹炵幇鐗堟湰鏀寔锛夈€俓\
+\code{ebRegularization} & bool & 鍚?& false & 棰勭暀锛欵B 姝ｅ垯銆俓\
+\end{longtable}
+
+\subsection{Species锛堢墿绉嶅畾涔変笌娉ㄥ叆婧愶級}
+\begin{longtable}{L{0.24\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.32\linewidth}}
+\caption{\texttt{Species/"name"} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+q & 鐢佃嵎 & 鏄?& \code{1 e} / \code{-1 e} / \code{0 C} & 鐗╃鐢佃嵎銆俓\
+m & 璐ㄩ噺 & 鏄?& \code{1 me} / \code{131.3 amu} & 鐗╃璐ㄩ噺銆俓\
+Te & 鑳介噺/娓╁害 & 鍚?& \code{2 eV} 鎴?\code{300 K} & 浣滀负鍚勫悜鍚屾€?Maxwellian 鐨?kT銆俓\
+drift & (vx,vy) 閫熷害 & 鍚?& \code{(0,0) m/s} & 鍒濆婕傜Щ閫熷害銆俓\
+\code{numParticles} & int & 鍚?& 0 & 鍒濆瀹忕矑瀛愭暟锛堝潎鍖€鍒嗗竷鍒濆鍖栵級銆俓\
+weight & double & 鏄?& 渚嬪 \code{5e6} & 瀹忕矑瀛愭潈閲?\(w_p\)銆俓\
+\code{sourceEnabled} & bool & 鍚?& false & 鏄惁寮€鍚竟鐣屾敞鍏ャ€俓\
+\code{sourceBoundaryId} & int & \makecell[c]{sourceEnabled\\鎺ㄨ崘} & 渚嬪 14 & 鍦ㄥ摢涓?boundaryId 涓婃敞鍏ャ€俓\
+\code{sourceNumberDensity} & $\mathrm{m}^{-3}$ & 鍙€?& 渚嬪 $1\times10^{13}\,\mathrm{m}^{-3}$ & 婧?``鐩爣鏁板瘑搴?'锛堢敤浜庡喅瀹氭敞鍏ユ暟锛夈€俓\
+\code{sourceCurrent} & A & 鍙€?& 渚嬪 \code{3e-3 A} & 婧?``鐩爣鐢垫祦''锛堝彲涓庢暟瀵嗗害閰嶅悎/瑕嗙洊锛夈€俓\
+sourceTe & \code{eV/K} & 鍚?& <0 琛ㄧず鐢?Te & 婧愭敞鍏ユ俯搴︺€俓\
+sourceDrift & (vx,vy) & 鍚?& & 婧愭敞鍏ユ紓绉婚€熷害銆俓\
+sourceEvery & int & 鍚?& 1 & 娉ㄥ叆棰戠巼锛堟瘡 N 姝ユ敞鍏ヤ竴娆★級銆俓\
+\code{maxEmitMacro} & int & 鍚?& 0 & 0 琛ㄧず涓嶉檺鍒跺崟娆℃敞鍏ュ畯绮掑瓙鏁般€俓\
+\end{longtable}
+
+\subsection{Output锛堣緭鍑轰笌璇婃柇锛墋
+\texttt{Output} 鐨勮璁℃槸 ``涓€涓富杈撳嚭 + 鑻ュ共鍙€夎瘖鏂瓙鍧?'銆傚瓧娈垫棦鍙啓鍦ㄥ瓙鍧楀唴锛屼篃鍙敤鎵佸钩閿紙\texttt{profile1d.nbinsX}锛夊啓銆?
+\noindent
+\textbf{璇婃柇瀛愬潡鐨?``灏戝啓'' 瑙勫垯锛堟帹鑽愶級锛殅
+\begin{itemize}[leftmargin=2.2em]
+
+\noindent
+\textbf{榛樿璇婃柇杈撳嚭鏂囦欢锛堢渷鐣?path 鏃讹級锛殅
+\begin{itemize}[leftmargin=2.2em]
+  \item \code{PeriodicDiagnostics} $\rightarrow$ \texttt{output/periodic\_diagnostics.csv}
+  \item \code{Profile1D} $\rightarrow$ \texttt{output/profile1d.csv}
+  \item \code{Profile1DAvg} $\rightarrow$ \texttt{output/profiles\_avg.csv}
+  \item \code{CurrentWaveform} $\rightarrow$ \texttt{output/current\_waveform.csv}
+  \item \code{CurrentBalance} $\rightarrow$ \texttt{output/current\_balance.csv}
+\end{itemize}
+
+\begin{longtable}{L{0.24\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.32\linewidth}}
+\caption{\texttt{Output} 涓诲瓧娈祡\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+every & int & 鍚?& 10 & 鍦鸿緭鍑洪棿闅旓紙姝ワ級銆俓\
+fields & \code{list(string)} & 鍚?& \code{(phi rho E n Te)} & 杈撳嚭鍝簺瀛楁銆傜┖琛ㄧず浣跨敤妯″潡榛樿銆俓\
+\code{console.level} & enum & 鍚?& \code{error/warn/info/debug/trace} & 鎺у埗鍙拌緭鍑虹骇鍒€俓\
+\code{console.every} & int & 鍚?& 10 & info 绾х墿鐞嗘憳瑕佽緭鍑洪棿闅斻€俓\
+\code{debugFields.rhs} & bool & 鍚?& false & 璋冭瘯锛氳緭鍑?Poisson RHS銆俓\
+\code{debugFields.rG} & bool & 鍚?& false & 璋冭瘯锛氳緭鍑?Gauss 娈嬪樊銆俓\
+\end{longtable}
+
+\noindent 甯哥敤璇婃柇瀛愬潡锛堝潎鍙斁鍦?Output 鍐咃級锛?\begin{itemize}[leftmargin=2.2em]
+  \item \texttt{PeriodicDiagnostics\{enabled,console\}}锛氬懆鏈熻竟鐣岃瘖鏂紱
+  \item \texttt{CurrentWaveform\{enabled,side\}}锛氶┍鍔ㄧ數鏋佺數娴佹尝褰紱
+  \item \texttt{Profile1D\{enabled,nbinsX\}}锛氭部 x 鐨?1D 杞粨锛?D periodic-y 鐨?benchmark 寰堟湁鐢級锛?  \item \texttt{Profile1DAvg\{enabled,avgWindowSteps\}}锛?D 杞粨鐨勬粦鍔ㄥ钩鍧囷紱
+  \item \texttt{CurrentBalance\{enabled\}}锛氭敞鍏?鍚告敹鐢垫祦骞宠　锛?  \item \texttt{EBBandRMS\{enabled,bandLayers\}}锛欵B 杩戝鍦哄己 RMS 浠ｇ悊銆?\end{itemize}
+
+\noindent
+\textbf{鍏充簬 fields 涓?time-series 鐨?cadence锛堝挨鍏舵槸 ImplicitPIC锛夛細}
+\begin{itemize}[leftmargin=2.2em]
+  \item \code{fields.every} 鎺у埗 Tecplot 鍦烘枃浠讹紙\texttt{output/fields/fields\_XXXXXX.dat}锛夌殑杈撳嚭闂撮殧銆?  \item \code{series.every} 浠呮帶鍒?time-series CSV锛堜緥濡?\texttt{perf\_step.csv}銆乗texttt{physics\_step.csv}锛夌殑闂撮殧锛孿textbf{涓嶄細鍐嶈鐩?fields 鐨勮緭鍑洪棿闅攠銆?  \item 涓€鑸笉闇€瑕佸湪瀛楀吀涓啓 \code{fields.every / series.every / console.every}锛涘綋浣犲啓浜?\code{fields.every} 涓旀湭鏄惧紡鍐?\code{fields.every} 鏃讹紝fields cadence 榛樿璺熼殢 \code{fields.every}銆?\end{itemize}
+
+\subsection{ParticleManagement锛堢矑瀛愭暟绠＄悊锛墋
+\begin{longtable}{L{0.24\linewidth} L{0.11\linewidth} C{0.07\linewidth} L{0.18\linewidth} L{0.30\linewidth}}
+\caption{\texttt{ParticleManagement} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+enabled & bool & 鍚?& false & 鏄惁鍚敤 merge/split/thinning銆俓\
+every & int & 鍚?& 1 & 姣?N 姝ユ墽琛屼竴娆＄鐞嗐€俓\
+\code{softCapTotal} & int64 & 鍚?& 0 & 鎬荤矑瀛愯蒋涓婇檺锛? 琛ㄧず鍏抽棴锛夈€俓\
+\code{hardCapTotal} & int64 & 鍚?& 0 & 鎬荤矑瀛愮‖涓婇檺锛? 琛ㄧず鍏抽棴锛夈€俓\
+\code{perCellMax / perCellMin} & int & 鍚?& \code{120/20} & 姣?cell 鐨勭矑瀛愭暟涓?涓嬮檺锛? 鍏抽棴锛夈€俓\
+\code{mergeMaxDeltaE} & eV & 鍚?& \code{1.0} & merge 鑳介噺宸槇鍊笺€俓\
+\code{mergeMaxDeltaEBySpecies} & list(eV) & 鍚?& 渚嬪 (5 0.1) & 鎸?species 椤哄簭缁欐瘡涓墿绉嶇殑闃堝€笺€俓\
+splitWMax & double & 鍚?& \code{4.0} & 鏉冮噸杩囧ぇ鏃?split銆俓\
+minKeepProb & double & 鍚?& \code{0.05} & thinning 鏈€灏忎繚鐣欐鐜囥€俓\
+reportEvery & int & 鍚?& 1 & 缁熻杈撳嚭棰戠巼銆俓\
+\end{longtable}
+
+\subsection{Checkpoint锛堥噸鍚級}
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{Checkpoint} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+enabled & bool & 鍚?& false & 鏄惁鍚敤 checkpoint銆俓\
+every & int & 鍚?& 100 & 姣?N 姝ヤ繚瀛樹竴娆★紙0 鍏抽棴锛夈€俓\
+keep & int & 鍚?& 2 & 浠呬繚鐣欐渶杩?K 涓紙<=0 琛ㄧず鍏ㄩ儴淇濈暀锛夈€俓\
+path & string & 鍚?& \code{../cache} & 淇濆瓨鐩綍銆俓\
+restart & bool & 鍚?& false & 鍚姩鏃舵槸鍚︿粠 checkpoint 鎭㈠銆俓\
+restartStep & int & 鍚?& \code{-1} & <0 琛ㄧず鏈€鏂帮紱>=0 鎸囧畾姝ャ€俓\
+saveRng & bool & 鍚?& true & 鏄惁淇濆瓨 RNG 鐘舵€侊紙澶嶇幇鎬э級銆俓\
+\end{longtable}
+
+\subsection{AMR锛圥IC 渚х瓥鐣ワ紝Debye 涓?E 鍦烘寚绀哄櫒锛墋
+\texttt{AMR} 灞炰簬 PIC 妯″潡渚х瓥鐣ワ紝涓嶆敼鍙樼綉鏍兼牳蹇冩暟鎹粨鏋勩€?
+\begin{longtable}{L{0.24\linewidth} L{0.11\linewidth} C{0.07\linewidth} L{0.18\linewidth} L{0.30\linewidth}}
+\caption{\texttt{AMR} 椤跺眰瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+enabled & bool & 鍚?& false & 鏄惁鍚敤 PIC 椹卞姩鑷€傚簲銆俓\
+\code{adaptEverySteps} & int & 鍚?& 20 & 鎵ц鑷€傚簲鐨勯鐜囥€俓\
+\code{indicatorEverySteps} & int & 鍚?& 1 & 鏇存柊鎸囩ず鍣ㄧ殑棰戠巼銆俓\
+\code{persistenceSteps} & int & 鍚?& 3 & 鎸囩ず鍣ㄦ寔缁鏁帮紙鎶楁姈锛夈€俓\
+hysteresis & double & 鍚?& \code{0.2} & 杩熸粸甯︼紙姣斾緥锛夈€俓\
+\code{cellBudgetPerAdapt} & int & 鍚?& 0 & 鍗曟鑷€傚簲 cell 棰勭畻锛? 涓嶉檺锛夈€俓\
+\end{longtable}
+
+\noindent Debye 瀛愬潡锛圽texttt{AMR/Debye}锛夊父鐢ㄥ瓧娈碉細
+\begin{itemize}[leftmargin=2.2em]
+  \item \texttt{enabled}锛氶粯璁?true锛?  \item \texttt{CD}锛氱綉鏍兼弧瓒?\(h \le C_D\,\lambda_D\)锛?  \item \texttt{Te\_eV}锛氬彲鎸囧畾鐢靛瓙娓╁害锛?=0 鍒欎粠 electron species 鐨?Te 鎺ㄦ柇锛?  \item \texttt{neFloor}锛氭暟瀵嗗害涓嬮檺锛堥槻姝㈢湡绌哄尯鍩熻繃缁嗭級锛?  \item \texttt{avgWindowSteps}锛氭椂闂村钩鍧囩獥鍙ｏ紱
+  \item \texttt{smoothWindowCells}锛氱┖闂村钩婊戠獥鍙ｏ紙浠?cell 瀹藉害璁★級銆?\end{itemize}
+
+\section{mcc.dict 鍙傝€冿紙Gas/CrossSections/Reactions/Collisions锛墋
+\label{sec:mcc}
+
+\subsection{閲嶈锛氬潡鍙互鍐欏湪 mcc.dict 鎴?pic.dict}
+杩愯鍣ㄦ寜濡備笅浼樺厛绾ф彁鍙栵細
+\begin{itemize}[leftmargin=2.2em]
+  \item 鑻ュ瓨鍦?\texttt{system/mcc.dict}锛氫紭鍏堜粠 mcc.dict 鎻愬彇 \texttt{Gas/CrossSections/Reactions/Collisions}锛?  \item 鑻?mcc.dict 涓嶅瓨鍦ㄦ垨缂哄潡锛氬啀灏濊瘯浠?\texttt{pic.dict} 鎻愬彇鍚屽悕鍧楋紱
+  \item 鑻ヤ粛缂猴細鍒欏皾璇曡鍙栧垎鎷嗘枃浠?\texttt{system/gas.dict}銆乗texttt{system/crossSections.dict}銆乗texttt{system/reactions.dict}銆乗texttt{system/collisions.dict}銆?\end{itemize}
+
+\subsection{Gas}
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{Gas} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷/鍗曚綅 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+name & string & 鏄?& \code{Ar/Xe/He...} & 姘斾綋鍚嶇О锛堝瓧绗︿覆锛夈€俓\
+pressure & 鍘嬪己 & 鏄?& \code{50 mTorr}, \code{9.93 Pa} & 鑳屾櫙鍘嬪己銆俓\
+temperature & 娓╁害 & 鏄?& \code{300 K} & 鑳屾櫙娓╁害銆俓\
+\end{longtable}
+
+\subsection{CrossSections}
+CrossSections 鏀寔涓夌被鏉ユ簮锛?\begin{itemize}[leftmargin=2.2em]
+  \item \textbf{table锛殅鍗曢€氶亾琛ㄦ牸锛堣兘閲?鎴潰锛夛紱
+  \item \textbf{lxcatFile/bolsigFile锛殅浠?BOLSIG/LXCat 鏍煎紡鏂囦欢鎵归噺鍔犺浇锛?  \item \textbf{builtIn锛殅鍐呯疆搴擄紙褰撳墠瀹炵幇鎻愪緵 ArV1锛夈€?\end{itemize}
+
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{CrossSections/"entry"} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+type & enum & 鏄?& \code{table / lxcatFile / builtIn} & 鏉ユ簮绫诲瀷銆俓\
+file & string & \makecell[c]{table\\lxcatFile\\蹇呭～} & \code{"data/...txt"} & 鏁版嵁鏂囦欢璺緞銆俓\
+projectile & string & lxcatFile 鎺ㄨ崘 & \code{e, Xe\_plus...} & BOLSIG 鏂囦欢涓殑 projectile 鍚嶇О銆俓\
+prefix & string & 鍚?& \code{"e-Ar:"} & 娉ㄥ唽鍒?DB 鐨?key 鍓嶇紑銆俓\
+overwrite & bool & 鍚?& false & key 鍐茬獊鏃舵槸鍚﹁鐩栥€俓\
+strict & bool & 鍚?& true & lxcatFile锛氫弗鏍艰В鏋愩€俓\
+interp & enum & 鍚?& \code{linear/loglog} & 鎻掑€兼柟寮忋€俓\
+energyUnit & string & 鍚?& eV & 鑳介噺鍗曚綅锛堣〃鏍奸粯璁わ級銆俓\
+sigmaUnit & string & 鍚?& m2 & 鎴潰鍗曚綅锛堣〃鏍奸粯璁わ級銆俓\
+library & string & builtIn 蹇呭～ & ArV1 & 鍐呯疆搴撳悕绉般€俓\
+\end{longtable}
+
+\subsection{Reactions}
+\texttt{Reactions} 瀹氫箟 projectile-target 鐨?``鍙嶅簲闆?'锛屾瘡涓弽搴旈泦鍖呭惈澶氫釜 channel銆?
+\begin{longtable}{L{0.22\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.20\linewidth} L{0.32\linewidth}}
+\caption{\texttt{Reactions/"set"} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+projectile & string & 鏄?& \code{e/electron/Xe\_plus} & projectile 鐗╃鍚嶏紙闇€涓?SpeciesDatabase 涓€鑷达級銆俓\
+target & string & 鏄?& \code{Ar/Xe} & target 鐗╃鍚嶃€俓\
+Channels & block & 鏄?& & channel 闆嗗悎銆俓\
+\end{longtable}
+
+\begin{longtable}{L{0.24\linewidth} L{0.14\linewidth} C{0.08\linewidth} L{0.18\linewidth} L{0.32\linewidth}}
+\caption{\texttt{Reactions/.../Channels/"channel"} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{crossSection / xs} & string & 鏄?& 渚嬪 \code{"e-Ar:ELASTIC"} & CrossSectionDB key銆俓\
+\code{threshold / Eth} & eV & 鍚?& 榛樿 0 & 鍙嶅簲闃堝€硷紙eV锛夈€俓\
+products & \code{list(string)} & 鍚?& 渚嬪 (Ar\_plus e) & 浜х墿鍒楄〃锛堢洰鍓嶄富瑕佺敤浜庣瀛愬寲/浜ゆ崲绛夋墿灞曪級銆俓\
+\code{scatter / scatterModel} & string & 鍚?& \code{isotropic/backscatter} & 鏁ｅ皠妯″瀷銆傚綋鍓?PostCollisionModel 鏀寔 isotropic/backscatter/榛樿 forward銆俓\
+\code{energyLoss / loss} & string & 鍚?& & 棰勭暀锛氳兘閲忔崯澶辨ā鍨嬶紙褰撳墠澶氭暟鎯呭喌涓嬩笉鐢熸晥锛夈€俓\
+\code{energyShare / share} & string & 鍚?& & 棰勭暀锛氱瀛愬寲鑳介噺鍒嗛厤妯″瀷锛堥儴鍒嗗疄鐜版敮鎸侀粯璁ょ瓥鐣ワ級銆俓\
+enabled & bool & 鍚?& true & 鏄惁鍚敤璇?channel銆俓\
+\end{longtable}
+
+\subsection{Collisions锛圡CC 杩愯閰嶇疆锛墋
+\begin{longtable}{L{0.24\linewidth} L{0.11\linewidth} C{0.07\linewidth} L{0.18\linewidth} L{0.30\linewidth}}
+\caption{\texttt{Collisions} 椤跺眰瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+enabled & bool & 鍚?& false & 鏄惁鍚敤纰版挒銆俓\
+parallel & bool & 鍚?& true & 鏄惁鍏佽 OMP 骞惰銆俓\
+rngMode & enum & 鍚?& \makecell[l]{global\\perParticle\\counterBased} & RNG 妯″紡銆俠enchmark/骞惰寤鸿 perParticle銆俓\
+rngSeed & uint64 & 鍚?& 12345 & RNG 绉嶅瓙銆俓\
+\code{stats.every} & int & 鍚?& 1 & 缁熻杈撳嚭棰戠巼锛? 鍏抽棴锛夈€俓\
+method & enum & 鍚?& nullCollision锛堜粎鏀寔锛?& 褰撳墠浠呮敮鎸?null-collision/majorant銆俓\
+\code{majorantEmax} & eV & 鍚?& 1000 eV & majorant 鑳介噺涓婇檺銆俓\
+\code{safetyFactor} & double & 鍚?& \code{1.2} & 瀹夊叏绯绘暟銆俓\
+\code{energySamples} & \code{size\_t} & 鍚?& 2048 & 閲囨牱鐐规暟锛岀敤浜庝及璁℃渶澶ф埅闈€俓\
+clampEnergy & bool & 鍚?& true & 鏄惁鎴柇瓒呰繃 Emax 鐨勮兘閲忋€俓\
+\code{useFastLookup} & bool & 鍚?& true & 鏄惁鍚敤鎴潰蹇€熸煡琛?hint銆俓\
+lookupBins & \code{size\_t} & 鍚?& 4096 & hint 琛?bins銆俓\
+\code{trackFastNeutrals} & bool & 鍚?& false & 鏄惁璺熻釜蹇腑鎬х矑瀛愶紙闇€瑕?reactions.products 鏀寔锛夈€俓\
+\end{longtable}
+
+\noindent 姣忎釜 projectile 闇€瑕佷竴涓槧灏勬潯鐩細
+\begin{longtable}{L{0.24\linewidth} L{0.11\linewidth} C{0.07\linewidth} L{0.18\linewidth} L{0.30\linewidth}}
+\caption{\texttt{Collisions/"entry"} 瀛楁}\\
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endfirsthead
+\toprule
+瀛楁 & 绫诲瀷 & 蹇呭～ & 鍙€夊€?榛樿 & 璇存槑 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+projectile & string & 鏄?& 渚嬪 Xe\_plus & projectile 鐗╃鍚嶃€俓\
+reactionSet & string & 鏄?& 渚嬪 Xe\_plus-Xe & ReactionDatabase 涓殑 set 鍚嶇О銆俓\
+\end{longtable}
+
+\section{甯歌閿欒涓庢帓鏌ユ竻鍗晑
+
+\subsection{boundaryId 涓嶅尮閰峿
+鐥囩姸锛氳繍琛屾椂鎻愮ず ``boundaryId X not found in geometry.dict''銆?\begin{itemize}[leftmargin=2.2em]
+  \item 妫€鏌?\texttt{geometry.dict/Boundary} 鏄惁瀹氫箟浜嗚 id锛?  \item 妫€鏌ヨ boundary 鏄惁琚?\texttt{ignored true}锛?  \item 鑻ユ槸 periodic锛氭鏌?\texttt{PeriodicPairs} 鏄惁鍖呭惈璇?id 鐨勯厤瀵广€?\end{itemize}
+
+\subsection{2D slabThickness 璀﹀憡}
+鐥囩姸锛歕texttt{slabThickness not specified for 2D; defaulting to 1 m}銆?\begin{itemize}[leftmargin=2.2em]
+  \item 瑙ｅ喅锛氬湪 \texttt{Normalization} 鎴?\texttt{Units} 鎴?\texttt{Geometry.Domain} 涓换鎰忎竴澶勫啓 \texttt{slabThickness}銆?\end{itemize}
+
+\subsection{MCC 鍧楃己澶卞鑷寸殑渚濊禆閿欒}
+\begin{itemize}[leftmargin=2.2em]
+  \item 鑻ユ彁渚?\texttt{Reactions} 浣嗙己 \texttt{CrossSections}锛氳繍琛屽櫒浼氭姤閿欍€?  \item 鑻ユ彁渚?\texttt{Collisions} 浣嗙己 \texttt{Gas}锛氳繍琛屽櫒浼氭姤閿欙紙闇€瑕佽儗鏅暟瀵嗗害锛夈€?\end{itemize}
+
+\subsection{鍛ㄦ湡杈圭晫闂悎涓嶅畬鏁磢
+\begin{itemize}[leftmargin=2.2em]
+  \item \texttt{BC/Field} 鎶?boundaryId 璁句负 \texttt{Periodic} 鍙槸绗竴姝ワ紱
+  \item 蹇呴』鍦?\texttt{geometry.dict/PeriodicPairs} 涓粰鍑洪厤瀵逛笌 shift锛屽惁鍒欎細鎶?``Periodic mate missing''銆?\end{itemize}
+
+\section{鎺ㄨ崘鐨?``鍐欐硶椋庢牸''锛堣绠椾緥鏇村彲缁存姢锛墋
+\begin{itemize}[leftmargin=2.2em]
+  \item boundaryId 瑙勫垝锛氬煙杈圭晫 1-4锛涘祵鍏ュ浣?浠嬭川浠?10 璧凤紱鍒嗘杈圭晫锛坰ource/outlet锛変篃浠?10 璧峰苟鍗曠嫭鍗犵敤 id銆?  \item EB 缁戝畾浼樺厛鍐?\texttt{EmbeddedGeometry.boundaryIds}锛屼笉瑕佺敤 \texttt{levelSetIndex}锛堝噺灏?0/1-based 娣锋穯锛夈€?  \item 缃戞牸 refinement 浼樺厛鍐欏湪 \texttt{mesh.dict/GeometryRefinement}锛堝嚑浣曢┍鍔ㄦ洿绋筹級锛孭IC 渚?AMR 鐢ㄤ簬 Debye 鏉′欢绛?``鐗╃悊蹇呴』'' 鐨?refinement銆?  \item 杈撳嚭瀛楁灏介噺鍦?\texttt{Output.fields} 閲岄泦涓０鏄庯紝渚夸簬瀵规瘮涓嶅悓 case銆?\end{itemize}
+
+
+\appendix
+\clearpage
+\section{瀹屾暣瀛楀吀缂栧啓鑼冧緥锛堜綔涓洪檮浠讹級}
+鏈檮褰曠洿鎺ュ祵鍏モ€滃瓧鍏哥紪鍐欒寖渚嬫ā鏉库€濈殑 PDF 鐗堟湰锛屼究浜庢墦鍗颁笌閫愯瀵圭収銆?\IfFileExists{QUANTUM_InputDicts_Example_Template.pdf}{%
+  \includepdf[pages=-]{QUANTUM_InputDicts_Example_Template.pdf}%
+}{%
+  \noindent\textit{娉細鏈壘鍒?\texttt{QUANTUM\_InputDicts\_Example\_Template.pdf}锛屽洜姝ゆ湭鍦ㄦ澶勫祵鍏ユā鏉?PDF銆倉%
+}
+
+\end{document}
+
+
+
+

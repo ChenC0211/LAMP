@@ -1,0 +1,6 @@
+{
+  "program": "LAMP_cch_constant_normal_stress_benchmark.exe",
+  "study": "full",
+  "arguments": ["full"],
+  "description": "H12 constant normal stress: 36 fixed XY/RZ uniform/AMR geometries, 432 physical mass/viscosity blocks, 864 actual saddle solves"
+}

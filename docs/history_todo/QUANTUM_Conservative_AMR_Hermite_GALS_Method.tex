@@ -1,0 +1,549 @@
+\documentclass[11pt,a4paper]{ctexart}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,mathtools,bm}
+\usepackage{booktabs,array,longtable}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{caption}
+\usepackage{setspace}
+
+
+\definecolor{deepblue}{RGB}{35,73,112}
+\hypersetup{colorlinks=true,linkcolor=deepblue,citecolor=deepblue,urlcolor=deepblue}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{QUANTUM 水平集输运方法重构}
+\fancyhead[R]{设计草案 v0.1}
+\fancyfoot[C]{\thepage}
+\setlength{\headheight}{14pt}
+\setstretch{1.18}
+\setlist[itemize]{leftmargin=2em,itemsep=0.25em,topsep=0.35em}
+\setlist[enumerate]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em}
+\titleformat{\section}{\Large\bfseries\color{deepblue}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.7em}{}
+
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\bx}{\bm{x}}
+\newcommand{\bu}{\bm{u}}
+\newcommand{\bn}{\bm{n}}
+\newcommand{\bB}{\bm{B}}
+\newcommand{\bp}{\bm{p}}
+\newcommand{\bg}{\bm{g}}
+\newcommand{\grad}{\nabla}
+\newcommand{\Hess}{\nabla^2}
+\newcommand{\jump}[1]{\left[#1\right]}
+
+\title{\textbf{面向 AMR 与局部体积守恒的紧凑 Hermite--GALS 水平集方法}\\[0.4em]
+\large QUANTUM 项目水平集输运模块重构设计}
+\author{方法设计说明}
+\date{2026年9月26日}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+本文提出一套用于 QUANTUM 项目水平集输运模块的新离散框架，目标是在保留当前高阶 biquartic Hermite 隐式几何表示和高精度曲率计算能力的前提下，将现有的“特征增量采样--宽模板重构--Hermite 更新--体积 KKT 修正”链路收拢为更紧凑、自洽的数值方法。新方法采用三个核心构件：\textbf{(i) first-jet GALS 特征输运}，直接推进水平集值及一阶梯度；\textbf{(ii) quartic Hermite skeleton closure}，利用已输运的一阶微分数据以紧凑方式闭合混合导数 $\phi_{xy}$，避免直接输运二阶 jet 以及对 $\nabla^2\bu$ 的依赖；\textbf{(iii) conservative interior-bubble closure}，将单元相体积作为有限体积守恒状态推进，并用 biquartic 单元内部的 $C^1$ bubble 自由度闭合单元体积。AMR 通过 master-skeleton 约束、精确细化限制、守恒粗化和 coarse--fine flux refluxing 处理。该框架的目标不是降低当前几何阶次，而是将 AMR、一阶 jet 输运、曲率精度和体积守恒统一到同一个离散结构中。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{背景与重构目标}
+
+QUANTUM 当前 Hermite 水平集主线已经形成较强的高阶几何能力：界面由分片 Hermite 多项式的零水平集表示，法向和曲率可直接由同一多项式的导数获得；在 native 2:1 AMR 上，当前采用含角点、边中点和单元中心数据的 enriched biquartic 表示。与此同时，现有输运链路仍包含若干相对独立的数值模块：
+\begin{enumerate}
+    \item 通过半拉格朗日特征回溯计算标量增量
+    \[
+        g(\bx)=\phi_h^n(\bB_h(\bx))-\phi_h^n(\bx),
+    \]
+    并在较宽二维模板上重构 $g$ 的导数；
+    \item 将重构得到的导数增量写回 Hermite 自由度；
+    \item 由于水平集输运本身不严格守恒，再通过几何灵敏度、约束求解和回溯修正单元相体积；
+    \item AMR refinement/coarsening、hanging trace 和 contact chart 另行处理。
+\end{enumerate}
+
+这些模块分别具有合理的数值动机，但整体上仍表现为“高阶输运、AMR 和守恒的串联耦合”。本次重构希望使方法本身天然具备以下性质：
+\begin{itemize}
+    \item 保持当前高阶 Hermite 隐式几何，不为简化输运而降低曲率计算所需的空间阶次；
+    \item 将经典 Gradient-Augmented Level Set (GALS) 的紧凑、coherent characteristic update 引入当前 Hermite 主线；
+    \item 避免将 $\phi_{xy}$ 作为完整二阶 jet 直接输运，从而避免对高质量 $\nabla^2\bu$ 的强依赖；
+    \item 将局部相体积从“事后修正目标”提升为离散状态的一部分，使守恒由有限体积通量直接保证；
+    \item 使 AMR 的核心操作尽可能退化为多项式限制、代数约束和守恒 reflux，而不是每次重新构造整个水平集状态。
+\end{itemize}
+
+\section{连续界面方程与特征映射}
+
+水平集函数满足
+\begin{equation}
+    \phi_t+\bu\cdot\grad\phi=0,
+    \label{eq:ls}
+\end{equation}
+其零水平集
+\begin{equation}
+    \Gamma(t)=\{\bx:\phi(\bx,t)=0\}
+\end{equation}
+表示液--气界面。
+
+定义从 $t^{n+1}$ 回溯至 $t^n$ 的离散 backward characteristic map
+\begin{equation}
+    \bx_d=\bB_h(\bx),
+\end{equation}
+则标量更新写为
+\begin{equation}
+    \phi^{n+1}(\bx)=\phi^n(\bB(\bx)).
+    \label{eq:scalar_pullback}
+\end{equation}
+经典 GALS 不仅推进式~\eqref{eq:scalar_pullback}，还推进其一阶微分结构。令
+\begin{equation}
+    \bp=\grad\phi,
+\end{equation}
+则
+\begin{equation}
+    \boxed{
+    \bp^{n+1}(\bx)=J_{\bB}^{T}(\bx)\,\bp^n(\bB(\bx))
+    }
+    \label{eq:firstjet}
+\end{equation}
+其中
+\begin{equation}
+    J_{\bB}=\frac{\partial\bB}{\partial\bx}.
+\end{equation}
+本方案保留这一 first-jet pullback 作为主要输运机制。
+
+\section{保留 enriched biquartic Hermite 几何}
+
+\subsection{单元多项式}
+
+对叶单元 $K$，采用局部坐标
+\begin{equation}
+    \xi=\frac{x-x_0}{h_x},\qquad
+    \eta=\frac{y-y_0}{h_y},
+\end{equation}
+并保留当前 enriched biquartic Hermite 表示
+\begin{equation}
+    \phi_h|_K(\xi,\eta)
+    =\sum_{i=0}^{4}\sum_{j=0}^{4}d_{ij}q_i(\xi)q_j(\eta).
+    \label{eq:q4}
+\end{equation}
+其中一维 quartic midpoint enrichment 的 bubble 基函数可写为
+\begin{equation}
+    q_4(\xi)=16\xi^2(1-\xi)^2.
+\end{equation}
+当前 25 个局部数据按物理意义可写为
+\begin{equation}
+    25=16_{\mathrm{corner}}+8_{\mathrm{edge}}+1_{\mathrm{center}},
+\end{equation}
+即角点上的
+\begin{equation}
+    \{\phi,\phi_x,\phi_y,\phi_{xy}\},
+\end{equation}
+四条边中点上的
+\begin{equation}
+    \{\phi,\partial_n\phi\},
+\end{equation}
+以及单元中心的一个标量值。
+
+\subsection{新的状态分解：skeleton 与 interior bubble}
+
+本方案不再将 25 个数据等价地视为独立的动力学状态，而将其分为三类：
+\begin{equation}
+    \boxed{
+    \mathcal D_K=
+    \mathcal D_{\mathrm{tr}}
+    \cup
+    \mathcal D_{\mathrm{cl}}
+    \cup
+    \mathcal D_{\mathrm{cons}}
+    }
+\end{equation}
+其中：
+\begin{itemize}
+    \item $\mathcal D_{\mathrm{tr}}$：直接随特征线推进的一阶几何状态，主要为 $\phi$ 和 $\grad\phi$ 及相应 edge trace；
+    \item $\mathcal D_{\mathrm{cl}}$：为闭合 biquartic Hermite 多项式所需、但不作为独立物理输运量推进的混合导数 $\phi_{xy}$；
+    \item $\mathcal D_{\mathrm{cons}}$：单元守恒相体积 $M_K$，其对应的内部 bubble 系数由体积约束确定。
+\end{itemize}
+
+定义二维 interior bubble
+\begin{equation}
+    \psi_K(\xi,\eta)=q_4(\xi)q_4(\eta).
+    \label{eq:bubble}
+\end{equation}
+其满足
+\begin{equation}
+    \psi_K=0,\qquad \grad\psi_K=0,
+    \qquad \bx\in\partial K.
+    \label{eq:bubble_boundary}
+\end{equation}
+因此可将单元多项式理解为
+\begin{equation}
+    \boxed{
+    \phi_h|_K=\phi_{h,\partial K}+c_K\psi_K
+    }
+    \label{eq:skeleton_bubble}
+\end{equation}
+其中 $\phi_{h,\partial K}$ 由 skeleton Hermite 数据确定，$c_K$ 只改变单元内部几何，不破坏边界上的函数值和一阶导数连续性。
+
+\section{First-jet GALS：直接输运值与梯度}
+
+\subsection{离散特征映射与其 Jacobian}
+
+新方法不要求 Hydro 显式提供一个单独的 $\nabla\bu$ 或 $\nabla^2\bu$ 数据场。更优的实现是：对水平集实际使用的离散速度插值 $\bu_h$ 和实际采用的离散 characteristic integrator 同时求值和求导。
+
+若当前离散回溯算子记为
+\begin{equation}
+    \bB_h:\bx\mapsto\bx_d,
+\end{equation}
+则 characteristic API 应升级为
+\begin{equation}
+    \boxed{
+    \texttt{traceWithJacobian}(\bx)
+    \longrightarrow
+    (\bB_h(\bx),J_{\bB_h}(\bx)).
+    }
+\end{equation}
+$J_{\bB_h}$ 应由同一个离散 RK/中点回溯公式的 tangent-linear differentiation、forward automatic differentiation 或 dual-number 机制得到，而不是事后对 $\bB_h$ 做有限差分。这样可保持函数值更新和梯度更新对同一离散 characteristic map 的 coherence。
+
+\subsection{角点与边中点的一阶 jet 更新}
+
+对 master vertex $v$：
+\begin{align}
+    \phi_v^{n+1,*}
+    &=\phi_h^n(\bB_h(\bx_v)),
+    \\
+    (\grad\phi)_v^{n+1,*}
+    &=J_{\bB_h}^{T}(\bx_v)
+      (\grad\phi_h^n)(\bB_h(\bx_v)).
+    \label{eq:vertex_gals}
+\end{align}
+对 edge midpoint $m$：
+\begin{align}
+    \phi_m^{n+1,*}
+    &=\phi_h^n(\bB_h(\bx_m)),
+    \\
+    \bg_m^{n+1,*}
+    &=J_{\bB_h}^{T}(\bx_m)
+      (\grad\phi_h^n)(\bB_h(\bx_m)),
+    \\
+    (\partial_n\phi)_m^{n+1,*}
+    &=\bn_e\cdot\bg_m^{n+1,*}.
+    \label{eq:edge_gals}
+\end{align}
+这样，当前绝大多数 Hermite skeleton 数据均通过经典 first-jet GALS 直接更新，不再依赖二维宽模板的 characteristic-increment reconstruction。
+
+\section{混合导数 $\phi_{xy}$ 的紧凑 Hermite 闭合}
+
+\subsection{为什么不直接输运二阶 jet}
+
+若直接对二阶导数应用链式法则，则
+\begin{equation}
+    \Hess(\phi\circ\bB)
+    =J_{\bB}^{T}(\Hess\phi)(\bB)J_{\bB}
+    +\sum_{k}\phi_{,k}(\bB)\Hess B_k.
+    \label{eq:hessian_pullback}
+\end{equation}
+因此直接推进 $\phi_{xy}$ 需要 $\Hess\bB$，而 $\Hess\bB$ 的变分方程进一步依赖 $\nabla^2\bu_h$。这会将高阶水平集几何的稳定性直接绑定到 Hydro 二阶速度导数的质量上。对于电喷雾问题，曲率精度是核心指标，因此不宜为形式上的 full second-jet transport 将 Hydro 中可能较噪声的 $\nabla^2\bu_h$ 注入水平集 Hessian。
+
+本方案将 $\phi_{xy}$ 重新定位为\textbf{Hermite interpolation closure DOF}，而不是独立物理输运状态。
+
+\subsection{均匀网格上的紧凑闭合}
+
+利用已经通过式~\eqref{eq:vertex_gals}--\eqref{eq:edge_gals} 更新的一阶 skeleton 数据，在角点处可从两个方向独立恢复
+\begin{equation}
+    \phi_{xy}=\partial_x\phi_y=\partial_y\phi_x.
+\end{equation}
+若沿 $x$ 方向拥有位置 $-h,-h/2,h/2,h$ 上的 $\phi_y$，则四阶中心公式为
+\begin{equation}
+    D_x^{(4)}\phi_y(0)
+    =\frac{
+    \phi_y(-h)-8\phi_y(-h/2)+8\phi_y(h/2)-\phi_y(h)
+    }{6h}.
+    \label{eq:compactxyx}
+\end{equation}
+同理可构造 $D_y^{(4)}\phi_x$。角点混合导数定义为兼容投影，例如
+\begin{equation}
+    \boxed{
+    (\phi_{xy})_v
+    =\frac12\left[
+    D_x^{(4)}\phi_y+D_y^{(4)}\phi_x
+    \right]_v.
+    }
+    \label{eq:xyclosure}
+\end{equation}
+更一般地，可采用带权最小二乘在两份 directional estimate 之间做单标量一致性闭合。
+
+该操作只恢复一个为 biquartic Hermite element 服务的混合导数，而不重新构造 $\phi$ 或 $\grad\phi$。其数值性质应通过 polynomial reproduction test 明确验证，至少要求对目标 Q4 测试空间具有预期的高阶再现能力。
+
+\subsection{AMR 上的 closure}
+
+在 2:1 AMR 上不固定使用式~\eqref{eq:compactxyx} 的均匀权重，而在 master skeleton 的物理坐标 $s_i$ 上构造一维局部多项式 $P(s)$，满足
+\begin{equation}
+    P(s_i)=\partial_n\phi(s_i)
+\end{equation}
+或相应 tangential component 数据，再以
+\begin{equation}
+    \phi_{xy}=P'(s_v)
+\end{equation}
+形成非均匀紧凑闭合。hanging 数据不作为独立 unknown，而由 master edge polynomial restriction 得到。
+
+\section{相体积作为独立守恒状态}
+
+\subsection{有限体积推进}
+
+定义负相体积
+\begin{equation}
+    M_K(t)=\int_K H[-\phi_h(\bx,t)]\,\dd\bx.
+\end{equation}
+其守恒推进采用真正的有限体积形式
+\begin{equation}
+    \boxed{
+    M_K^{n+1}
+    =M_K^n-
+    \Delta t\sum_{f\subset\partial K}F_{Kf}^{n+1/2}
+    }
+    \label{eq:fv_mass}
+\end{equation}
+其中
+\begin{equation}
+    F_{Kf}
+    =\int_f H[-\phi_h]\,\bu_h\cdot\bn_K\,\dd s.
+    \label{eq:phaseflux}
+\end{equation}
+同一内部 face flux 只计算一次并以相反符号写入相邻单元，从离散上保证全局相体积守恒。coarse--fine interface 使用标准 refluxing：
+\begin{equation}
+    F_{\mathrm{coarse}}
+    =\sum_jF_{\mathrm{fine},j}.
+    \label{eq:reflux}
+\end{equation}
+
+\subsection{interior bubble 的体积闭合}
+
+在 skeleton 数据确定后，将单元几何写为式~\eqref{eq:skeleton_bubble}。定义
+\begin{equation}
+    \mathcal M_K(c)
+    =\int_K H[-(\phi_{h,\partial K}+c\psi_K)]\,\dd\bx.
+\end{equation}
+新时间层的 interior bubble 系数由一维约束
+\begin{equation}
+    \boxed{
+    \mathcal M_K(c_K^{n+1})=M_K^{n+1}
+    }
+    \label{eq:bubble_mass}
+\end{equation}
+确定。
+
+在界面正规条件下，其灵敏度为
+\begin{equation}
+    \frac{\dd\mathcal M_K}{\dd c}
+    =-
+    \int_{\Gamma_K}
+    \frac{\psi_K}{{|\grad\phi_h|}}\,\dd s
+    \le 0,
+    \label{eq:massmonotone}
+\end{equation}
+因此 $\mathcal M_K(c)$ 具有天然的单调结构，可采用 safeguarded Newton 或 Brent 型一维求根。与当前多自由度 KKT 修正不同，式~\eqref{eq:bubble_mass} 是\textbf{状态闭合关系}而非事后几何修补。
+
+由于式~\eqref{eq:bubble_boundary}，改变 $c_K$ 不改变单元边界上的 $\phi$ 和 $\grad\phi$，因此不会破坏普通 cell face 的 $C^1$ trace、coarse--fine master trace、固定接触点条件和轴对称边界条件。
+
+\section{AMR：限制、约束、守恒粗化}
+
+\subsection{Refinement}
+
+若父单元拥有 biquartic polynomial $Q_P$，则对子单元的细化状态应直接来自
+\begin{equation}
+    Q_C=Q_P|_C.
+\end{equation}
+由于限制后的函数仍属于相应局部 Q4 空间，refinement 应优先采用 exact polynomial restriction，而不是重新使用宽模板重构。
+
+\subsection{Hanging constraints}
+
+coarse--fine skeleton 上，fine-side hanging 数据由 coarse/master trace 的多项式评价和导数评价获得：
+\begin{equation}
+    \boxed{
+    \mathcal D_{\mathrm{hang}}
+    =C_{\mathrm{AMR}}\mathcal D_{\mathrm{master}}.
+    }
+\end{equation}
+因此 hanging data 不进入独立时间推进。
+
+\subsection{Coarsening}
+
+coarsening 本质上会丢失细尺度 polynomial 信息，不可能完全无损。新方法要求至少保证：
+\begin{equation}
+    M_P=\sum_{C\subset P}M_C
+    \label{eq:coarsenmass}
+\end{equation}
+严格成立。coarse skeleton 可采用受约束投影/限制恢复，随后由式~\eqref{eq:bubble_mass} 重新确定父单元 interior bubble。也就是说，真正不可避免的 reconstruction 主要限制在 coarsening 等信息压缩操作中，而不是每一个普通时间步。
+
+\section{接触线、对称轴与 active band}
+
+现有 pinned-contact 和轴对称几何语义应保留：固定接触位置通过对应 skeleton 条件施加，而不人为指定接触角；轴线上保留标量偶对称所对应的导数约束。新 interior bubble 在单元边界上满足零值、零梯度，因此体积闭合本身不会移动固定接触点或破坏轴边界 trace。
+
+此外，新方法建议逐步减少对“$|\phi|$ 近似 signed distance”这一假设的依赖。active transport band 可改由 cut-cell 集合加若干层拓扑邻居定义，只需保证 band 宽度覆盖最大特征位移和局部多项式评价所需邻域。这样水平集可以更纯粹地作为高阶 implicit geometry field 使用，而不必依赖周期性 redistance 来维护某个距离函数语义。
+
+\section{完整一步的建议算法}
+
+\begin{algorithm}[H]
+\caption{Conservative AMR Hermite--GALS one-step update}
+\begin{algorithmic}[1]
+\Require 旧 Hermite geometry $\phi_h^n$，master skeleton，一阶速度场 $\bu_h^n,\bu_h^{n+1}$，守恒相体积 $M_K^n$
+\Ensure 新 Hermite geometry $\phi_h^{n+1}$ 与守恒相体积 $M_K^{n+1}$
+\State 对所有独立 vertex/edge skeleton points 计算 $(\bB_h,J_{\bB_h})$
+\State 用 first-jet GALS 直接更新 $\phi$、$\grad\phi$ 以及 edge normal derivative
+\State 在 master skeleton 上执行紧凑 quartic compatibility closure，得到所需 $\phi_{xy}$
+\State 用高阶 phase-face flux 推进 $M_K$，coarse--fine face 做 refluxing
+\State 对每个 cut cell 解一维方程 $\mathcal M_K(c_K)=M_K^{n+1}$，确定 interior bubble
+\State 由 master constraints 生成 hanging data，并发布唯一 Hermite polynomial geometry
+\State 从该 geometry 计算零水平集、法向、曲率和 cut-cell 几何量
+\end{algorithmic}
+\end{algorithm}
+
+从方法结构上，普通时间步不再需要“二维宽模板 characteristic increment reconstruction + 多 DOF KKT volume correction”。整体状态可简化理解为
+\begin{equation}
+    \boxed{
+    \text{State}=
+    \bigl(\text{Hermite first-jet skeleton},\;M_K\bigr),
+    }
+\end{equation}
+而 $\phi_{xy}$ 和 $c_K$ 分别作为高阶几何闭合量和守恒闭合量产生。
+
+\section{曲率精度与高阶几何的保留}
+
+电喷雾问题对曲率精度高度敏感，毛细压力直接包含
+\begin{equation}
+    \Delta p_\sigma=\gamma\kappa.
+\end{equation}
+二维隐式曲率可写为
+\begin{equation}
+    \kappa=
+    \frac{
+    \phi_y^2\phi_{xx}
+    -2\phi_x\phi_y\phi_{xy}
+    +\phi_x^2\phi_{yy}
+    }{
+    (\phi_x^2+\phi_y^2)^{3/2}
+    }.
+    \label{eq:curvature}
+\end{equation}
+因此本方案不建议将空间几何降级为仅有低阶 cubic representation。对于光滑解，degree-$p$ polynomial approximation 的二阶导数误差通常较函数值低两个阶次；quartic representation 相比 cubic 为 Hessian/curvature 留出更高的空间精度上限。实际收敛阶仍需在时间误差、AMR transition、contact singularity 和 bubble closure 共同作用下通过 benchmark 确定，不能仅凭多项式次数宣称整体高阶。
+
+新方案的关键是：\textbf{只降低“直接输运 jet 的阶次”，不降低“最终几何表示的阶次”}。也就是说，直接随 characteristic 演化到一阶 jet，但用紧凑且可验证的 Hermite compatibility closure 继续维持 biquartic 几何和高阶曲率评价。
+
+\section{与当前 QUANTUM 模块的建议接线}
+
+下面给出面向现有代码结构的高层迁移建议，具体类名和文件边界可在实现阶段按当前仓库进一步收敛。
+
+\begin{longtable}{p{0.28\textwidth}p{0.65\textwidth}}
+\toprule
+现有职责 & 新职责建议 \\
+\midrule
+\endfirsthead
+\toprule
+现有职责 & 新职责建议 \\
+\midrule
+\endhead
+\texttt{ActiveLevelSetTransport} & 从 characteristic-increment + Q4/Neville derivative reconstruction 主线，逐步改为 first-jet GALS skeleton transport；保留旧路线作 A/B baseline，直到新方法通过验证。 \\
+\addlinespace
+\texttt{LevelSetBoundaryTrace} 或对应 characteristic 层 & 升级为可同时返回 $\bB_h$ 与 $J_{\bB_h}$ 的统一离散 tracer；Jacobian 必须对应同一实际离散 characteristic map。 \\
+\addlinespace
+\texttt{ActiveQuarticHermitePatch} & 保留当前 enriched biquartic 表示，但在逻辑上区分 transport DOFs、$\phi_{xy}$ closure DOFs 与 interior conservative bubble。 \\
+\addlinespace
+当前 Q4/Neville derivative reconstruction & 从普通时间步主链移出；保留用于初始化、coarsening、fallback 和对照测试。新增紧凑 skeleton $\phi_{xy}$ closure。 \\
+\addlinespace
+当前 volume correction/KKT & 用 cell-wise conserved phase volume + face flux/reflux + scalar bubble solve 替换；旧 KKT 暂留作验证 fallback。 \\
+\addlinespace
+AMR transfer & refinement 优先 exact polynomial restriction；hanging data 使用 master constraints；coarsening 采用守恒投影并严格汇总 $M_K$。 \\
+\addlinespace
+\texttt{LevelSetHermiteGeometry::Snapshot} & 继续作为几何发布层；其输入改为新闭合后的唯一 Hermite scalar，法向/曲率/体积几何仍由同一 polynomial 产生。 \\
+\bottomrule
+\end{longtable}
+
+\section{验证与接受准则}
+
+新方法的验证应围绕“新结构是否真的替代旧补丁链路”展开，而不是只看某一个瞬时界面图。建议至少包含：
+
+\subsection{离散算子单元测试}
+\begin{itemize}
+    \item characteristic value/Jacobian 的一致性：$J_{\bB_h}$ 与离散 $\bB_h$ 的数值微分对照；
+    \item $\phi_{xy}$ closure 的 Q4 polynomial reproduction 和网格收敛；
+    \item parent-to-child exact restriction 与 hanging trace 的 $C^1$ 一致性；
+    \item bubble volume map $\mathcal M_K(c)$ 的单调性、求根鲁棒性和极限行为；
+    \item coarse--fine phase flux reflux 的机器精度守恒。
+\end{itemize}
+
+\subsection{标准输运测试}
+\begin{itemize}
+    \item 静止界面：验证零速度时 Hermite skeleton 不发生 numerical drift；
+    \item 平移/旋转：界面位置、gradient、curvature 收敛；
+    \item vortex/deformation：比较新 first-jet GALS 与现有 increment reconstruction 的长时间误差；
+    \item AMR 穿越：界面跨 coarse--fine 区域时的几何、曲率和质量误差；
+    \item contact/axis 专项：固定接触位置、自由接触角和轴对称 pole 的一致性。
+\end{itemize}
+
+\subsection{电喷雾相关接受指标}
+\begin{itemize}
+    \item 重点观察 tip 附近 $\kappa$ 的误差、噪声和 AMR 敏感性，而不只观察零水平集位置；
+    \item 在相同网格/时间步下，新方法的 phase-volume drift 应由有限体积误差和边界通量控制，不再依赖 KKT 后修正；
+    \item bubble correction 幅度 $|c_K-c_K^{\mathrm{pred}}|$ 可作为输运/守恒失配诊断量：若异常增大，应优先减小时间步或局部加密，而不是扩大 correction 空间；
+    \item 在 production 接管前，新旧两条路线应保留可切换 A/B benchmark，至少完成 uniform/AMR、弱变形/强变形和曲率敏感问题对照。
+\end{itemize}
+
+\section{预期收益与主要风险}
+
+\subsection{预期收益}
+\begin{enumerate}
+    \item \textbf{更紧凑：}普通时间步的核心输运由 wide-stencil increment reconstruction 收敛为 $(\bB_h,J_{\bB_h})$ 驱动的 first-jet GALS；
+    \item \textbf{保留高阶曲率能力：}最终仍使用 enriched biquartic Hermite scalar，而不是退回低阶表示；
+    \item \textbf{避免 $\nabla^2\bu$：}$\phi_{xy}$ 通过 skeleton closure 获得，不要求 full second-jet pullback；
+    \item \textbf{守恒成为状态定义：}相体积通过 face flux 严格推进，interior bubble 仅负责把守恒量映射回同一张 Hermite implicit geometry；
+    \item \textbf{AMR 更原生：}细化使用 polynomial restriction，hanging 使用 algebraic constraints，守恒使用 refluxing，仅在 coarsening 等信息压缩步骤进行不可避免的投影。
+\end{enumerate}
+
+\subsection{主要风险}
+\begin{enumerate}
+    \item $\phi_{xy}$ compact closure 是否能在 2:1 AMR、contact seam 和强形变下保持足够高阶和低噪声，需要系统验证；
+    \item Hydro 当前速度插值的正则性是否足以支持稳定的 $J_{\bB_h}$。如果跨单元导数跳跃过大，可在界面 active band 内构造一张与 characteristic 专用的 $C^1$ velocity surrogate，但应避免重新引入大范围水平集重构；
+    \item 单个 interior bubble 虽能连续调节单元体积，但过大的 bubble correction 可能在单元内部改变局部 topology。需要 bubble amplitude/topology guard；
+    \item 曲率的实际收敛阶由空间表示、时间积分、AMR 和闭合误差共同决定，应以数值实验而非多项式次数作为最终依据。
+\end{enumerate}
+
+\section{建议的最终方法定位}
+
+若上述构件验证成立，建议将该方法定位为
+\begin{quote}
+\textbf{A conservative AMR Hermite level-set method with first-jet characteristic transport, compact quartic compatibility closure, and cell-local volume-constrained interior bubbles.}
+\end{quote}
+其核心思想不是“在经典 GALS 上外挂体积修正”，而是把离散状态本身定义为
+\begin{equation}
+    \boxed{
+    \bigl(\text{transported first-jet Hermite skeleton},\;
+    \text{conserved cell phase volume}\bigr),
+    }
+\end{equation}
+并通过两个低维闭合算子——$\phi_{xy}$ compatibility closure 与 interior bubble volume closure——形成唯一的高阶 Hermite implicit geometry。
+
+\begin{thebibliography}{9}
+\bibitem{Nave2010}
+J.-C. Nave, R. R. Rosales, B. Seibold,
+``A gradient-augmented level set method with an optimally local, coherent advection scheme,''
+\emph{Journal of Computational Physics}, 229(10), 3802--3827, 2010.
+DOI: 10.1016/j.jcp.2010.01.029.
+
+\bibitem{Seibold2012}
+B. Seibold, R. R. Rosales, J.-C. Nave,
+``Jet schemes for advection problems,''
+\emph{Discrete and Continuous Dynamical Systems - Series B}, 17(4), 1229--1259, 2012.
+DOI: 10.3934/dcdsb.2012.17.1229.
+
+\bibitem{Kolomenskiy2014}
+D. Kolomenskiy, J.-C. Nave, K. Schneider,
+``Adaptive gradient-augmented level set method with multiresolution error estimation,''
+arXiv:1401.7294, 2014.
+\end{thebibliography}
+
+\end{document}

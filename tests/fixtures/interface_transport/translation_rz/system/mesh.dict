@@ -1,0 +1,7 @@
+Mesh
+{
+    resolution 8;
+    initialMesh uniform;
+    
+    
+}

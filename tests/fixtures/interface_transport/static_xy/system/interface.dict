@@ -1,0 +1,5 @@
+Interface
+{
+    method hermiteGals;
+    Boundary { type prescribed; phi "(x-cx)*(x-cx)+(y-cy)*(y-cy)-radius*radius"; }
+}

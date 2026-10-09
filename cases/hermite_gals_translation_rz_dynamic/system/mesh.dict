@@ -1,0 +1,7 @@
+Mesh
+{
+    resolution 8;
+    initialMesh uniform;
+    Refinement { min (.25 .25); max (.75 .75); level 1; }
+    Regrid { atSteps (10 20 30); }
+}

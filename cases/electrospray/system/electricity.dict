@@ -1,0 +1,43 @@
+# 导电运动液面使用已接通的 P3 跳跃重构；旧 cellHarmonic 仅能用于
+# 本例的早期初始化，不能与当前导电推进混用。材料与流体边界另归各自字典。
+Electricity
+{
+    Model
+    {
+        model leakyDielectric
+        interfaceDiscretization sharpHermiteP3
+    }
+    Initial
+    {
+        surfaceChargeDensity 0 C/m^2
+    }
+    BoundaryConditions
+    {
+        Conductor
+        {
+            phaseId 1
+            potential 300 V
+        }
+        Domain
+        {
+            Collector { boundaryId 9; type dirichlet; potential 0 V; }
+            Supply { boundaryId 5; type homogeneousNeumann; }
+            Side { boundaryId 8; type homogeneousNeumann; }
+            GasAxis { boundaryId 10; type homogeneousNeumann; }
+            LiquidAxisUpper { boundaryId 11; type homogeneousNeumann; }
+            LiquidAxisLower { boundaryId 12; type homogeneousNeumann; }
+        }
+    }
+    SurfaceCharge
+    {
+        # 保持旧 coupled 的显式电荷推进语义；本次整理不切换隐式迭代。
+        model explicitConductionMaterialTransport
+        closureTolerance 1.6e-9
+    }
+    Numerics
+    {
+        potentialBounds 1e-10
+        reconstructedPoisson 1e-10
+        gaussClosure 1e-10
+    }
+}

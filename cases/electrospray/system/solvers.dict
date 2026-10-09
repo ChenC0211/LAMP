@@ -1,0 +1,10 @@
+# 五个实际线性系统；各模块的物理收支门限不随线性容限联动。
+# 只使用 SuperLU，不保留未被喷嘴求解器消费的 CG/IC 开关。
+Solvers
+{
+    ElectricPotential { backend SuperLU; relativeTolerance 1e-10; }
+    Momentum { backend SuperLU; relativeTolerance 1e-10; }
+    Pressure { backend SuperLU; relativeTolerance 1e-10; }
+    CoupledVelocityPressure { backend SuperLU; relativeTolerance 1e-10; }
+    InterfaceVolumeCorrection { backend SuperLU; relativeTolerance 1e-10; }
+}

@@ -1,0 +1,1216 @@
+% !TEX program = xelatex
+\documentclass[11pt,a4paper]{ctexart}
+
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{fancyvrb}
+\usepackage{caption}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={QUANTUM PIC 输入输出说明},
+  pdfauthor={GitHub Copilot}
+}
+
+\setlist[itemize]{nosep,leftmargin=1.8em}
+\setlist[enumerate]{nosep,leftmargin=2.2em}
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0em}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\dir}[1]{\texttt{#1}}
+\newcommand{\sym}[1]{\ensuremath{#1}}
+
+\title{QUANTUM PIC 输入输出说明\\\large 当前显式 PIC 与隐式 PIC 模块的输入字典、输出文件、符号含义与输出机制}
+\author{基于当前代码实现整理}
+\date{2026-04-10}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{文档目的与范围}
+
+本文面向当前 QUANTUM 中的两套主 PIC 模块：
+
+\begin{itemize}
+  \item 显式模块 ExplicitPIC
+  \item 隐式模块 ImplicitPIC
+\end{itemize}
+
+目标不是泛泛介绍 PIC 理论，而是把``现在程序实际读什么、写什么、怎么配、文件里每一列是什么意思''讲清楚，方便你从案例字典、运行输出和后处理文件三条线同时理解程序行为。
+
+本文覆盖以下内容：
+
+\begin{enumerate}
+  \item 运行时输入文件体系
+  \item \file{system} 目录中的主要字典及其职责
+  \item 
+  \code{Output} 字块的当前推荐写法与兼容写法
+  \item 显式与隐式模块各自的输出目录结构
+  \item 各输出文件的文件名、写出条件、主要列名与物理意义
+  \item 单位、符号、命名约定
+  \item 重启时序输出的当前行为
+\end{enumerate}
+
+本文基于当前代码实现整理，不是旧设计文档，也不是未来计划稿。
+
+\section{整体输入文件体系}
+
+\subsection{最小运行入口}
+
+一个标准案例通常从案例目录启动，关键输入位于 \file{system} 下。当前运行控制器默认允许的系统文件包括：
+
+\begin{itemize}
+  \item \file{system/run.dict}
+  \item \file{system/pic.dict}
+  \item \file{system/mesh.dict}
+  \item \file{system/geometry.dict}
+  \item \file{system/mcc.dict}
+\end{itemize}
+
+其中：
+
+\begin{longtable}{p{0.18\textwidth}p{0.76\textwidth}}
+\toprule
+文件 & 作用 \\
+\midrule
+\endhead
+\file{run.dict} & 选择运行的 App。对当前 PIC 使用场景，通常是 \code{SingleModule}，再由运行控制器进入显式或隐式模块。 \\
+\file{pic.dict} & 核心输入文件。包含时间步、步数、物种、边界条件、源项、输出、checkpoint、部分 Units 与 Normalization 信息。显式和隐式模块都读取它。 \\
+\file{mesh.dict} & 背景网格、自适应细化规则、几何相关网格约束等。 \\
+\file{geometry.dict} & 几何、边界 ID、相区、周期配对、MovingEB、motionSchedule 等。 \\
+\file{mcc.dict} & 背景气体、截面、反应、碰撞模型等。运行控制器会从这里提取 Gas、CrossSections、Reactions、Collisions 等块。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{关于 Units/Normalization/Gas/Reactions 的来源}
+
+当前实现允许两种来源：
+
+\begin{itemize}
+  \item 新式来源：直接写在 \file{pic.dict} 或 \file{mcc.dict} 的对应块里
+  \item 兼容来源：\file{system/units.dict}、\file{system/normalization.dict}、\file{system/gas.dict}、\file{system/crossSections.dict}、\file{system/reactions.dict}
+\end{itemize}
+
+但从当前案例演化趋势看，推荐优先使用：
+
+\begin{itemize}
+  \item \code{pic.dict} 中的 \code{Units} 与 \code{Normalization}
+  \item \code{mcc.dict} 中的 Gas/CrossSections/Reactions/Collisions 相关块
+\end{itemize}
+
+\subsection{显式与隐式模块的配置关系}
+
+隐式模块的字典读取器 \code{DictionaryImplicitPIC} 本质上是对 \code{DictionaryPIC} 的薄封装，因此两套模块在很多输入语义上共用同一套 \code{PicConfig} 结构。这意味着：
+
+\begin{itemize}
+  \item 大部分 \code{Output} 配置项在显式和隐式模块中名称一致
+  \item 某些输出只有显式有，某些输出只有隐式有
+  \item 同名输出的列定义在两模块内尽量对齐，但不保证完全一致
+\end{itemize}
+
+\section{输出目录总览}
+
+当前输出已经按职能归类，不再建议把文件散落在案例根目录。总体上分为：
+
+\begin{longtable}{p{0.20\textwidth}p{0.72\textwidth}}
+\toprule
+目录 & 含义 \\
+\midrule
+\endhead
+\dir{output/fields} & 场量快照与 profile 类输出。主要是随步号变化的场文件、1D profile、平均 profile。 \\
+\dir{output/series} & 时间序列输出。核心 CSV 都在这里，适合画时间历程、做守恒检查、诊断分析。 \\
+\dir{output/series/diagnostics} & 统一物理诊断子目录，当前包含电极电流、反应统计、能量直方图。基础路径可由 \code{Output/Series/Diagnostics/baseDir} 修改。 \\
+\dir{output/reports} & 主要给显式模块用的文字报告，内容偏事件或说明性文本，不是规范化时间序列。 \\
+\dir{output/meta} & 运行元信息与静态报告，例如 units、normalization、gas、cross section、reaction 报告，以及几何附属诊断。 \\
+\dir{output/meta/ls\_diag} & level set 诊断 \code{ls\_diag\_*.dat} 的归档位置。 \\
+\dir{cache} 或配置指定路径 & checkpoint 目录，不属于 \dir{output}，但和输出强相关。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{时序文件的重启行为}
+
+这是当前实现中的一个重要约定：
+
+\begin{itemize}
+  \item 如果程序从 0 步冷启动，已有时序 CSV 会先清空，再从头写
+  \item 如果程序从 checkpoint 重启，已有时序 CSV 中 \code{step >= restartStep} 的行会先被裁掉，只保留更早历史，再继续追加
+  \item 这条规则适用于当前接入共享时序打开逻辑的 CSV 文件，即绝大多数 \dir{output/series} 下的时间序列文件，以及统一 diagnostics writer 写出的 CSV
+  \item \dir{output/fields} 下按步命名的场快照文件现在也遵循同样的重启裁剪规则：0 步重启时清空，checkpoint 重启时删除 \code{step >= restartStep} 的旧快照后再继续写
+\end{itemize}
+
+因此现在不需要手工清理旧的时序 CSV 才能安全重启；程序会按 \code{Checkpoint/restartStep} 自动修整。
+
+\section{Output 字块的当前写法}
+
+\subsection{推荐写法}
+
+当前推荐采用分组写法：
+
+\begin{Verbatim}[fontsize=\small]
+Output
+{
+    Fields
+    {
+        every 500
+        list ( phi rho E n Te_e electron_mean_energy psi )
+
+        Profile1D
+        {
+            enabled true
+            nbinsX 128
+        }
+
+        Profile1DAvg
+        {
+            enabled true
+            avgWindowSteps 1000
+        }
+    }
+
+    Series
+    {
+        enabled true
+        every 100
+
+        CurrentWaveform { enabled true side auto }
+        CurrentBalance  { enabled true }
+        EBBandRMS       { enabled true bandLayers 1 }
+        Amount          { enabled true }
+
+        Diagnostics
+        {
+            enabled true
+            every 100
+            baseDir diagnostics
+
+            ElectrodeCurrent
+            {
+                enabled true
+                perBoundary true
+                group anode 10
+                group cathode 20 21 22
+            }
+
+            Reactions { enabled true }
+
+            EnergyHistogram
+            {
+                enabled true
+                bins 100
+                maxEnergyEV 2000
+            }
+        }
+    }
+
+    Console
+    {
+        level info
+        every 100
+        format multiline
+
+        PeriodicDiagnostics
+        {
+            enabled true
+            console true
+        }
+
+        Physics
+        {
+            enabled true
+            detail medium
+            showCharge true
+            showCurrent true
+            showWall true
+            showMCC true
+            showPerf true
+        }
+    }
+}
+\end{Verbatim}
+
+\subsection{兼容写法}
+
+当前解析器仍兼容多种扁平键写法，例如：
+
+\begin{itemize}
+  \item \code{fields.every}
+  \item \code{series.every}
+  \item \code{currentwaveform.enabled}
+  \item \code{diagnostics.energyhistogram.enabled}
+\end{itemize}
+
+但推荐逐步迁移到嵌套块写法，因为：
+
+\begin{itemize}
+  \item 更接近实际输出目录的组织方式
+  \item 更容易看出哪些选项属于 \code{Fields}、\code{Series}、\code{Console}
+  \item 后续继续扩展时不容易把键名铺成一大片
+\end{itemize}
+
+\subsection{Fields / Series / Console 的职责分工}
+
+\begin{longtable}{p{0.16\textwidth}p{0.78\textwidth}}
+\toprule
+分组 & 当前职责 \\
+\midrule
+\endhead
+\code{Fields} & 决定场量快照、1D profile、平均 profile 等偏``空间分布''输出。 \\
+\code{Series} & 决定各种 CSV 时间序列，包括守恒、功率、电流、反应、能量分布等。 \\
+\code{Console} & 决定终端打印节奏与打印内容，不直接决定磁盘上的主 CSV 文件。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{当前 Console 输出存在的问题}
+
+从当前 ExplicitPIC / ImplicitPIC 的实现看，\code{Console} 已经能打印
+\code{Progress}、\code{Particles}、\code{Charge}、\code{Wall}、\code{Current}、\code{Energy}、\code{MCC}、\code{SEE}、\code{Embedded}、\code{Perf} 等段，
+但它还没有很好地满足``用户只看终端也能把握当前物理过程''这一目标。
+
+当前主要问题可归纳为：
+
+\begin{enumerate}
+  \item \textbf{职责偏移：}终端输出中混入了较多程序自检、实现细节和性能拆分信息，而物理过程主线不够突出。典型如 \code{Perf top=}、\code{fallbackFrac=}、大量 BC/geometry 映射与内部自检日志。
+  \item \textbf{实时判断所需的物理量不够集中：}用户最关心的通常是``现在放电/IEC 到什么阶段了、主电流和主损失走向怎样、是否已出现明显电离/SEE/壁面吸收、是否接近平衡''，但当前信息分散在多个段里，且很多关键物理量仍需要去 CSV 才能看明白。
+  \item \textbf{对嵌入边界问题不友好：}对于 IEC 这类多电极 embedded geometry，\code{Wall} 和 \code{Current} 仍以 \code{L/R/B/T} 域边界视角为主；这对平板/周期边界问题有用，但对用户实时判断阴极/阳极/导线组行为帮助有限。
+  \item \textbf{阶段感弱：}启动期、初始场建立、进入主推进、发生 AMR、输出落盘、checkpoint 写出，这些对用户很重要的``阶段事件''没有形成清晰统一的终端语义，因此容易把``启动很慢''误判成``程序卡住''。
+  \item \textbf{信息层级不清：}当前虽然有 \code{detail=minimal/medium/high} 和若干 \code{show*} 开关，但默认 \code{info} 级别下仍会看到不少更适合 \code{debug/high} 的内容，而真正适合日常盯跑的核心物理摘要没有被单独提升为``第一层''信息。
+  \item \textbf{与磁盘输出的分工还不够清楚：}终端里有些内容适合只看趋势，不适合堆细节；详细守恒、反应分项、功率分项、本应主要依赖 \code{series/*.csv}。当前 Console 还没有明确坚持``终端负责态势、CSV 负责细节''这一分工。
+  \item \textbf{格式可读性不足：}多组量仍采用长串拼接方式，带大量单位后缀、数组压缩表示和科学计数法，扫描成本高；终端最需要的是快速定位异常值和变化方向，而不是完整复刻表格式输出。
+\end{enumerate}
+
+\subsection{Console 输出的目标重定义}
+
+建议把 \code{Console} 的目标明确为：
+
+\begin{quote}
+\textbf{用于在线跟踪当前计算的关键状态，帮助用户实时判断物理过程、运行阶段和是否异常；不承担完整报表职责。}
+\end{quote}
+
+对应地，建议采用如下职责边界：
+
+\begin{itemize}
+  \item \code{Console}：给出``现在发生了什么''、``是否正常''、``下一步该看哪里''。
+  \item \code{Series}：记录可回放、可画图、可对比的完整时间序列细节。
+  \item \code{Fields}：记录空间分布与场快照。
+\end{itemize}
+
+\subsection{建议的 Console 信息分层}
+
+建议把终端输出分为三层：
+
+\subsubsection{1. Startup 一次性摘要}
+
+只在启动或关键重建后打印一次，突出用户真正需要确认的配置，而不是完整内部映射。
+
+建议保留：
+
+\begin{itemize}
+  \item 模块名、\code{dt}、\code{steps}、线程数、背景气体、物种列表
+  \item 网格背景分辨率、是否启用 geometry/physics AMR、主要 cadence
+  \item embedded geometry 总结：电极数量、boundaryId 分组、是否 moving EB
+  \item 主要边界驱动：例如阴极/阳极或 RF 驱动是否存在
+\end{itemize}
+
+建议降级或折叠：
+
+\begin{itemize}
+  \item 全部 \code{boundaryId -> BC} 明细
+  \item 大段 level-set / cut-cell 自检日志
+  \item 仅用于代码排查的 fallback / cache / predictor 内部提示
+\end{itemize}
+
+\subsubsection{2. 周期性 Physics Headline}
+
+这是用户跑算例时最应该看到的默认层，建议固定收敛为少量高价值段：
+
+\begin{longtable}{p{0.18\textwidth}p{0.74\textwidth}}
+\toprule
+段名 & 建议内容 \\
+\midrule
+\endhead
+\code{Progress} & \code{step/steps}、\code{t\_s}、\code{dt\_s}、\code{ETA}，并附带\textbf{阶段标签}，例如 \code{startup}、\code{field-init}、\code{transient}、\code{quasi-steady}、\code{amr-adapted}、\code{checkpoint-written}。 \\
+\code{State} & 电势范围、电子平均能量/温度、代表性密度统计（如 \(n_e\) 均值/峰值或体平均/峰值），用于判断放电是否已建立、是否过热、是否接近稀薄/过密。 \\
+\code{Circuit} & 以\textbf{物理电极组}而非单纯 \code{L/R/B/T} 为主，给出阳极/阴极/域边界净电流或净通量；IEC 类问题应优先显示 anode / cathode group。 \\
+\code{SourceSink} & 本步或窗口内的主要来源与损失：注入、离化、SEE、domain loss、embedded loss、反应能量损失。用户应能直接看出``当前主要由谁驱动''。 \\
+\code{Health} & 电荷平衡相对误差、必要时加上归一化残差或守恒告警，但只保留能帮助判断``算得是否可信''的指标。 \\
+\code{AMR} & 仅在发生 adapt 或达到较粗 cadence 时打印：cells、\(h_{\min}\)、\(\lambda_D\) 约束最差比值、是否本步 adapt。 \\
+\bottomrule
+\end{longtable}
+
+\subsubsection{3. Debug / High-detail Drill-down}
+
+以下内容不宜长期占据默认 \code{info} 输出，应下放到 \code{detail=high} 或 \code{debug}：
+
+\begin{itemize}
+  \item \code{Wall} 按 \code{L/R/B/T} 的全部分项
+  \item \code{MCC} 的完整按通道/按 projectile 拆分
+  \item \code{Embedded} 的按 boundaryId 明细
+  \item \code{Perf top=}、Poisson fallback、cache miss、predictor 自检
+  \item level-set / cut-cell / gather 权重等实现细节日志
+\end{itemize}
+
+\subsection{建议的默认终端内容重组}
+
+当前代码已经按这一方向完成了第一阶段落地：默认 \code{info + detail=medium}
+的周期性物理摘要收敛为 \code{Progress}、\code{State}、\code{Circuit}、\code{SourceSink}、\code{Health}
+五段；\code{Particles}、\code{Wall}、\code{MCCSplit}、\code{Embedded}、\code{Perf}
+等更细的实现/诊断信息下放到 \code{detail=high}。
+
+进一步地，\code{Progress} 已从简单的 \code{evt=} 标签升级为带 \code{stage=} 的阶段语义，
+当前会按启动态、初始建场、过渡态和准稳态给出更明确的运行阶段判断；\code{Circuit}
+ 在配置了 \code{Diagnostics/ElectrodeCurrent/group} 时会优先输出电极组电流视角，
+不再默认只停留在 \code{L/R/B/T} 域边界视角。
+
+对日常盯跑场景，建议默认 \code{info + detail=medium} 输出只保留：
+
+\begin{itemize}
+  \item \code{Progress}
+  \item \code{State}
+  \item \code{Circuit}
+  \item \code{SourceSink}
+  \item \code{Health}
+\end{itemize}
+
+其中：
+
+\begin{itemize}
+  \item \code{Perf} 默认不打印，只在 \code{debug} 或显式 \code{showPerf=true} 且 \code{detail=high} 时打印。
+  \item \code{MCC} 默认只保留一个``总碰撞/总电离/总 SEE/主导通道''摘要，不打印完整按通道展开。
+  \item \code{Wall} 默认不打印域边界四侧宏粒子计数，除非算例本身就是平板/通道型、而不是电极组主导型。
+  \item \code{AMR} 默认做事件式打印：只在 adapt 发生、网格规模明显变化、或用户显式请求时输出。
+\end{itemize}
+
+\subsection{与 Series / Fields 的建议分工}
+
+为了避免终端信息继续膨胀，建议明确以下映射：
+
+\begin{itemize}
+  \item 终端只看趋势和主导项；详细数值留给 \code{overview\_step.csv}、\code{power\_step.csv}、\code{process\_step.csv}、\code{species\_budget\_step.csv}。
+  \item 反应细分、按通道能量损失、按边界吸收功率，默认只在 CSV 里保留完整版本。
+  \item 控制台若引用某个复杂量，最好让名字直接对应一个 CSV 主文件中的列族，方便用户进一步落盘分析。
+\end{itemize}
+
+\subsection{建议的后续实现路线}
+
+建议分三步推进：
+
+\begin{enumerate}
+  \item \textbf{先做信息减法：}把 \code{Perf}、大段 startup BC 明细、完整 MCC split 下放到 \code{high/debug}。
+  \item \textbf{再做物理主线重排：}把默认 \code{info} 收敛成 \code{Progress/State/Circuit/SourceSink/Health} 五段。
+  \item \textbf{最后做 case-aware 输出：}对 embedded electrode 类算例优先打印电极组电流/功率，对平板类算例保留 \code{L/R/B/T} 视图。
+\end{enumerate}
+
+如果后续继续扩展配置，建议新增更贴近物理语义的开关，而不是继续堆叠 \code{showCurrent/showWall/showMCC/showPerf} 这类实现导向开关。例如：
+
+\begin{itemize}
+  \item \code{showState}
+  \item \code{showCircuit}
+  \item \code{showSourceSink}
+  \item \code{showHealth}
+  \item \code{showAmrEvents}
+\end{itemize}
+
+这样可以让 \code{Console} 真正成为``在线态势面板''，而不是终端版的内部调试拼接字符串。
+
+\section{通用输入项说明}
+
+\subsection{PIC 主块}
+
+\code{PIC} 块最基本的运行参数包括：
+
+\begin{longtable}{p{0.18\textwidth}p{0.18\textwidth}p{0.56\textwidth}}
+\toprule
+键 & 典型示例 & 含义 \\
+\midrule
+\endhead
+\code{dt} & \code{2e-12 s} & 时间步长。最终会被换算到 code units 存储。 \\
+\code{steps} & \code{1000000} & 总步数。 \\
+\code{seed} & \code{12345} & 随机数种子。 \\
+\code{omp} & \code{18} & OpenMP 线程数提示。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{Units 与 Normalization}
+
+这两块决定 code units 和 SI units 的换算关系。你在输出文件中经常会看到：
+
+\begin{itemize}
+  \item \code{time\_code} 与 \code{time\_SI\_s} 并存
+  \item \code{phi\_code} 与 \code{phi\_SI\_V} 并存
+  \item \code{Ex\_code} 与 \code{Ex\_SI\_Vpm} 并存
+\end{itemize}
+
+如果 \code{writeSIOutputs=true}，则不少显式输出会同时写 SI 列；隐式侧很多时间序列本身就直接使用 SI 物理量命名。
+
+\subsection{Checkpoint}
+
+\code{Checkpoint} 块控制缓存写出与重启：
+
+\begin{longtable}{p{0.18\textwidth}p{0.18\textwidth}p{0.56\textwidth}}
+\toprule
+键 & 示例 & 含义 \\
+\midrule
+\endhead
+\code{enabled} & \code{true} & 是否写 checkpoint。 \\
+\code{every} & \code{1000} & 每隔多少步写一次。 \\
+\code{keep} & \code{3} & 仅保留最近多少个 step 目录。 \\
+\code{path} & \code{"./cache"} & checkpoint 根目录。 \\
+\code{restart} & \code{true/false} & 是否从 checkpoint 重启。 \\
+\code{restartStep} & \code{4} 或 \code{-1} & 指定重启步；负数通常表示取最新 checkpoint。 \\
+\code{saveRng} & \code{true} & 是否保存 RNG 状态。 \\
+\bottomrule
+\end{longtable}
+
+checkpoint 目录中通常会看到：
+
+\begin{itemize}
+  \item \file{cache/pic.<step>/pic\_checkpoint.txt}
+  \item \file{cache/pic.<step>/rng\_state.txt}
+  \item 粒子缓存与网格缓存文件
+  \item 隐式模块额外的 \file{implicit\_pic\_fields\_cache.bin}
+\end{itemize}
+
+\section{字段快照文件与变量命名}
+
+\subsection{字段快照的文件名}
+
+显式和隐式模块都会把主场快照写成 Tecplot FEPOINT 格式：
+
+\begin{itemize}
+  \item 显式：\file{output/fields\_000123.dat} 旧路径已经迁移为概念上的 \file{output/fields/fields\_000123.dat}
+  \item 隐式：\file{output/fields/fields\_000123.dat}
+\end{itemize}
+
+当前代码中，隐式模块明确使用 \code{"fields/fields\_" + tag} 作为输出名；显式模块通过 \code{fields\_\{tag\}} 的 Tecplot writer 生成快照，现行目录归类目标同样是 \dir{output/fields}。
+
+\subsection{Fields/list 支持的常见变量 token}
+
+最常用的是：
+
+\begin{longtable}{p{0.22\textwidth}p{0.70\textwidth}}
+\toprule
+token & 含义 \\
+\midrule
+\endhead
+\code{phi} & 电势 \sym{\phi} \\
+\code{rho} & 体电荷密度 \sym{\rho} \\
+\code{E} & 电场向量，通常展开为 \sym{E_x} 和 \sym{E_y} \\
+\code{Ex}, \code{Ey} & 电场分量 \\
+\code{n} & 物种数密度，通常展开为各物种 \sym{n_s} \\
+\code{Te\_e} & 电子温度，单位 eV \\
+\code{electron\_mean\_energy} & 电子平均能量，单位 eV \\
+\code{psi} & level set / 几何函数 \sym{\psi} \\
+\code{n\_macro}, \code{w\_sum}, \code{w\_max} & 与宏粒子统计相关的诊断变量，主要在显式侧辅助调试与粒子管理分析 \\
+\bottomrule
+\end{longtable}
+
+变量名在文件中可能出现 code-unit 列，也可能出现 SI 列，例如：
+
+\begin{itemize}
+  \item \code{phi\_code} / \code{phi\_SI\_V}
+  \item \code{Ex\_code} / \code{Ex\_SI\_Vpm}
+  \item \code{n\_<species>\_SI\_1pm3}
+\end{itemize}
+
+\section{显式模块 ExplicitPIC 的输入输出说明}
+
+\subsection{输入关注点}
+
+显式模块重点读取：
+
+\begin{itemize}
+  \item \code{BC/Field} 与 \code{BC/Particle}
+  \item \code{Species}
+  \item \code{Deposition}
+  \item \code{ParticleManagement}
+  \item \code{SEE}
+  \item \code{Output}
+  \item \code{Checkpoint}
+\end{itemize}
+
+其中：
+
+\begin{itemize}
+  \item \code{BC/Field} 控制电势边界与时间变 Dirichlet 波形
+  \item \code{BC/Particle} 控制粒子边界模型以及 boundary-based SEE 配置
+  \item \code{ParticleManagement} 控制 merge/split/thinning 与相关报表
+\end{itemize}
+
+\subsection{显式模块输出目录结构}
+
+显式模块当前会使用：
+
+\begin{itemize}
+  \item \dir{output/fields}
+  \item \dir{output/series}
+  \item \dir{output/reports}
+  \item \dir{output/meta}
+\end{itemize}
+
+\subsection{显式模块的字段与 profile 输出}
+
+\subsubsection{\file{output/fields/fields\_<step>.dat}}
+
+用途：主场快照，Tecplot FEPOINT 格式。
+
+内容：
+
+\begin{itemize}
+  \item 网格顶点坐标 \sym{x}, \sym{y}
+  \item 由 \code{Output/Fields/list} 选择的场量
+  \item 常见变量包括 \sym{\phi}, \sym{\rho}, \sym{E_x}, \sym{E_y}, \sym{n_s}, \sym{T_e}, \sym{\psi}
+\end{itemize}
+
+写出节奏：由 \code{Output/Fields/every} 控制。
+
+\subsubsection{\file{output/fields/profile1d.csv}}
+
+用途：沿 x 方向分箱、沿 y 平均的一维 profile，适合做 Turner 类 CCP benchmark 对比。
+
+文件性质：长表结构，一个 \code{step} 下对应多个 \code{bin} 行。
+
+典型内容：
+
+\begin{itemize}
+  \item bin 编号与 x 坐标范围
+  \item \sym{\phi(x)}
+  \item \sym{E(x)}
+  \item 电子/离子密度 \sym{n_e(x)}、\sym{n_i(x)}
+  \item 电子温度 \sym{T_e(x)}
+\end{itemize}
+
+配置入口：\code{Output/Fields/Profile1D}。
+
+\subsubsection{\file{output/fields/profiles\_avg.csv}}
+
+用途：滑动窗口时间平均的一维 profile 快照。
+
+这是覆盖式输出，不是追加式时间序列。每次写出时覆盖整份文件，表示``当前滚动窗口的平均态''。
+
+列定义按照 writer 注释，典型为：
+
+\begin{itemize}
+  \item \code{bin}, \code{x\_m}
+  \item \code{phi\_mean\_V}, \code{phi\_std\_V}
+  \item \code{E\_mean\_Vpm}, \code{E\_std\_Vpm}
+  \item \code{ne\_mean\_m-3}, \code{ne\_std\_m-3}
+  \item \code{ni\_mean\_m-3}, \code{ni\_std\_m-3}
+  \item \code{Te\_mean\_eV}, \code{Te\_std\_eV}
+\end{itemize}
+
+配置入口：\code{Output/Fields/Profile1DAvg}。
+
+\subsection{显式模块时间序列输出}
+
+\subsubsection{\file{output/series/timing.csv}}
+
+用途：每步耗时分解。
+
+主要列：
+
+\begin{itemize}
+  \item \code{step}, \code{time\_s}
+  \item \code{buildWeights\_s}, \code{deposit\_s}, \code{rhs\_s}
+  \item \code{poisson\_assemble\_s}, \code{poisson\_factor\_s}, \code{poisson\_solve\_s}, \code{poisson\_total\_s}
+  \item \code{evalE\_s}, \code{amr\_indicator\_s}, \code{amr\_adapt\_s}, \code{pm\_s}, \code{gatherPush\_s}, \code{output\_s}, \code{total\_s}
+  \item \code{particles\_total}, \code{poisson\_N}, \code{poisson\_nnz}, \code{poisson\_usedSuperLU}
+\end{itemize}
+
+适合看性能瓶颈，而不是看物理量。
+
+\subsubsection{\file{output/series/pic\_diagnostics.csv}}
+
+用途：显式 PIC 的标量摘要诊断。
+
+它聚合了每一步的总体状态，例如：
+
+\begin{itemize}
+  \item 活跃未知量规模
+  \item 残差指标 \sym{r_G}
+  \item 场能量
+  \item 总电荷与电荷不平衡
+  \item 电子平均能量、电子温度
+  \item 各物种宏粒子数与物理粒子数
+\end{itemize}
+
+这是显式模块总览性最强的 CSV 之一。
+
+\subsubsection{\file{output/series/power\_step.csv}}
+
+用途：显式模块的全局能量与功率闭合诊断。
+
+主要列：
+
+\begin{itemize}
+  \item \code{rG\_L2}, \code{rG\_Linf}
+  \item \code{S\_cf}, \code{S\_eb} 及其 p50/p90/p99 分位数
+  \item \code{field\_energy\_J}, \code{field\_dWdt\_W}
+  \item \code{kinetic\_e\_J}, \code{kinetic\_ion\_J}, \code{kinetic\_neu\_J}, \code{kinetic\_total\_J}
+  \item \code{mcc\_energy\_loss\_J}, \code{see\_emitted\_energy\_J}, \code{ion\_impact\_energy\_J}
+  \item \code{dE\_drive\_J}, \code{dE\_inj\_J}, \code{dE\_abs\_domain\_J}, \code{dE\_abs\_embedded\_J}, \code{dE\_abs\_total\_J}
+  \item \code{R\_W\_J}, \code{sum\_phiI\_W}, \code{sum\_phiI\_dt\_J}
+\end{itemize}
+
+这里的典型物理意义是：
+
+\begin{itemize}
+  \item \sym{S_{cf}}：粗细网格或复合带相关的闭合/匹配指标
+  \item \sym{S_{eb}}：嵌入边界附近的闭合/匹配指标
+  \item \code{field\_dWdt\_W}：场能时间导数
+  \item \code{sum\_phiI\_W}：电极驱动功率 \sym{\sum \phi I}
+\end{itemize}
+
+\subsubsection{\file{output/series/rf\_phase\_report.csv}}
+
+用途：记录时间变 Dirichlet 边界的瞬时相位与电压。
+
+主要列：
+
+\begin{itemize}
+  \item \code{target}：目标边界或对象
+  \item \code{type}：波形类型
+  \item \code{freq\_hz}
+  \item \code{phase\_rad}, \code{phase\_deg}
+  \item \code{phi\_code}, \code{phi\_SI\_V}
+\end{itemize}
+
+\subsubsection{\file{output/series/current\_waveform.csv}}
+
+用途：驱动电极电流波形。
+
+列定义在 writer 中非常明确：
+
+\begin{itemize}
+  \item \code{step}
+  \item \code{t\_si\_s}
+  \item \code{V\_drive\_V}
+  \item \code{J\_cond\_Am2}
+  \item \code{J\_disp\_Am2}
+  \item \code{J\_total\_Am2 = J\_cond + J\_disp}
+\end{itemize}
+
+配置入口：\code{Output/Series/CurrentWaveform}，其中 \code{side} 可取 \code{left/right/bottom/top/auto}。
+
+\subsubsection{\file{output/series/current\_balance.csv}}
+
+用途：显式模块的源/汇电流平衡检查。
+
+主要列：
+
+\begin{itemize}
+  \item 注入电流：\code{Ii\_inj\_A}, \code{Ie\_inj\_A}, \code{I\_inj\_mag\_A}
+  \item 流出电流：\code{I\_out\_domain\_A}, \code{I\_wall\_eb\_A}
+  \item 平衡偏差：\code{deltaI\_mag\_A}, \code{deltaI\_mag\_rel}
+  \item 带符号版本：\code{I\_inj\_signed\_A}, \code{deltaI\_signed\_A} 等
+\end{itemize}
+
+\subsubsection{\file{output/series/eb\_band\_rms.csv}}
+
+用途：嵌入边界附近电场强度的 RMS 代理量。
+
+主要列：
+
+\begin{itemize}
+  \item \code{band\_layers}
+  \item \code{cut\_cells}, \code{band\_cells}
+  \item \code{E\_rms\_code}, \code{E\_rms\_Vpm}
+  \item \code{E\_mean\_code}, \code{E\_mean\_Vpm}
+\end{itemize}
+
+\subsubsection{\file{output/series/impact\_report.csv}}
+
+用途：统计域边界粒子打到各侧面的宏粒子数。
+
+主要按电子/离子区分，并按 left/right/bottom/top/unknown 列出。
+
+\subsubsection{\file{output/series/particle\_management\_report.csv}}
+
+用途：粒子管理 merge/split/thinning 过程的报表。
+
+主要列：
+
+\begin{itemize}
+  \item \code{kind}, \code{name}
+  \item 管理前后宏粒子数、物理粒子数
+  \item \code{merged\_pairs}, \code{split\_count}
+  \item \code{spawn\_in}, \code{spawn\_kept}, \code{spawn\_drop}
+  \item \code{keep\_prob}
+\end{itemize}
+
+\subsubsection{\file{output/series/flux\_report.csv}}
+
+用途：按边界侧面与物种统计流出通量和电流密度。
+
+主要列：
+
+\begin{itemize}
+  \item \code{side}, \code{species}
+  \item \code{macro\_out}, \code{phys\_out}
+  \item \code{flux\_macro\_1pm2s}, \code{flux\_phys\_1pm2s}
+  \item \code{current\_Apm2}
+\end{itemize}
+
+\subsubsection{\file{output/series/particle\_weight\_stats.csv}}
+
+用途：每个物种宏粒子权重与单元占据统计。
+
+主要列：
+
+\begin{itemize}
+  \item \code{n\_macro}, \code{n\_phys}
+  \item \code{w\_min}, \code{w\_mean}, \code{w\_p50}, \code{w\_p90}, \code{w\_p99}, \code{w\_max}
+  \item \code{cell\_macro\_max}, \code{cell\_phys\_max}
+  \item 权重最大占据单元的 cell index
+\end{itemize}
+
+\subsubsection{\file{output/series/periodic\_diagnostics.csv}}
+
+用途：周期边界闭合检查。
+
+列：\code{step,time\_s,phiJumpX\_V,phiJumpY\_V,periodicX,periodicY}。
+
+\subsubsection{统一物理诊断目录 \dir{output/series/diagnostics}}
+
+当前包括三类：
+
+\paragraph{电极电流 diagnostics}
+
+位于 \dir{output/series/diagnostics/electrodes}。
+
+文件：
+
+\begin{itemize}
+  \item \file{current\_groups\_step.csv}
+  \item \file{current\_boundaries\_step.csv}
+\end{itemize}
+
+组文件主要列：
+
+\begin{itemize}
+  \item \code{group}
+  \item \code{boundary\_count}
+  \item \code{charge\_C}, \code{current\_A}
+  \item \code{electron\_charge\_C}, \code{electron\_current\_A}
+  \item \code{ion\_charge\_C}, \code{ion\_current\_A}
+  \item \code{neutral\_count\_phys}
+\end{itemize}
+
+这里的电流定义是单位时间内穿过指定电极边界组的净电荷通量。
+
+\paragraph{反应 diagnostics}
+
+位于 \dir{output/series/diagnostics/reactions}。
+
+文件：
+
+\begin{itemize}
+  \item \file{reaction\_step.csv}
+  \item \file{reaction\_channel\_step.csv}
+  \item \file{reaction\_projectile\_step.csv}
+  \item \file{reaction\_spawn\_step.csv}
+\end{itemize}
+
+典型物理量：
+
+\begin{itemize}
+  \item \code{macro\_collisions}, \code{phys\_collisions}
+  \item \code{collision\_frequency\_1ps}
+  \item \code{macro\_spawned}, \code{phys\_spawned}
+  \item \code{spawn\_frequency\_1ps}
+  \item \code{energy\_loss\_J\_total}
+  \item \code{max\_nu\_dt\_majorant}
+\end{itemize}
+
+其中 \sym{\nu \Delta t} majorant 是 MCC 采样中用于 majorant collision frequency 的稳定性/效率指标。
+
+\paragraph{能量直方图 diagnostics}
+
+位于 \dir{output/series/diagnostics/energy}。
+
+当 \code{EnergyHistogram} 未显式写 \code{sample} 时，当前默认行为是：
+
+\begin{itemize}
+  \item 对每个已配置物种自动生成一个 bulk-only histogram
+  \item 默认文件名类似 \file{electron\_bulk.csv}、\file{ar\_plus\_bulk.csv}
+\end{itemize}
+
+每个文件通常记录随时间演化的能量 bin 分布，用于观察电子、离子或 fast neutral 的能谱变化。
+
+\subsection{显式模块文字报告输出}
+
+这些文件在 \dir{output/reports} 中，偏解释性，不是标准时序 CSV：
+
+\begin{longtable}{p{0.28\textwidth}p{0.60\textwidth}}
+\toprule
+文件 & 内容 \\
+\midrule
+\endhead
+\file{collisions\_report.txt} & 碰撞统计与碰撞模型摘要。 \\
+\file{see\_report.txt} & 二次电子发射相关统计，包括离子撞击、发射能量等。 \\
+\file{ion\_report.txt} & 离子-中性碰撞减速与电荷交换相关统计。 \\
+\file{neutral\_report.txt} & 快中性粒子跟踪与能量统计。 \\
+\bottomrule
+\end{longtable}
+
+\section{隐式模块 ImplicitPIC 的输入输出说明}
+
+\subsection{输入关注点}
+
+隐式模块与显式模块共享大部分 \code{pic.dict} 语义，但会额外使用：
+
+\begin{itemize}
+  \item predictor/orbit-average 相关配置
+  \item polarization Poisson 与隐式耦合参数
+  \item AMR、自适应轨道积分、fallback 等诊断相关参数
+  \item geometry 中的 motionSchedule 和 MovingEB 信息
+\end{itemize}
+
+\subsection{隐式模块字段输出}
+
+\subsubsection{\file{output/fields/fields\_<step>.dat}}
+
+隐式模块同样输出 Tecplot FEPOINT 场快照，但在 cut-cell/EB 情况下支持 cell-constant packed output，以减少共享顶点重建带来的伪影。
+
+这是理解隐式模块可视化结果时的关键区别：
+
+\begin{itemize}
+  \item 普通模式：顶点共享 FEPOINT
+  \item cut-cell 场景下可切换为 cell-constant packed FEPOINT
+\end{itemize}
+
+\subsubsection{\file{output/fields/profile1d.csv} 与 \file{output/fields/profiles\_avg.csv}}
+
+含义与显式模块基本一致，仍然是 1D 剖面和时间平均剖面。
+
+\subsection{隐式模块时间序列输出}
+
+\subsubsection{\file{output/series/perf\_step.csv}}
+
+这是隐式模块最重要的性能诊断文件。
+
+主要列：
+
+\begin{itemize}
+  \item \code{np}, \code{total\_s}
+  \item \code{mcc\_pre\_s}, \code{buildWeightsN\_s}, \code{predictorSegment\_s}, \code{orbitAvgWeights\_s}, \code{polPoisson\_total\_s}
+  \item AMR 相关耗时列
+  \item \code{is\_output\_step}, \code{is\_amr\_adapt\_step}, \code{amr\_skipped\_by\_gate}
+  \item \code{pol\_N}, \code{pol\_nnz}, \code{pol\_solver\_mode}
+  \item predictor 与 orbit-average 的每粒子采样统计
+  \item \code{top1\_name/top1\_s} 到 \code{top3\_name/top3\_s}
+\end{itemize}
+
+它直接告诉你隐式模块是卡在 polarization Poisson、orbit average、还是 predictor 分段上。
+
+\subsubsection{\file{output/series/physics\_step.csv}}
+
+用途：隐式模块的主物理闭合摘要。
+
+主要列：
+
+\begin{itemize}
+  \item \code{rG\_L2}, \code{rG\_Linf}
+  \item \code{dQrel\_stage}, \code{dQphys\_rel}
+  \item \code{Qsource\_injected\_C}, \code{Qsink\_domain\_C}, \code{Qsink\_embedded\_C}
+  \item \code{Qmacro\_begin\_C}, \code{Qmacro\_end\_C}
+  \item \code{field\_energy\_J}, \code{kinetic\_e\_J}, \code{kinetic\_ion\_J}, \code{kinetic\_neu\_J}, \code{total\_energy\_J}
+  \item \code{J\_cond\_Apm2}, \code{J\_disp\_Apm2}, \code{J\_total\_Apm2}
+  \item \code{macro\_total}, \code{phys\_total}
+\end{itemize}
+
+\subsubsection{\file{output/series/species\_step.csv}}
+
+用途：按物种输出随时间变化的粒子统计。
+
+每个物种都会自动展开成一组列：
+
+\begin{itemize}
+  \item \code{<species>\_macro\_count}
+  \item \code{<species>\_phys\_count}
+  \item \code{<species>\_n\_mean\_1pm3}
+  \item \code{<species>\_mean\_energy\_eV}
+  \item \code{<species>\_Te\_eV}
+\end{itemize}
+
+\subsubsection{\file{output/series/amount\_step.csv} 与 \file{output/series/amount\_species\_step.csv}}
+
+仅当 \code{Output/Series/Amount/enabled=true} 且 amount cadence 有效时输出。
+
+用途：检查 amount-formulated 量与实际物理粒子数之间的偏差。
+
+\subsubsection{\file{output/series/coupling\_fallbacks.csv}}
+
+用途：统计权重构建与 orbit-average 过程中 coarse/fine fallback 的发生情况。
+
+主要列：
+
+\begin{itemize}
+  \item \code{buildWeightsN\_cwFallbackCount}
+  \item \code{orbitAvg\_sampleCwFallbackCount}
+  \item 对应的粒子数或 sample 数
+  \item fallback 比例
+\end{itemize}
+
+这是定位隐式耦合近壁/AMR 区域退化路径的关键文件。
+
+\subsubsection{\file{output/series/amr\_adapt\_step.csv}}
+
+用途：AMR 适配动作本身的开销与结果。
+
+主要列：
+
+\begin{itemize}
+  \item \code{cells\_before}, \code{cells\_after}
+  \item \code{use\_fast\_remap}
+  \item mesh adapt、geometry refresh、face graph、embedded metrics、field rebuild 等耗时
+\end{itemize}
+
+\subsubsection{\file{output/series/amr\_levelset\_diag.csv}}
+
+用途：每个 level set 的重初始化与数值状态诊断。
+
+主要列：
+
+\begin{itemize}
+  \item \code{level\_set\_index}
+  \item \code{moving}, \code{active\_moving\_levelset}
+  \item \code{reinitialized}, \code{reinit\_iterations}
+  \item \code{reinit\_fine\_residual}, \code{reinit\_coarse\_residual}
+  \item \code{min\_value}, \code{max\_value}, \code{near\_zero\_count}, \code{nonfinite\_count}, \code{narrow\_band\_count}
+\end{itemize}
+
+\subsubsection{\file{output/series/boundary\_flux\_step.csv}}
+
+用途：与显式的 \file{flux\_report.csv} 类似，但命名更直接，记录边界通量与电流密度。
+
+\subsubsection{\file{output/series/current\_balance.csv}}
+
+用途：隐式模块的电荷/电流平衡。列为：
+
+\begin{itemize}
+  \item \code{Qsource\_injected\_C}
+  \item \code{Qsink\_domain\_C}
+  \item \code{Qsink\_embedded\_C}
+  \item \code{Qmacro\_begin\_C}, \code{Qmacro\_end\_C}
+  \item \code{dQmacro\_step\_C}, \code{dQphys\_C}, \code{dQphys\_rel}
+\end{itemize}
+
+\subsubsection{\file{output/series/geometry\_metrics.csv}}
+
+只有在 motionSchedule 路径启用时输出。
+
+用途：记录运动几何的结构参数与位移量，例如：
+
+\begin{itemize}
+  \item \code{stage}, \code{stage1\_alpha}, \code{stage2\_alpha}
+  \item \code{gsa\_mm}, \code{gad\_mm}, \code{da\_mm}
+  \item 加速栅/减速栅平移、侵蚀、上下游位置
+\end{itemize}
+
+\subsubsection{\file{output/series/eb\_band\_rms.csv}}
+
+隐式侧版本较精简，主要列为：
+
+\begin{itemize}
+  \item \code{band\_layers}
+  \item \code{n\_cells}
+  \item \code{E\_rms\_Vpm}
+  \item \code{E\_mean\_Vpm}
+\end{itemize}
+
+\subsubsection{\file{output/series/current\_waveform.csv}}
+
+与显式侧共用同一个 writer，列含义完全相同：
+
+\begin{itemize}
+  \item \code{step}
+  \item \code{t\_si\_s}
+  \item \code{V\_drive\_V}
+  \item \code{J\_cond\_Am2}
+  \item \code{J\_disp\_Am2}
+  \item \code{J\_total\_Am2}
+\end{itemize}
+
+\subsubsection{\file{output/series/power\_step.csv}}
+
+隐式侧版本固定写 SI 尺度能量与功率列，主要包括：
+
+\begin{itemize}
+  \item \code{field\_energy\_J}, \code{field\_dWdt\_W}
+  \item \code{kinetic\_e\_J}, \code{kinetic\_ion\_J}, \code{kinetic\_neu\_J}, \code{kinetic\_total\_J}, \code{kinetic\_dWdt\_W}
+  \item \code{total\_energy\_J}, \code{total\_dWdt\_W}
+  \item \code{dE\_drive\_J}, \code{dE\_inj\_J}, \code{dE\_abs\_domain\_J}, \code{dE\_abs\_embedded\_J}, \code{dE\_abs\_total\_J}
+  \item \code{R\_W\_J}, \code{sum\_phiI\_W}, \code{sum\_phiI\_dt\_J}
+\end{itemize}
+
+\subsubsection{统一 diagnostics 子目录}
+
+隐式侧与显式侧共用：
+
+\begin{itemize}
+  \item \dir{output/series/diagnostics/electrodes}
+  \item \dir{output/series/diagnostics/reactions}
+  \item \dir{output/series/diagnostics/energy}
+\end{itemize}
+
+列定义与显式侧相同，因为 writer 是共享的。
+
+\subsection{隐式模块元信息输出}
+
+\subsubsection{\file{output/meta/run\_manifest.json}}
+
+这是隐式模块当前独有的结构化运行清单。
+
+它记录：
+
+\begin{itemize}
+  \item 模块名、case 路径、字典路径
+  \item \code{output.root}、\code{fieldsDir}、\code{seriesDir}、\code{metaDir}
+  \item cadence 配置
+  \item units 标度
+  \item normalization 信息
+  \item species 列表
+  \item field token 到 Tecplot 变量名的映射
+  \item 实际选择的字段 token
+\end{itemize}
+
+如果你要做自动后处理，这个文件非常有用。
+
+\subsubsection{\file{output/meta/ls\_diag/ls\_diag\_*.dat}}
+
+这是几何 level set 诊断文件，由几何实现层写出，不专属于显式或隐式。
+
+文件名格式大致为：
+
+\begin{itemize}
+  \item \file{ls\_diag\_LS<levelSetI>\_<tag>\_c<callIdx>.dat}
+\end{itemize}
+
+用于排查 level set、组合几何、等值面演化等问题。
+
+\section{运行控制器写出的静态报告}
+
+无论显式还是隐式，只要运行控制器成功解析对应对象，通常都会在 \dir{output/meta} 下写一些静态说明文件：
+
+\begin{longtable}{p{0.28\textwidth}p{0.58\textwidth}}
+\toprule
+文件 & 内容 \\
+\midrule
+\endhead
+\file{units\_report.txt} & 当前单位制、基本标度、是否写 SI 输出等。 \\
+\file{normalization\_report.txt} & Normalization 策略、来源、dimension、slab thickness 等。 \\
+\file{gas\_report.txt} & 背景气体名称、压强、温度、数密度、热速等。 \\
+\file{crossSections\_report.txt} & 截面数据库摘要。 \\
+\file{reactions\_report.txt} & 反应表摘要。 \\
+\bottomrule
+\end{longtable}
+
+这些文件是``静态背景说明''，不是时间历程。
+
+\section{符号、列名与单位约定}
+
+\subsection{常见后缀}
+
+\begin{longtable}{p{0.22\textwidth}p{0.68\textwidth}}
+\toprule
+后缀 & 含义 \\
+\midrule
+\endhead
+\code{\_code} & code units 下的量。 \\
+\code{\_SI\_s} / \code{\_SI\_V} / \code{\_SI\_Vpm} & SI 单位下的时间、电势、电场。 \\
+\code{\_1pm3} & 每立方米，\sym{\mathrm{m}^{-3}}。 \\
+\code{\_Apm2} & 安培每平方米，\sym{\mathrm{A/m^2}}。 \\
+\code{\_J} & 焦耳。 \\
+\code{\_W} & 瓦特。 \\
+\code{\_eV} & 电子伏特。 \\
+\code{\_phys} & 物理粒子数或物理量加权总量。 \\
+\code{\_macro} & 宏粒子数或宏粒子尺度量。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{常见物理符号解释}
+
+\begin{longtable}{p{0.16\textwidth}p{0.76\textwidth}}
+\toprule
+符号/列 & 含义 \\
+\midrule
+\endhead
+\sym{\phi} & 电势。 \\
+\sym{\rho} & 电荷密度。 \\
+\sym{\mathbf{E}} & 电场向量。 \\
+\sym{n_s} & 第 \sym{s} 个物种的数密度。 \\
+\sym{T_e} & 电子温度，当前输出中通常用 eV 表示。 \\
+\sym{r_G} & 泊松或耦合闭合相关的残差指标，常见 \code{rG\_L2} 和 \code{rG\_Linf}。 \\
+\sym{S_{cf}} & coarse-fine 接口/复合带相关诊断量。 \\
+\sym{S_{eb}} & embedded boundary 附近诊断量。 \\
+\sym{J_{cond}} & 传导电流密度。 \\
+\sym{J_{disp}} & 位移电流密度。 \\
+\sym{J_{total}} & 总电流密度，\sym{J_{cond}+J_{disp}}。 \\
+\sym{\sum \phi I} & 电极驱动功率项。 \\
+\sym{\nu \Delta t} & 碰撞 majorant 频率与时间步的乘积，反映 MCC 采样强度。 \\
+\bottomrule
+\end{longtable}
+
+\section{如何理解这些输出}
+
+如果你想快速读懂一个算例，我建议按下面顺序看：
+
+\begin{enumerate}
+  \item 先看 \dir{output/meta} 里的 \file{units\_report.txt}、\file{normalization\_report.txt}，确认单位和归一化
+  \item 看 \code{Output} 字典，确认 fields cadence 和 series cadence
+  \item 看 \dir{output/series} 中总览性文件
+  \begin{itemize}
+    \item 显式先看 \file{pic\_diagnostics.csv}、\file{power\_step.csv}、\file{timing.csv}
+    \item 隐式先看 \file{physics\_step.csv}、\file{perf\_step.csv}、\file{power\_step.csv}
+  \end{itemize}
+  \item 如果关心边界电流和驱动响应，再看 \file{current\_waveform.csv}、\file{current\_balance.csv} 和 diagnostics/electrodes
+  \item 如果关心碰撞化学，再看 diagnostics/reactions
+  \item 如果关心能谱，再看 diagnostics/energy
+  \item 最后用 \dir{output/fields} 中的场快照与 1D profile 理解空间结构
+\end{enumerate}
+
+\section{建议与注意事项}
+
+\begin{itemize}
+  \item \code{EnergyHistogram} 现在不需要手工写一堆 \code{sample}，缺省就是每个物种一个 bulk histogram
+  \item 时序 CSV 现在支持 restart-aware 裁剪，不要再手工拼接不同重启阶段的旧文件
+  \item 显式与隐式的字段快照名字相近，但隐式在 cut-cell/EB 场景下更可能使用 cell-constant packed 输出
+  \item 如果你做自动后处理，隐式模块优先读取 \file{output/meta/run\_manifest.json}
+  \item 如果输出看起来很多，先从总览文件入手，不要一开始就逐个看所有 CSV
+\end{itemize}
+
+\section{结语}
+
+当前 QUANTUM 的 PIC 输入输出体系已经不再是单一``写几个散乱 dat 文件''的模式，而是明确分成：
+
+\begin{itemize}
+  \item 空间快照 \dir{fields}
+  \item 时间序列 \dir{series}
+  \item 说明性文本 \dir{reports}
+  \item 静态元信息 \dir{meta}
+\end{itemize}
+
+如果你后续要继续整理，我建议下一步做两件事：
+
+\begin{enumerate}
+  \item 给每类输出再补一份最小后处理脚本入口
+  \item 把最常用的 5 到 8 个 CSV 做成统一 plotting notebook 或 Python 工具
+\end{enumerate}
+
+这样你以后看一个新 case，就能先通过元信息和总览序列迅速定位，再下钻到场快照与反应/能谱细节。
+
+\end{document}

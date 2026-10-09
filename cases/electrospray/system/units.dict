@@ -1,0 +1,14 @@
+# Original pre-physical configuration: build/electrospray_physical_20260911/config_before/
+# Legacy physical scales: u0=sqrt(0.0452/(1240*1e-6))=6.037517114114527 m/s.
+# T0=L0/u0. run.dict dt/finalTime/writeDt remain CODE times.
+Units
+{
+    mode SI
+    L0 1e-6 m
+    T0 1.6563100047570824e-7 s
+    Phi0 50 V
+    # Canonical Poisson charge scale epsilon0*Phi0/L0^2, matching Normalization.
+    rho0 442.70939064 C/m^3
+    n0 1 1/m^3 # Unused particle reference, not a prescribed gas density.
+    writeSIOutputs true
+}

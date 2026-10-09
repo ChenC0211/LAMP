@@ -1,0 +1,6 @@
+{
+  "program": "LAMP_hermite_gals_benchmark.exe",
+  "study": "smoke",
+  "arguments": ["smoke"],
+  "description": "Short preflight of the full FirstJet dynamic AMR benchmark driver"
+}

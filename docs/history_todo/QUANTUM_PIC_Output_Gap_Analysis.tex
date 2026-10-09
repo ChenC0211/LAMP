@@ -1,0 +1,607 @@
+% !TEX program = xelatex
+% !TEX encoding = UTF-8 Unicode
+\documentclass[11pt,a4paper]{ctexart}
+
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{fancyvrb}
+\usepackage{caption}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={QUANTUM PIC 输出问题分析与改进建议},
+  pdfauthor={GitHub Copilot}
+}
+
+\setlist[itemize]{nosep,leftmargin=1.8em}
+\setlist[enumerate]{nosep,leftmargin=2.2em}
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0em}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\dir}[1]{\texttt{#1}}
+\newcommand{\sym}[1]{\ensuremath{#1}}
+
+\title{QUANTUM PIC 输出问题分析与改进建议\\\large 基于当前显式 PIC 与隐式 PIC 实际输出的结构评估、物理诊断缺口分析与规范化方案}
+\author{基于当前代码与实际样本输出整理}
+\date{2026-04-10}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{文档目的}
+
+上一份说明文档解决的是``现在程序会输出什么''的问题；本文解决的是另外一个更关键的问题：``现在这些输出还缺什么、乱在哪里、怎样改才能真正支撑物理分析和工程使用''。
+
+本文基于两类证据：
+
+\begin{itemize}
+  \item 当前源码中显式与隐式模块的实际输出实现、CSV 表头、诊断 writer 与字典解析逻辑
+  \item 当前仓库中的实际样本输出目录，例如显式重启样本与隐式重启样本
+\end{itemize}
+
+因此本文不是理想化设计说明，而是面对当前实现状态的差距分析与改进方案。
+
+\section{本次检查所见的当前状态}
+
+\subsection{已经完成的进步}
+
+当前输出体系相比早期版本已经有明显改进：
+
+\begin{itemize}
+  \item 大部分时间序列已集中到 \dir{output/series}
+  \item 静态元信息已集中到 \dir{output/meta}
+  \item 电极电流、反应统计、能量直方图已进入统一的 \dir{output/series/diagnostics}
+  \item 重启时序文件已经具备按 \code{restartStep} 截断并续写的机制
+  \item \code{ls\_diag\_*} 已从案例根目录收敛到 \dir{output/meta/ls\_diag}
+\end{itemize}
+
+这些工作说明当前输出体系已经从``完全散落''进入``初步分层''阶段。
+
+\subsection{实际样本暴露出的核心现状}
+
+从当前样本目录可以直接看到如下事实：
+
+\begin{itemize}
+  \item 显式样本输出根目录包含 \dir{fields}、\dir{series}、\dir{meta}、\dir{reports}
+  \item 隐式样本输出根目录包含 \dir{fields}、\dir{series}、\dir{meta}，但没有 \dir{reports}
+  \item 显式场输出样本为 \file{fields\_000000.dat} 这类 Tecplot 文件；当前隐式样本中 \dir{output/fields} 为空
+  \item 隐式样本额外包含 \file{output/meta/run\_manifest.json}，显式当前没有对齐的 manifest
+  \item 显式主时间序列文件名仍混用 \file{timing.csv}、\file{flux\_report.csv}、\file{impact\_report.csv}、\file{rf\_phase\_report.csv}
+  \item 隐式主时间序列文件名更偏向 \file{perf\_step.csv}、\file{physics\_step.csv}、\file{species\_step.csv}、\file{boundary\_flux\_step.csv}
+\end{itemize}
+
+这说明显式与隐式虽然都在朝统一的输出目录迈进，但从文件命名、结构层次、信息颗粒度到元数据覆盖范围，仍未形成一套真正统一的规范。
+
+\subsection{一个典型的可用性问题：输出存在但不可直接分析}
+
+样本中还能看到更具体的问题。例如隐式 \file{physics\_step.csv} 里已经写出 \code{J\_cond\_Apm2}、\code{J\_disp\_Apm2}、\code{J\_total\_Apm2} 这样的关键列，但当前样本值为 \code{nan}。这类情况有两个后果：
+
+\begin{itemize}
+  \item 从“程序写出了文件”的角度看似功能存在
+  \item 从“用户能否直接依赖这列画图、做守恒分析”的角度，这列实际上不可用
+\end{itemize}
+
+因此评价输出体系不能只看是否有文件，还必须看列的物理闭合性、语义稳定性和可直接使用性。
+
+\section{当前输出体系仍存在的主要问题}
+
+\subsection{问题一：目录已经分层，但语义分层仍不统一}
+
+当前目录表面上分成了 \dir{fields}、\dir{series}、\dir{meta}、\dir{reports}，但“为什么某个文件属于某层”仍然缺乏严格规则。
+
+表现为：
+
+\begin{itemize}
+  \item 显式仍保留 \dir{reports}，而隐式没有对应层
+  \item 某些本质上是时间序列的数据仍带有 \code{report} 命名，例如 \file{flux\_report.csv}、\file{rf\_phase\_report.csv}
+  \item 某些本质上是诊断量的数据既不在 diagnostics 子目录，也不遵循统一命名模板
+  \item 同类文件既有 \code{step} 后缀，也有 \code{report}，还有不带类别后缀的旧式名称
+\end{itemize}
+
+这会带来两个直接问题：
+
+\begin{enumerate}
+  \item 用户无法仅通过文件名判断一个文件是主时序、派生诊断、静态报告还是运行清单
+  \item 后处理脚本无法稳定地按规则批量收集同类物理量
+\end{enumerate}
+
+\subsection{问题二：显式与隐式对同类物理过程的拆分方式不同}
+
+现在显式与隐式都输出电流、功率、反应、边界通量、能量等信息，但拆分方式并不一致。
+
+具体表现：
+
+\begin{itemize}
+  \item 边界通量方面，隐式已有 \file{boundary\_flux\_step.csv}，显式对应信息仍在 \file{flux\_report.csv}
+  \item 性能统计方面，显式主表是 \file{timing.csv}，隐式主表是 \file{perf\_step.csv}
+  \item 主物理状态方面，隐式有 \file{physics\_step.csv}、\file{species\_step.csv}，显式则更偏向 \file{pic\_diagnostics.csv} 加若干分散文件
+  \item 射频信息方面，显式仍保留 \file{rf\_phase\_report.csv}，隐式则更依赖 \file{current\_waveform.csv} 与 \file{power\_step.csv} 一类输出
+\end{itemize}
+
+结果是：
+
+\begin{itemize}
+  \item 两个模块都能做后处理，但同一套后处理脚本很难无条件复用
+  \item 用户从显式切换到隐式时，需要重新学习文件体系，而不是只替换一个模块标签
+  \item 后续如果要做跨算法对比，就必须先做人为表头映射和语义清洗
+\end{itemize}
+
+\subsection{问题三：同一物理问题的信息分散在多个文件里，缺少主索引}
+
+当前输出的一个核心痛点不是“完全没有数据”，而是“数据太分散”。
+
+以放电能量与电流闭合为例，用户通常要同时查看：
+
+\begin{itemize}
+  \item \file{power\_step.csv}
+  \item \file{current\_waveform.csv}
+  \item \file{diagnostics/electrodes/current\_boundaries\_step.csv}
+  \item \file{diagnostics/electrodes/current\_groups\_step.csv}
+  \item 某些情况下还要看 \file{physics\_step.csv} 或显式的 \file{pic\_diagnostics.csv}
+\end{itemize}
+
+这些文件分别有价值，但缺少一个明确的“主表 + 附表”关系。于是用户往往不知道：
+
+\begin{itemize}
+  \item 哪个文件是最权威的一阶诊断入口
+  \item 哪个文件是对主表的细分分解
+  \item 哪个文件只适合 debug，不适合作为发表或回归对比的数据源
+\end{itemize}
+
+如果没有主索引层，文件增多不会提升可用性，只会增加拼接成本。
+
+\subsection{问题四：物理过程跟踪仍然不够闭合}
+
+从“用户想跟踪放电物理过程”的角度看，现在的输出仍然偏向数值状态，而不是完整的物理收支链条。
+
+当前缺口主要体现在以下几类。
+
+\subsubsection{源项、损失项与库存量之间缺少统一收支表}
+
+现在可以分别看到注入、边界损失、碰撞、部分电流、部分能量量，但缺少一张统一的、按物种组织的收支表，把下列量放在同一处：
+
+\begin{itemize}
+  \item 步初库存
+  \item 体源项产生量
+  \item 反应产生量与反应损失量
+  \item 边界吸收、二次发射、反射、再注入
+  \item 步末库存
+  \item 守恒残差
+\end{itemize}
+
+缺了这张表后，用户很难回答最基础的问题，例如：某一阶段电子密度上升到底主要来自体电离、边界再发射还是数值注入。
+
+\subsubsection{反应统计有次数，但缺少足够的能量通道解释}
+
+当前 reaction diagnostics 已有总碰撞数、按 projectile、按 channel、按 spawn 的分项，这是重要进步。但如果要理解物理机制，仍然不够。
+
+当前还缺少或不够系统的内容包括：
+
+\begin{itemize}
+  \item 各反应通道对应的净能量转移汇总
+  \item 电子侧、离子侧、中性侧分别获得或损失了多少能量
+  \item 电离、激发、荷交换等通道对总功率沉积的贡献
+  \item 反应源项对各物种数密度演化的净贡献
+\end{itemize}
+
+仅有碰撞频次并不能直接解释能量去向，也不足以支撑“哪种物理机制主导某个阶段”的分析。
+
+\subsubsection{边界物理还不够面向诊断}
+
+当前电极电流诊断已经能给出 per-boundary 与 per-group 的电荷和电流，这是良好基础。但从工程分析角度还缺：
+
+\begin{itemize}
+  \item 各边界的粒子入射能量通量
+  \item 各边界按物种分解的吸收、反射、二次发射、溅射产额
+  \item 与壁面材料模型直接相关的累计剂量、累计能量、平均入射角统计
+  \item 对移动边界或复杂嵌入边界的面积归一化与真实几何量说明
+\end{itemize}
+
+也就是说，现在的边界输出更像“电流统计”，还不是完整的“壁面过程诊断”。
+
+\subsubsection{场-粒子耦合链条缺少统一摘要}
+
+用户常常希望把这条链条串起来看：
+
+\begin{center}
+驱动电压 $\rightarrow$ 电场响应 $\rightarrow$ 粒子加热 $\rightarrow$ 碰撞/电离 $\rightarrow$ 边界电流与沉积
+\end{center}
+
+当前这些量分布在不同文件中，且没有一张同步摘要表。结果是用户可以分别看每一环，但很难用一个表快速判断某段时间内主导机制已经从鞘层加热转向体电离，还是从电子主导转向离子壁损失主导。
+
+\subsection{问题五：字段命名与单位表达仍不够规范}
+
+当前列名已经比旧版本清楚得多，但仍存在以下问题：
+
+\begin{itemize}
+  \item 同一时间列有 \code{time\_s}、\code{time\_code}、\code{time\_SI\_s}
+  \item 某些文件使用 code 单位和 SI 单位并列，某些文件只给 SI 单位
+  \item 同一物理量在不同文件中使用不同词根，例如 \code{phys\_out}、\code{phys\_particles}、\code{phys\_collisions}
+  \item 物种名有时写在列名中，有时写在一列字符串中，有时通过 \code{species\_selector} 表达
+\end{itemize}
+
+这些做法单独看都说得过去，但组合起来后会削弱统一性。对于长期维护来说，真正重要的不是列名是否足够长，而是：
+
+\begin{itemize}
+  \item 同类型文件是否共享同一套时间轴字段
+  \item 同类计数/通量/能量字段是否共享同一命名语法
+  \item 代码单位与 SI 单位是否有稳定的双列规范
+\end{itemize}
+
+\subsection{问题六：缺少统一的运行清单与数据字典}
+
+隐式样本已经有 \file{run\_manifest.json}，这是非常正确的方向。但当前 manifest 覆盖还不完整，显式也没有完全对齐。
+
+从用户视角，真正理想的运行清单应该回答：
+
+\begin{itemize}
+  \item 这个 case 用了什么模块、什么版本、什么字典路径
+  \item 本次输出到底启用了哪些 series/diagnostics 开关
+  \item 每个输出文件的 schema 版本和写出 cadence 是多少
+  \item 本次场文件选择了哪些 field token
+  \item 时间单位、长度单位、厚度归一化、维数假设是什么
+\end{itemize}
+
+如果缺少这个清单，用户拿到一组结果文件后，仍然需要回头翻字典和源码，才能确认这些文件是否可横向对比。
+
+\subsection{问题七：输出的“分析友好度”还不够高}
+
+现在输出主要服务于“程序能写出诊断”和“开发者能 debug”，但还没有完全服务于“用户能高效做物理分析”。
+
+分析友好度不足主要体现为：
+
+\begin{itemize}
+  \item 缺少主 summary 表，导致用户不知道先读哪个文件
+  \item 缺少按主题聚合的二级 summary，例如“放电功率链”“边界损失链”“反应源汇链”
+  \item 缺少 schema version 与列说明文件，导致后处理脚本对列名变化敏感
+  \item 缺少推荐后的最小后处理入口，例如“做放电主分析至少读这三张表”
+\end{itemize}
+
+\section{重点问题：为什么说当前输出还不够支持物理过程跟踪}
+
+如果用户要回答下面这些问题，当前输出体系仍然不够直接：
+
+\begin{enumerate}
+  \item 电流波形变化是由导电电流、位移电流还是边界电荷积累主导？
+  \item 电子能量增长主要来自体加热还是鞘层加热？
+  \item 某个时间段电子密度上升主要来自哪类反应通道？
+  \item 离子损失主要去向哪个边界、以什么能量和通量到达？
+  \item 移动嵌入边界改变后，局部几何变化如何影响总体电流、反应和沉积？
+  \item 算法切换到隐式后，得到的主要物理结论是否与显式输出在同一语义坐标系内？
+\end{enumerate}
+
+当前之所以难回答，不是因为完全没有原始量，而是因为缺少面向这些问题组织的输出产品。
+
+换言之，当前输出更像是“原材料仓库”，还不是“可直接支持物理推理的指标体系”。
+
+\section{建议的规范化目标}
+
+我建议把未来输出体系的目标明确成四条。
+
+\begin{enumerate}
+  \item 同类物理过程在显式与隐式中使用同一目录层级、同一主文件名、同一列语义
+  \item 每个分析主题都有一个明确的主表，附表只做分解和细化
+  \item 每个输出文件都能通过 manifest 或 schema 文件自描述
+  \item 输出优先服务物理分析和回归比较，而不只是开发时调试
+\end{enumerate}
+
+\section{建议的输出体系重构方案}
+
+\subsection{方案一：统一目录语义，取消显式专属 reports 层}
+
+建议把输出语义固定为四层：
+
+\begin{longtable}{p{0.20\textwidth}p{0.72\textwidth}}
+\toprule
+目录 & 规则 \\
+\midrule
+\endhead
+\dir{output/fields} & 仅放空间场快照、剖面和空间分布文件。 \\
+\dir{output/series} & 仅放随步推进的时间序列 CSV/JSONL。 \\
+\dir{output/meta} & 仅放静态清单、schema、units、normalization、case 说明与一次性报告。 \\
+\dir{output/artifacts} & 仅放图片、后处理缓存、临时分析产物；如果当前没有，就不要预设。 \\
+\bottomrule
+\end{longtable}
+
+其中最重要的一条是：取消 \dir{output/reports} 作为长期保留层。凡是时间推进中不断追加的数据，一律进入 \dir{output/series}，按主题分子目录或统一命名模板管理。
+
+\subsection{方案二：统一主文件命名模板}
+
+建议把所有时间序列类文件尽量统一成：
+
+\begin{center}
+\code{<theme>\_step.csv}
+\end{center}
+
+例如：
+
+\begin{itemize}
+  \item \file{perf\_step.csv}
+  \item \file{field\_step.csv}
+  \item \file{species\_step.csv}
+  \item \file{boundary\_step.csv}
+  \item \file{reaction\_step.csv}
+  \item \file{power\_step.csv}
+  \item \file{waveform\_step.csv}
+\end{itemize}
+
+如果需要更细分，则使用子目录，而不是再引入 \code{report}、\code{diag}、\code{summary} 三套并行后缀。例如：
+
+\begin{itemize}
+  \item \dir{series/electrode/current\_boundaries\_step.csv}
+  \item \dir{series/electrode/current\_groups\_step.csv}
+  \item \dir{series/reaction/reaction\_channel\_step.csv}
+\end{itemize}
+
+这样用户只要看路径和主题名，就能大致知道文件角色。
+
+\subsection{方案三：建立三张总表作为用户主入口}
+
+建议无论显式还是隐式，都至少稳定提供三张主表：
+
+\begin{enumerate}
+  \item \file{series/overview\_step.csv}
+  \item \file{series/species\_step.csv}
+  \item \file{series/boundary\_step.csv}
+\end{enumerate}
+
+它们的职责建议如下。
+
+\subsubsection{overview\_step.csv}
+
+面向“先看整体发生了什么”。建议至少包含：
+
+\begin{itemize}
+  \item \code{step}
+  \item \code{time\_code}
+  \item \code{time\_si\_s}
+  \item 场能、粒子总动能、总能量
+  \item 驱动功率、边界吸收功率、体耗散功率
+  \item 总电流、导电电流、位移电流
+  \item 总电子数、总离子数、总中性数
+  \item 全局守恒残差、全局能量闭合残差
+\end{itemize}
+
+\subsubsection{species\_step.csv}
+
+面向“各物种在这一时刻的库存与收支”。建议每个物种每步一行，至少包含：
+
+\begin{itemize}
+  \item \code{species}
+  \item \code{inventory\_begin}
+  \item \code{source\_reaction}
+  \item \code{source\_injection}
+  \item \code{loss\_boundary}
+  \item \code{loss\_reaction}
+  \item \code{inventory\_end}
+  \item \code{balance\_residual}
+\end{itemize}
+
+\subsubsection{boundary\_step.csv}
+
+面向“各边界上的通量、电流、能量沉积”。建议每个边界或每个边界组每步一行，至少包含：
+
+\begin{itemize}
+  \item \code{boundary\_id} / \code{group}
+  \item \code{species}
+  \item 粒子数通量、电荷通量、电流
+  \item 入射能量通量、累计沉积能量
+  \item 反射、二次发射、溅射等出射统计
+  \item 面积归一化通量与未归一化积分量
+\end{itemize}
+
+只要这三张主表稳定，用户即使不深入细节文件，也能完成绝大多数一阶分析。
+
+\subsection{方案四：把 diagnostics 从“附加输出”升级为“主题化产品”}
+
+当前 diagnostics 子目录已经是统一化的起点，但还可以更进一步。建议按主题拆成：
+
+\begin{itemize}
+  \item \dir{series/electrode}
+  \item \dir{series/reaction}
+  \item \dir{series/energy}
+  \item \dir{series/geometry}
+  \item \dir{series/perf}
+\end{itemize}
+
+这样做的原因是，电极、反应、能量、几何、性能是五类完全不同的分析主题，不宜只依附在一个通用 diagnostics 名字下长期堆积。
+
+\subsection{方案五：补齐运行 manifest 与 schema 描述}
+
+建议显式与隐式都输出一份结构相同的 \file{output/meta/run\_manifest.json}，并新增一份 \file{output/meta/schema\_manifest.json}。
+
+其中：
+
+\begin{itemize}
+  \item \file{run\_manifest.json} 记录本次运行的 case、模块、字典路径、cadence、field token、units、normalization、boundary group、species 列表
+  \item \file{schema\_manifest.json} 记录每个输出文件的 schemaVersion、列名、单位规则、是否为主表、与哪个主题关联
+\end{itemize}
+
+一旦有了 schema manifest，后处理脚本就可以自动验证文件结构，而不是把列名硬编码在 Python 或 MATLAB 脚本里。
+
+\subsection{方案六：建立物理过程链条摘要表}
+
+为了真正支持物理过程跟踪，建议再增加一张主题强、面向解释的摘要表，例如 \file{series/process\_step.csv}。
+
+它不是基础原始量，而是从基础量聚合后的解释性指标。可以包含：
+
+\begin{itemize}
+  \item 电子主导加热指标
+  \item 位移电流占比
+  \item 电离主导通道及其占比
+  \item 边界损失主导边界及其占比
+  \item 能量沉积主通道及其占比
+\end{itemize}
+
+这张表的价值不在于完全原始，而在于让用户能够快速定位“这一阶段的主导机制是什么”。
+
+\section{建议补充的关键物理输出}
+
+下面列出我认为当前最值得补的输出，不一定要一次性全部实现，但至少应成为路线图。
+
+\subsection{按物种的统一数目收支}
+
+目标：回答每个物种在每一步是如何变化的。
+
+最低建议字段：
+
+\begin{itemize}
+  \item 步初、步末宏粒子数与物理粒子数
+  \item 注入源、反应源、边界源
+  \item 边界损失、反应损失、数值删除
+  \item 净变化与守恒残差
+\end{itemize}
+
+\subsection{按物种、按边界的能量通量}
+
+目标：回答能量到底沉积到哪里。
+
+最低建议字段：
+
+\begin{itemize}
+  \item 入射动能通量
+  \item 反射带走的能量
+  \item 二次发射带出的能量
+  \item 累计壁面沉积能量
+  \item 面平均与总积分两套量
+\end{itemize}
+
+\subsection{按反应通道的能量预算}
+
+目标：回答哪种碰撞机制真正控制总能量去向。
+
+最低建议字段：
+
+\begin{itemize}
+  \item 反应通道名
+  \item 碰撞次数
+  \item 电子能量损失
+  \item 离子或中性获得能量
+  \item 净反应功率
+\end{itemize}
+
+\subsection{几何与移动边界耦合诊断}
+
+目标：回答几何变化如何影响物理结果。
+
+最低建议字段：
+
+\begin{itemize}
+  \item 当前浸没边界面积、长度或体积分数统计
+  \item 活跃 cut cell 数
+  \item 边界移动速度统计
+  \item 几何刷新前后相关通量或场量变化
+\end{itemize}
+
+\subsection{可用于跨算法对比的统一摘要}
+
+目标：让显式与隐式真正可以逐项对照。
+
+最低建议字段：
+
+\begin{itemize}
+  \item 全局粒子总量
+  \item 全局能量总量
+  \item 主电流分解
+  \item 主边界损失分解
+  \item 主反应通道分解
+\end{itemize}
+
+\section{显式与隐式对齐的建议顺序}
+
+为了避免大改一次性失控，建议按三个阶段推进。
+
+\subsection{第一阶段：命名与 manifest 对齐}
+
+这一阶段不改物理内容，只改输出组织方式。
+
+建议任务：
+
+\begin{enumerate}
+  \item 显式补齐 \file{run\_manifest.json}
+  \item 把显式中的 \code{*\_report.csv} 逐步迁移为 \code{*\_step.csv}
+  \item 建立统一的时间列规范，例如固定为 \code{step,time\_code,time\_si\_s}
+  \item 为所有 series 文件登记 schemaVersion
+\end{enumerate}
+
+这一阶段收益很大，因为它会立刻提升可发现性与脚本兼容性。
+
+\subsection{第二阶段：主表建立与旧表降级}
+
+建议任务：
+
+\begin{enumerate}
+  \item 建立 \file{overview\_step.csv}
+  \item 建立统一的 \file{species\_step.csv}
+  \item 建立统一的 \file{boundary\_step.csv}
+  \item 将现有分散文件明确标记为主表分解或调试附表
+\end{enumerate}
+
+这一阶段的目标不是删除旧文件，而是先建立稳定的用户主入口。
+
+\subsection{第三阶段：补齐物理链条诊断}
+
+建议任务：
+
+\begin{enumerate}
+  \item 增加按物种收支表
+  \item 增加按边界能量通量表
+  \item 增加按反应通道能量预算表
+  \item 增加 process 级摘要表
+\end{enumerate}
+
+这一阶段完成后，输出体系才算真正具备了面向机理分析的能力。
+
+\section{我对当前输出体系的总体判断}
+
+如果只看“有没有输出文件”，当前 QUANTUM PIC 输出体系已经不弱；如果看“是否足以支撑系统的物理过程跟踪与显隐式统一分析”，当前体系仍处在中间状态。
+
+更准确地说，它已经具备：
+
+\begin{itemize}
+  \item 初步分层
+  \item 关键诊断雏形
+  \item 可重启续写
+  \item 一部分统一化尝试
+\end{itemize}
+
+但仍缺少：
+
+\begin{itemize}
+  \item 统一主表
+  \item 统一命名规范
+  \item 统一 manifest/schema
+  \item 面向物理收支链的核心摘要
+  \item 显式与隐式在同类物理问题上的一一对齐
+\end{itemize}
+
+所以当前最需要做的，不是继续零散加新文件，而是先把输出体系从``文件集合''提升成``指标体系''。
+
+\section{结论}
+
+本文的结论可以浓缩为四句话：
+
+\begin{enumerate}
+  \item 当前输出已经比以前清晰得多，但仍然偏散，显式与隐式仍未真正对齐。
+  \item 当前最大的短板不是完全缺少数据，而是缺少面向物理过程跟踪组织的主表与收支链。
+  \item 规范化工作的优先级应高于继续无计划地增加新文件。
+  \item 最合理的路线是先统一命名与 manifest，再建立三张主表，最后补齐物理链条诊断。
+\end{enumerate}
+
+如果按这个顺序推进，输出体系会更容易维护，也更容易真正服务于机理分析、算例对比、回归测试和论文后处理。
+
+\end{document}

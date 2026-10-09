@@ -1,0 +1,2 @@
+Domain { min (0, 0); max (4, 5.235987755982989); dimension 2; }
+AxisymmetricColumn { levelSet liquid; radius 1; relativeAmplitude 0.001; }

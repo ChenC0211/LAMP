@@ -1,0 +1,258 @@
+
+% !TEX program = xelatex
+\documentclass[UTF8,11pt,a4paper]{ctexart}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage[unicode]{hyperref}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{teal}
+}
+
+\title{QUANTUM 网格自适应（AMR）详细方案 v2\\\large（严格对齐 paperA 与当前 QUANTUM/ExplicitPIC 实现；不改网格模块核心）}
+\author{Chong Chen}
+\date{2026-01-27}
+
+\begin{document}
+\sloppy
+\setlength{\emergencystretch}{2em}
+\maketitle
+
+\section{本次修改的核心点（按你的要求）}
+\begin{enumerate}[leftmargin=1.6em]
+  \item \textbf{Debye 约束是硬约束：} 对 PIC 模块，\emph{最细网格尺寸必须满足 Debye 长度分辨率要求}（否则会显著增加数值自加热/自力敏感性）。
+  \item \textbf{细分指标不能对电荷密度过敏：} 网格细分/合并不得直接追逐瞬时 $\rho$（噪声 + 体积变化会形成正反馈），必须采用“噪声感知”的指标与滞回/持久性策略。
+  \item \textbf{明确 PIC 循环插入位置：} adapt 不能插在“已求场但未推进”的步内（会导致场/权重失配），推荐 \emph{步间重网格}：在下一步 deposit--solve 前执行。
+  \item \textbf{网格模块核心不动：} 不修改 \texttt{QuadtreeMesh} 的 refine/coarsen 算法与 \texttt{refineOrCoarsen0} 核心逻辑；把 PIC-AMR 的噪声处理、Debye 约束与调度放在 \texttt{ExplicitPICModule} 侧（或模块侧 AMR 驱动类）。
+\end{enumerate}
+
+\section{paperA 对 PIC 动态重网格的原则（落到可执行策略）}
+paperA 在 “Optional dynamic regridding ...” 段落的要点可总结为：
+\begin{itemize}[leftmargin=1.6em]
+  \item \textbf{避免粒子噪声反馈：} 当 cell 体积变化时，基于瞬时密度/电荷的 regrid 指标容易被噪声驱动并产生反馈。
+  \item \textbf{使用噪声感知指标：} 推荐两类主指标：\textbf{(i) EB 窄带}（几何相关、低噪声），\textbf{(ii) Debye 分辨率目标}（物理约束、比 $\rho$ 更稳）。
+  \item \textbf{配套稳定机制：} hysteresis（上下阈不同）+\ temporal persistence（连续多次满足才触发）。
+\end{itemize}
+本方案 v2 将上述原则直接写入“AMR 触发/指标/插入位置/配置”。
+
+\section{Debye 长度约束：如何转成网格层级约束}
+\subsection{基本公式与硬约束}
+对电子主导的 Debye 长度，
+\begin{equation}
+\lambda_D = \sqrt{\frac{\varepsilon_0 k_B T_e}{n_e e^2}}.
+\end{equation}
+PIC（尤其显式）中常用硬约束是
+\begin{equation}
+h_{\min} \;\le\; C_D\,\lambda_{D,\min},
+\qquad C_D \in [0.3,1.0] \text{（建议可配）}.
+\end{equation}
+其中 $h_{\min}$ 是\emph{最细 leaf cell 的特征尺寸}（例如 $\min(\Delta x,\Delta y)$），$\lambda_{D,\min}$ 是你期望分辨的最小 Debye 长度（可以取工况上界密度下的最小值，或用平滑的局部估计再取下确界）。
+
+\subsection{把 Debye 约束映射为 maxLevel 的选择}
+若根网格 cell 尺寸为 $h_0$，quadtree 每细化一层尺寸减半，则
+\begin{equation}
+h_{\min} = \frac{h_0}{2^{L_{\max}-L_0}}.
+\end{equation}
+因此只要在 \texttt{mesh.dict} 中选择 $L_{\max}$ 使得
+\begin{equation}
+\frac{h_0}{2^{L_{\max}-L_0}} \le C_D\,\lambda_{D,\min},
+\end{equation}
+即可保证 Debye 硬约束。建议把该推导写进你的 case 说明（或自动打印检查），避免“参数改了但忘了改网格”。
+
+\subsection{局部 Debye 目标（可选增强，但要做平滑）}
+如果你希望“高密度区更细、低密度区不必追细”，可以定义局部目标层级：
+\begin{equation}
+L^{\mathrm{debye}}_c
+=
+\min\Bigl(L_{\max},\ \max(L_{\min},\ \left\lceil \log_2\frac{h_0}{C_D\lambda_{D,c}}\right\rceil + L_0 \Bigr)\Bigr).
+\end{equation}
+\textbf{关键：} $\lambda_{D,c}$ 必须来自 \emph{平滑后的} $n_e$（见下一节），不能直接用瞬时 $\rho$。
+
+\section{“不对 $\rho$ 敏感”的 AMR 指标与稳定机制（PIC 专用）}
+\subsection{主指标 1：EB/壁面窄带（几何驱动，低噪声）}
+继续沿用现有 level-set Lipschitz 窄带细化逻辑：
+\begin{itemize}[leftmargin=1.6em]
+  \item 在 EB/导体表面附近指定 \texttt{protectBand}（例如 2--3 个最细 cell 厚度），保证 sheath/尖端场结构有足够分辨率；
+  \item 该指标对粒子噪声不敏感，是 PIC-AMR 的“稳定基底”。
+\end{itemize}
+
+\subsection{主指标 2：Debye 分辨率目标（物理驱动，需平滑）}
+\textbf{不要用瞬时 $\rho$。} 推荐用两种稳健替代：
+\begin{enumerate}[leftmargin=1.6em]
+  \item \textbf{基于 number density 的估计：} 在 deposit 阶段同时沉积电子 \emph{number amount}（或等价的宏粒子权重和），得到 $n_{e,c}$；
+  \item \textbf{基于 PPC 的下界约束：} 用 cell 粒子数/权重给 $n_e$ 一个噪声下界，避免极低粒子数导致“虚假高密度”。
+\end{enumerate}
+
+\paragraph{平滑建议（必要条件）}
+对 $n_{e,c}$ 使用时间 EMA 或滑动平均（窗口 $K$ 个 macro steps），例如
+\begin{equation}
+\bar n_{e,c}^{(k)} = (1-\alpha)\,\bar n_{e,c}^{(k-1)} + \alpha\,n_{e,c}^{(k)},
+\qquad \alpha=\frac{2}{K+1}.
+\end{equation}
+然后用 $\bar n_{e,c}$ 计算 $\lambda_{D,c}$ 与 $L_c^{\mathrm{debye}}$，从根源上避免振荡。
+
+\subsection{可选指标：\texorpdfstring{$|\nabla\phi|$}{|grad phi|} 或 \texorpdfstring{$|\mathbf{E}|$}{|E|}（比 $\rho$ 稳，但仍要持久性）}
+$|\mathbf{E}|$ 与 $|\nabla\phi|$ 往往比 $\rho$ 更平滑，适合捕捉 sheath/尖端场增强区。
+但仍建议：
+\begin{itemize}[leftmargin=1.6em]
+  \item 只用于 \emph{增量细化}（在 Debye/EB 基底之上），并加 temporal persistence；
+  \item 指标做空间轻度滤波（例如对 leaf 邻域做一次局部平均），避免被单格噪声驱动。
+\end{itemize}
+
+\subsection{稳定机制（不改网格核心的前提下怎么做）}
+因为不动 \texttt{QuadtreeMesh} 核心，我们把稳定机制放在 PIC 模块侧：
+\begin{itemize}[leftmargin=1.6em]
+  \item \textbf{步间 adapt：} 每隔 $N$ 步才允许 adapt（\texttt{adaptEverySteps}）。
+  \item \textbf{持久性：} 指标连续 $P$ 次满足才触发（用模块侧计数器/标志场实现）。
+  \item \textbf{滞回：} refine 与 coarsen 用不同阈值（或不同目标层级带宽）。
+  \item \textbf{预算：} 单次 adapt 限制最大 refine/coarsen cell 数（避免大跳变）。
+\end{itemize}
+这些都不需要改动 \texttt{refineOrCoarsen0}。
+
+\section{PIC 循环中的插入位置（必须一致，避免失配）}
+\subsection{为什么不能“步内 adapt”}
+你当前的 PIC macro-step 近似是：
+\begin{center}
+\texttt{buildWeights -> deposit -> Poisson -> evalE -> gather -> push -> collisions/SEE -> output}
+\end{center}
+一旦在 \texttt{deposit/solve} 之后 adapt，网格拓扑与权重缓存、$\phi/E$ 的离散意义都会变化，导致：
+\begin{itemize}[leftmargin=1.6em]
+  \item 已求得的 $\phi/E$ 不再对应当前网格；
+  \item gather 权重/缓存失效；
+  \item 更严重的是：PIC deposit--gather 闭环的一致性被破坏，容易放大自力。
+\end{itemize}
+因此 adapt 必须放在 \textbf{下一步的 deposit--solve 之前}。
+
+\subsection{推荐插入：步间重网格（two-phase schedule）}
+推荐做成“两阶段”：
+\begin{enumerate}[leftmargin=1.6em]
+  \item \textbf{在步末计算/更新 AMR 指标：} 利用本步 deposit 得到的 $n_e$（做 EMA），以及本步的 $|\mathbf{E}|$ 等，更新 ``regrid\_request'' 标志（含持久性计数）。
+  \item \textbf{在下一步开始前执行 qMesh.adapt：} 若 regrid\_request=true 且到达周期，则调用
+  \texttt{qMesh.adapt(levelSets, magGradIndicator, ...fields...)}，
+  然后 \emph{重新 buildWeights/deposit/solve} 开始该步。
+\end{enumerate}
+
+\paragraph{伪代码（对齐当前 ExplicitPICModule.cpp 的 for-step 结构）}
+\begin{lstlisting}
+// step loop:
+for step = 1..steps:
+  if (amr.pending && amr.isDue(step)):
+      qMesh.adapt(levelSets, magGradIndicatorFiltered, fields...)
+      relabelParticlesLocalMapThenFindCell()
+      clearPoissonCacheIfMeshChanged()
+
+  buildSolveAtCurrentPositions(...)   // deposit + poisson + evalE
+  gatherPushAndMCC(...)
+  outputAndDiagnostics(...)
+
+  amr.updateIndicatorsFromThisStep(depositStats, EField, ...)
+  amr.updatePendingFlagWithPersistence()
+\end{lstlisting}
+
+\section{配置建议（尽量少改文件；PIC 相关都放 pic.dict）}
+\subsection{mesh.dict：只保证几何带与 maxLevel（Debye 硬约束）}
+\begin{lstlisting}
+adaptiveMesh true
+maxCellNum            200000
+C_Lipschitz           2.6
+
+// 保证 Debye 约束的最细层级（由你按工况计算）
+maxLevel              7
+
+// EB/level-set 的 min/max level（现有机制）
+minLevel_neg          (2)
+minLevel_pos          (2)
+maxLevel_local        (7)
+\end{lstlisting}
+
+\subsection{pic.dict：AMR 块（调度 + 平滑 + 持久性；不直接用 rho）}
+\begin{lstlisting}
+AMR
+{
+  enable               true
+  adaptEverySteps      20
+  persistenceSteps     3      // 连续满足 3 次才触发
+  cellBudgetPerAdapt   5000
+  hysteresis           0.2
+
+  Debye
+  {
+    CD                 0.5    // h <= CD * lambda_D
+    Te_eV              3.0    // 若 Te 固定
+    neFloor            1e12   // 防止除零/噪声（SI: 1/m^3）
+    avgWindowSteps     20     // EMA 窗口
+  }
+
+  Indicator
+  {
+    useEBBand           true
+    useEField           true
+    EFieldAvgWindow     20    // 可选 EMA
+    // 注意：不提供 useRho 选项（或默认 false），避免追噪声
+  }
+
+  particleRelabel
+  {
+    mode                localMapThenFindCell
+    fallback            findCellLabel
+  }
+}
+\end{lstlisting}
+
+\section{实施分解（不改网格核心；以 ExplicitPICModule 为主）}
+\subsection*{AMR-P0（把 paperA 原则落到当前代码：不追 rho）}
+\textbf{目标：} 在方案与实现中明确：PIC-AMR 指标以 EB band + Debye target 为主，$|\mathbf{E}|$ 为辅；禁止瞬时 $\rho$ 触发。
+\\
+\textbf{你对我说：}
+\begin{quote}
+执行 AMR-P0：基于 paperA 的动态重网格段落与当前 ExplicitPICModule 循环，给出“PIC-AMR 规则”与插入位置建议（步间 adapt），并列出需要新增/复用的字段（neAvg/EAvg/magGradIndicator 等），不改网格模块核心。
+\end{quote}
+
+\subsection*{AMR-P1（在 PIC 侧生成 Debye 指标：沉积 number density + EMA）}
+\textbf{目标：} 在 \texttt{buildSolveAtCurrentPositions} 或 deposit 后，得到每 cell 的电子 number density（或 weight sum）并更新 EMA；输出 $\lambda_D$ 统计。
+\\
+\textbf{你对我说：}
+\begin{quote}
+执行 AMR-P1：在 ExplicitPICModule 的 deposit 阶段增加电子 number density 统计并做 EMA 平滑，生成 Debye 指标（不使用 rho），并把统计写入 report；给 diff+zip。
+\end{quote}
+
+\subsection*{AMR-P2（构造 magGradIndicatorFiltered：EB band + Debye + 可选 E 平滑）}
+\textbf{目标：} 构造一个 \texttt{CellField magGradIndicator} 作为传给 \texttt{qMesh.adapt} 的 \texttt{magGradU} 参数（复用接口，不改网格核心）。
+\\
+\textbf{你对我说：}
+\begin{quote}
+执行 AMR-P2：实现 magGradIndicatorFiltered（由 Debye 目标层级差 + 可选 |E| 平滑组合），并通过现有 qMesh.adapt 接口传入；给 diff+zip。
+\end{quote}
+
+\subsection*{AMR-P3（在 PIC 循环做步间 adapt：带持久性/预算/滞回）}
+\textbf{目标：} 在 step 循环开始处检查 \texttt{pending}，若到期则 adapt；adapt 后 relabel 粒子、必要时清 Poisson cache。
+\\
+\textbf{你对我说：}
+\begin{quote}
+执行 AMR-P3：把步间 adapt 插入 ExplicitPICModule 的 step 循环（下一步 deposit 前），实现 pending+persistence+hysteresis+budget，并确保不破坏 OpenMP；给 diff+zip。
+\end{quote}
+
+\subsection*{AMR-P4（回归 case：验证 Debye 约束与不振荡）}
+\textbf{目标：} 提供一个 PIC case：固定工况下开启/关闭 AMR，对比（i）$h_{\min}/\lambda_D$ 统计，（ii）adapt 次数与 level 分布是否抖动，（iii）关键物理量是否更稳。
+\\
+\textbf{你对我说：}
+\begin{quote}
+执行 AMR-P4：新增 AMR-PIC 回归 case（含 Debye 约束检查与 adapt 抖动统计），给 zip。
+\end{quote}
+
+\section{落地注意事项（和你的“网格核心不动”一致）}
+\begin{itemize}[leftmargin=1.6em]
+  \item 不修改 \texttt{QuadtreeMesh::refineOrCoarsen0} 逻辑；只把更“干净”的指标喂给它。
+  \item 不在步内 adapt；adapt 后必须重建权重缓存并清理依赖 mesh 的 solver cache（若有）。
+  \item Debye 约束优先级最高：即便指标很小，只要违反 $h \le C_D\lambda_D$ 也应阻止 coarsen（在模块侧 pending/aimLevel 里实现）。
+\end{itemize}
+
+\end{document}

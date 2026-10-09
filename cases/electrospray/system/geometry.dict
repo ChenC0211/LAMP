@@ -1,0 +1,229 @@
+# geometry.dict -- v3 migration of the original electrospray/example.jpg.
+# Original text is retained in ../legacy/geometry.dict.
+# Coordinate suffixes are physical um; with L0=1 um the code geometry is unchanged.
+# Arc radius alone remains a code length because its parser only reads stod.
+# Input point, line, levelSetIndex and phase IDs are now 1-based.
+# Comments retain the original zero-based labels used in example.jpg.
+
+Domain
+{
+    min (0, 0) um
+    max (5, 16) um
+}
+
+Point
+{
+    (0, 0) um  # 1; original point 0
+    (5, 0) um  # 2; original point 1
+    (5, 16) um # 3; original point 2
+    (0, 16) um # 4; original point 3
+    (0, 3) um  # 5; original point 4
+    (1, 3) um  # 6; original point 5: nozzle lip
+    (5, 3) um  # 7; original point 6
+    (1, 0) um  # 8; original point 7
+    (0, 4) um  # 9; original point 8: meniscus axis endpoint
+}
+
+Line
+{
+    (5, 6) # 1; original line 0, ignored internal separator
+    {
+        type straight
+    }
+    (6, 7) # 2; original line 1, electrode/vacuum face
+    {
+        type straight
+    }
+    (8, 6) # 3; original line 2, liquid/electrode wall
+    {
+        # Original spline control points (1,0),(1,1),(1,2),(1,3)
+        # are exactly collinear: this straight segment is the same geometry.
+        type straight
+    }
+    (6, 9) # 4; original line 3, liquid/vacuum meniscus
+    {
+        type arc
+        center (0, 3) um
+        radius 1 # CODE length = 1 um physically, NOT 1 m; no radius-unit parser.
+        radian 0.5 # units of pi, unchanged
+    }
+    (1, 8) # 5; original line 4
+    {
+        type straight
+    }
+    (8, 2) # 6; original line 5
+    {
+        type straight
+    }
+    (2, 7) # 7; original line 6
+    {
+        type straight
+    }
+    (7, 3) # 8; original line 7
+    {
+        type straight
+    }
+    (3, 4) # 9; original line 8
+    {
+        type straight
+    }
+    (4, 9) # 10; original line 9
+    {
+        type straight
+    }
+    (9, 5) # 11; original line 10
+    {
+        type straight
+    }
+    (5, 1) # 12; original line 11
+    {
+        type straight
+    }
+}
+
+LevelSet
+{
+    "0"
+    {
+        # Negative below z=3. Closure determines sign only, not distance.
+        lines (-2, -1)
+        signClosure (12, 5, 6, 7)
+        innerPoint (4.03, 2.03) um
+        moving false
+    }
+    "1"
+    {
+        # Negative inside the liquid column and its quarter-circle meniscus.
+        # Only the original wall+arc contribute signed-distance magnitudes.
+        lines (3, 4)
+        signClosure (11, 12, 5)
+        innerPoint (0.83, 2.03) um
+        moving true
+    }
+}
+
+Phase
+{
+    "electrode" # phase 1; original phase 0
+    {
+        constraints
+        {
+            "0" < 0
+            "1" > 0
+        }
+        boundaries (6, 7, -2, -3)
+    }
+    "liquid" # phase 2; original phase 1
+    {
+        constraints
+        {
+            "1" < 0
+        }
+        boundaries (5, 3, 4, 11, 12)
+    }
+    "vacuum" # phase 3; original phase 2
+    {
+        constraints
+        {
+            "0" > 0
+            "1" > 0
+        }
+        boundaries (2, 8, 9, 10, -4)
+    }
+}
+
+# One entity per original line: boundary ID = original line label + 1.
+# These are geometric associations, not invented electrical/flow BC values.
+Boundary
+{
+    domainBoundary
+    {
+        boundary 5
+        {
+            name liquid_inlet
+            lines (5)
+            adjacentPhase 2
+        }
+        boundary 6
+        {
+            name electrode_bottom
+            lines (6)
+            adjacentPhase 1
+        }
+        boundary 7
+        {
+            name electrode_outer_side
+            lines (7)
+            adjacentPhase 1
+        }
+        boundary 8
+        {
+            name vacuum_outer_side
+            lines (8)
+            adjacentPhase 3
+        }
+        boundary 9
+        {
+            name vacuum_top
+            lines (9)
+            adjacentPhase 3
+        }
+        boundary 10
+        {
+            name vacuum_axis
+            lines (10)
+            adjacentPhase 3
+        }
+        boundary 11
+        {
+            name liquid_axis_upper
+            lines (11)
+            adjacentPhase 2
+        }
+        boundary 12
+        {
+            name liquid_axis_lower
+            lines (12)
+            adjacentPhase 2
+        }
+    }
+    fixedBoundary
+    {
+        boundary 1
+        {
+            name ignored_internal_separator
+            lines (1)
+            ignored true
+        }
+        boundary 2
+        {
+            name electrode_vacuum_face
+            lines (2)
+            levelSetIndex 1
+            phase 1
+            opposedPhase 3
+            immersed true
+        }
+        boundary 3
+        {
+            name liquid_electrode_wall
+            lines (3)
+            levelSetIndex 2
+            phase 2
+            opposedPhase 1
+            immersed true
+        }
+    }
+    movingBoundary
+    {
+        boundary 4
+        {
+            name liquid_vacuum_meniscus
+            lines (4)
+            levelSetIndex 2
+            phase 2
+            opposedPhase 3
+            immersed true
+        }
+    }
+}

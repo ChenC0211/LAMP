@@ -1,0 +1,7 @@
+Mesh
+{
+    resolution 16;
+    initialMesh amr;
+    Refinement { min (.25 .25); max (.75 .75); level 1; }
+    Regrid { atSteps (125 250 375 500 625 750 875 1000 1125 1250 1375 1500 1625 1750 1875); }
+}

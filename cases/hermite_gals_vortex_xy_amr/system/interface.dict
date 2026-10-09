@@ -1,0 +1,5 @@
+Interface
+{
+    method hermiteGals;
+    Boundary { type prescribed; phi "(.5+cos((-speed*period/pi*sin(pi*t/period))*((x-.5)*(x-.5)+(y-.5)*(y-.5)))*(x-.5)-sin((-speed*period/pi*sin(pi*t/period))*((x-.5)*(x-.5)+(y-.5)*(y-.5)))*(y-.5)-cx)*(.5+cos((-speed*period/pi*sin(pi*t/period))*((x-.5)*(x-.5)+(y-.5)*(y-.5)))*(x-.5)-sin((-speed*period/pi*sin(pi*t/period))*((x-.5)*(x-.5)+(y-.5)*(y-.5)))*(y-.5)-cx)+(.5+sin((-speed*period/pi*sin(pi*t/period))*((x-.5)*(x-.5)+(y-.5)*(y-.5)))*(x-.5)+cos((-speed*period/pi*sin(pi*t/period))*((x-.5)*(x-.5)+(y-.5)*(y-.5)))*(y-.5)-cy)*(.5+sin((-speed*period/pi*sin(pi*t/period))*((x-.5)*(x-.5)+(y-.5)*(y-.5)))*(x-.5)+cos((-speed*period/pi*sin(pi*t/period))*((x-.5)*(x-.5)+(y-.5)*(y-.5)))*(y-.5)-cy)-radius*radius"; }
+}

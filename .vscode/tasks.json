@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "LAMP: build",
+      "type": "shell",
+      "command": "${workspaceFolder}/tools/build.cmd",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$msCompile",
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "LAMP: build debug",
+      "type": "shell",
+      "command": "${workspaceFolder}/tools/build.cmd",
+      "args": ["-Preset", "local-debug"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "LAMP: run case",
+      "type": "shell",
+      "command": "${workspaceFolder}/tools/run_case.cmd",
+      "args": ["${input:caseName}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "LAMP: prepare debug case",
+      "type": "shell",
+      "command": "${workspaceFolder}/tools/run_case.cmd",
+      "args": ["${input:caseName}", "-PrepareOnly", "-Program", "${workspaceFolder}/bin/relwithdebinfo/LAMP.exe"],
+      "dependsOn": "LAMP: build debug",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    { "id": "caseName", "type": "promptString", "description": "Case name (see tools/run_case.cmd -List)", "default": "hermite_gals_vortex_xy" }
+  ]
+}

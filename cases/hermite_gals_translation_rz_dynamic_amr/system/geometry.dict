@@ -1,0 +1,6 @@
+Geometry
+{
+    coordinates rz;
+    Domain { min (0 0); max (1 1); }
+    Initial { phi "(r)*(r)+(z-cy)*(z-cy)-radius*radius"; }
+}

@@ -1,0 +1,3 @@
+Domain { min (0, 0); max (4, 5.2359877559829888); dimension 2; }
+// r_min/R = (1-delta)/sqrt(1+delta^2/2) = 0.6/16.
+AxisymmetricColumn { levelSet liquid; radius 1; relativeAmplitude 0.954754144451598; }

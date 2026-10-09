@@ -1,0 +1,17 @@
+Hydrodynamics
+{
+    coordinateSystem axisymmetricRZ;
+    timeScheme cchMomentMidpoint;
+    materialModel twoPhase;
+    interfaceLevelSet liquid;
+    densityNegative 5;
+    densityPositive 1;
+    viscosityNegative 0.02;
+    viscosityPositive 0.01;
+    surfaceTension 0.1;
+    interfaceForceGeometry parametric;
+    interfaceForceLayer sharp;
+    initialVelocity zero;
+    linearResidualTolerance 1e-10;
+    Moment { maximumIterations 24; convection central; }
+}

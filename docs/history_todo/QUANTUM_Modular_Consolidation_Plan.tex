@@ -1,0 +1,681 @@
+% Markdown SHA256: e47af95409b6a04d029951ecc48093dd6d3c2fcdcc532e8acf686b58751e1600
+% !TEX program = xelatex
+% Generated from QUANTUM_Modular_Consolidation_Plan.md; do not edit prose here.
+% Regenerate: python -B tools/docs/export_modular_consolidation_plan.py
+\documentclass[UTF8,a4paper,11pt,fontset=fandol]{ctexart}
+\usepackage[left=23mm,right=23mm,top=24mm,bottom=23mm,headheight=16pt]{geometry}
+\usepackage{amsmath,amssymb,bm,booktabs,longtable,array,tabularx}
+\usepackage[table]{xcolor}
+\usepackage{fancyhdr,enumitem,needspace}
+\usepackage[unicode,colorlinks=true,linkcolor=ink,urlcolor=accent,bookmarksnumbered=true]{hyperref}
+\usepackage{xurl}
+\definecolor{ink}{RGB}{28,54,77}
+\definecolor{accent}{RGB}{0,108,123}
+\definecolor{pale}{RGB}{237,244,246}
+\hypersetup{pdftitle={QUANTUM 模块化收紧计划},pdfauthor={QUANTUM},
+  pdfsubject={模块数学模型、公共接口、字典归属与分批迁移}}
+\ctexset{section={format=\Large\bfseries\color{ink}},
+  subsection={format=\large\bfseries\color{ink}}}
+\setlength{\parskip}{4pt}
+\setlength{\emergencystretch}{4em}
+\clubpenalty=10000
+\widowpenalty=10000
+\displaywidowpenalty=10000
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.23}
+\setlist{leftmargin=2em,itemsep=3pt,topsep=5pt,parsep=0pt}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\code}[1]{{\small\nolinkurl{#1}}}
+\newcommand{\stage}[1]{\Needspace{6\baselineskip}\subsection*{#1}\addcontentsline{toc}{subsection}{#1}}
+\numberwithin{equation}{section}
+\setcounter{tocdepth}{2}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small QUANTUM 模块化收紧计划}
+\fancyhead[R]{\small 实施中 / 2026-09-16}
+\fancyfoot[C]{\small\thepage}
+\raggedbottom
+\begin{document}
+\hypersetup{pageanchor=false}
+\begin{titlepage}
+\setlength{\parindent}{0pt}
+\vspace*{12mm}
+{\Huge\bfseries\color{ink} QUANTUM\par}
+\vspace{6mm}
+{\LARGE\bfseries 模块化收紧计划\par}
+\vspace{6mm}
+{\large 从数学模型到模块职责、公共接口与分批迁移\par}
+\vspace{9mm}
+\noindent\textcolor{accent}{\rule{\textwidth}{1pt}}
+\vspace{5mm}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+版本与日期 & 阅读版 v1.8（同步当前收紧计划）/ 2026 年 9 月 16 日\\[4pt]
+内容来源 & 同名 Markdown 收紧计划；保留全部九节正文、模型、分支编号和 M0--M7 工作包\\[4pt]
+模型依据 & 原数学模型蓝图第 4、5 节；不沿用其后半部分的拟议类名、版本 3 字典和旧排期\\[4pt]
+效力边界 & 实施计划，完成状态见正文与阶段记录；不是新字典语法或全模块已完成声明，现行输入和约束仍以正式参考为准\\[4pt]
+本次排版 & 增加可点击目录、公式编号和跨页表头；不修改求解算法、算例或原验证结论\\
+\end{tabularx}
+\vspace{9mm}
+\noindent\colorbox{pale}{\parbox{\dimexpr\textwidth-2\fboxsep\relax}{
+\vspace{3mm}\textbf{定型原则}\par
+方程与状态归模块，耦合顺序归 App。复用已有求解器，逐项退出重复职责；
+不把移动目录或给多套求解过程套一个公共名字当作完成。\vspace{3mm}}}
+\vspace{7mm}
+\noindent\textbf{阅读导航}
+\begin{itemize}
+\item 第 1--2 节：目标边界与当前分支，哪些保留、归并、退出。
+\item 第 3--5 节：模型约束、公共数据契约及字典拥有者。
+\item 第 6 节：M0--M7 实施顺序、各批次完成条件与当前进度；以正文和所链接的阶段记录为准。
+\item 第 7--9 节：必要对照、完成条件与源码依据。
+\end{itemize}
+\vfill
+{\small 内容维护入口：\code{docs/QUANTUM_Modular_Consolidation_Plan.md}。
+LaTeX 由该文件机械转换，PDF 是对应阅读版本；后续内容修改后同步再生成。\par}
+\end{titlepage}
+\pagenumbering{roman}
+\hypersetup{pageanchor=true}
+\begingroup\small\setlength{\parskip}{0pt}\tableofcontents\endgroup
+\clearpage\pagenumbering{arabic}
+日期：2026-09-16。状态：\textbf{实施中：M0、M1 已完成；M2 公共单步、几何、联合修正、物性、载荷来源、连续性及运行适配已接入；M3 完整运动、相体积/通量、体积修正和材料轨迹已归 Interface。规定速度独立入口已接通；下一段收紧普通 Hydro/EHD 界面状态；M2 剩余职责及 M3--M7 整体未完成。} 本批独立 case、11 项直接检查及五条原输入共 78 步对照全部通过，见\href{validation/organization/QUANTUM_Modular_M3_Interface_Case_20260916.md}{独立界面算例记录}。数学模型、既有物理算法和原 App 字典语法未改变；新增 interface.dict 仅供独立 Interface 入口使用。
+
+模型依据为 \href{QUANTUM_Modular_Model_Blueprint.pdf}{模块化数学模型蓝图}第 4 节及第 5 节的离散守恒要求。这里重新依据当前代码安排实施，不沿用该 PDF 后半部分的类名、版本 3 字典和 W1--W6 排期。现行约束仍以\href{QUANTUM_Code_Organization_Standard.md}{代码组织规范}为准，实际输入仍以\href{QUANTUM_Dictionary_Reference.md}{字典参考}为准。
+
+\Needspace{12\baselineskip}
+\section{先明确要收紧成什么}
+
+目标不是消灭所有分支，也不是再搭一层“大框架”，而是让每个通用数学问题只有一个明确的负责模块：
+
+\begingroup\small
+\setlength{\LTpre}{5pt}\setlength{\LTpost}{7pt}
+\begin{longtable}{@{}P{\dimexpr0.24\textwidth-4.8pt\relax}P{\dimexpr0.39\textwidth-7.800000000000001pt\relax}P{\dimexpr0.37\textwidth-7.4pt\relax}@{}}
+\toprule
+\rowcolor{pale}
+\textbf{能力域} & \textbf{最终负责的问题} & \textbf{不应负责的事} \\
+\midrule\endfirsthead
+\toprule
+\rowcolor{pale}
+\textbf{能力域} & \textbf{最终负责的问题} & \textbf{不应负责的事} \\
+\midrule\endhead
+\midrule\multicolumn{3}{r}{\footnotesize 接下页}\\\endfoot
+\bottomrule\endlastfoot
+网格与几何 \code{Core} & 四叉树拓扑、固体切割/有效域、XY/RZ 度量、几何查询、网格调整及转移映射 & NS、电荷时间式、喷嘴物性、替各模块接受物理状态 \\
+\addlinespace[4pt]
+流体 \code{Modules/Hydrodynamics} & 不可压 NS、动量/压力边界、压力恢复、压力相容的受力离散、速度及其历史 & 推进电势或电荷、决定喷嘴工作流、管理自由液面主状态 \\
+\addlinespace[4pt]
+界面 \code{Modules/Interface}（状态首批已建） & 自由液面状态、输运、体积约束、材料轨迹、接触线条件及界面状态转移 & 第二套网格、第二份权威相界面、NS 或电荷方程 \\
+\addlinespace[4pt]
+电学 \code{Modules/Electricity} & 电势、体/面电荷、传导电流、两侧电场及 Maxwell 牵引 & 流体压力投影、重新输运液面、在 App 回调里补一套电荷求解器 \\
+\addlinespace[4pt]
+通用算子 \code{Solvers} & 稀疏线性代数、通用椭圆算子及求解控制 & 判定液体/气体、选择物理模型、读 App 配置 \\
+\addlinespace[4pt]
+粒子/碰撞 \code{Modules/Plasma} & 保留现有 PIC、粒子推进、沉积/插值、MCC 及其物理闭合 & 冒充液体电导模型、为接入喷嘴重写已工作的 PIC/MCC \\
+\addlinespace[4pt]
+命名 App & 选模块、绑定算例对象、控制主时钟和耦合顺序、协调接受状态、组合输出 & 装配 NS、电学跳跃条件、电荷时间方程或体积修正矩阵 \\
+\addlinespace[4pt]
+\end{longtable}
+\endgroup
+
+\textbf{电势与电荷属于同一电学能力域，内部再区分电势子问题和电荷演化。} 这样电荷迭代所需的电势---电流一致性有唯一负责者；不另建与 Electricity 平行的“电喷雾电荷模块”。Plasma 保留自己的载流粒子状态，向电学/通用椭圆服务提供有明确来源的电荷或极化系数。
+
+“独立运行”指由很薄的运行适配层给模块提供初态、边界和规定输入，再调用与耦合 App \textbf{同一个计算入口}；不是让数值模块自行读目录、建网格、开时间循环，也不是为每个模块再写一个独立求解器。
+
+\Needspace{6\baselineskip}\subsection{本次定型的模型范围}
+
+以二维 XY、无旋流轴对称 RZ、等温不可压 Newtonian 两相流、电准静态为第一版模型范围；覆盖单相退化、毛细流、理想介电、漏电介质表面充电及现有喷嘴的需要。通用接口可表达开放/闭合界面和多边界对象，但具体后端必须显式声明其已支持的组合。
+
+不把三维、可压缩、能量方程、湍流、相变、任意拓扑破裂、浮置导体、完整发射---空间电荷闭合列为结构定型的隐含承诺。未实现的物理能力返回明确“不支持”，不能靠默认值或名称暗示已经接通。
+
+\Needspace{6\baselineskip}\subsection{两条完成线，不能混称}
+
+\begin{itemize}
+\item \textbf{结构完成线：} 相同物理问题由同一模块负责，App 无重复数值实现；入口、状态、配置及构建依赖受约束。
+\item \textbf{物理完成线：} 原压差、寄生流、曲率、体积/电荷收支、时间/空间收敛和长时间喷射分别通过原验收要求。
+\end{itemize}
+
+纯结构批次不得夹带曲率修正、新时间格式、放大时间步或修改 AMR 规则。结构收紧会给后续数值修复提供唯一位置，但不自动解决物理误差。
+
+\Needspace{12\baselineskip}
+\section{当前分支：哪些保留，哪些归并，哪些退出}
+
+以下是 2026-09-15 对实际入口和消费者的核查，不是从旧蓝图照搬的“全部待做”。这是主干语义审计，尚非所有模板实例和历史 case 的穷举调用图；删除旧实现前必须补齐真实消费者。
+
+\begingroup\small
+\setlength{\LTpre}{5pt}\setlength{\LTpost}{7pt}
+\begin{longtable}{@{}P{\dimexpr0.15\textwidth-3.0pt\relax}P{\dimexpr0.45\textwidth-9.0pt\relax}P{\dimexpr0.4\textwidth-8.0pt\relax}@{}}
+\toprule
+\rowcolor{pale}
+\textbf{编号 / 范围} & \textbf{当前代码事实} & \textbf{收紧方向} \\
+\midrule\endfirsthead
+\toprule
+\rowcolor{pale}
+\textbf{编号 / 范围} & \textbf{当前代码事实} & \textbf{收紧方向} \\
+\midrule\endhead
+\midrule\multicolumn{3}{r}{\footnotesize 接下页}\\\endfoot
+\bottomrule\endlastfoot
+B01 输入 & M1 已完成：正式喷嘴直接消费材料、流体、电学、线性系统和运行控制；旧 reader 只在入口单向转换 & 保持一个设置一个拥有者；后续随模块服务迁移收窄公共契约，不恢复全物理配置中转 \\
+\addlinespace[4pt]
+B02 Hydro 运行 & M2c 已迁移：Hydro/EHD 各自主循环，共用 App 层无主循环的 \code{HydroCase}；受力/收支在 Hydro，文件序列化在 IO & 不恢复模块内 \code{runCoupled}；剩余界面状态/输运接线按 M3 迁移，旧综合输入按 M7 定型 \\
+\addlinespace[4pt]
+B03 Hydro 离散 & 完整域与拟合域已共用联合修正、动量残差、初始场/物性及载荷生成来源契约；预测/投影行策略与状态发布仍分开 & 继续收紧装配生命周期；可变界面/公开数组仍有契约限制。保留合法规则行、粗细行、边界行，不以共同入口代替整个 NS 已收口 \\
+\addlinespace[4pt]
+B04 界面表示 & \code{LevelSet}、平滑相指标、三次/双四次 Hermite、面元及显示点值并存 & 先区分各自语义和来源。每个状态只有一份权威自由液面，其他量为派生视图；不把显示值、平滑指标和相体积分数混用 \\
+\addlinespace[4pt]
+B05 界面流程 & 公共状态、完整钉扎端到轴线运动、体积修正、相通量及材料轨迹已归 Interface；App 只组合喷嘴编号/初始诊断并适配速度输入 & 正式规定速度独立入口与普通 Hydro/EHD 界面来源继续收紧；几何计算复用 Core，不把该 RZ 能力冒称任意拓扑输运 \\
+\addlinespace[4pt]
+B06 电学 & 旧顶点 \code{Electricity}、介电单元/锐界面求解、拟合域 P3 服务并存 & 自由度和边界能力不同，不能数组替换。统一电学问题与返回通量；旧实现按能力覆盖和消费者逐项退役 \\
+\addlinespace[4pt]
+B07 电学独立入口 & \code{ElectricityModule::run} 明确为 init-only，且可实例化 Hydro 算旧物性；其旧初始化模板仍直接用 Eigen SparseLU & 不能称为当前喷嘴电学的独立验证入口。改为调用正式电学服务和共享材料；新正式路径使用 SuperLU。旧模板保留与否按消费者核查，不静默切后端 \\
+\addlinespace[4pt]
+B08 电荷 & \code{SurfaceChargeField/Transport/Relaxation} 已在 Electricity；但喷嘴的场求解回调、两层历史组织、同迭代电极闭合仍在 \code{ElectrosprayConducting}；普通 EHD 另有接线 & 现有电荷内核不重写，把完整“给定新几何的电荷---电势子步”收归 Electricity；显式与旧欠松弛迭代为模块内时间策略 \\
+\addlinespace[4pt]
+B09 界面力 & 既有公共毛细/压力相容受力实现，又有 App 中的电学转换、载荷组合以及旧 \code{SharpInterface} Hydro 扩展 & Electricity 负责物理电牵引，Hydro 负责同压力相容的面载荷；Core 只提供几何。App 不计算第二份力公式 \\
+\addlinespace[4pt]
+B10 网格/AMR & 原 \code{QuadtreeMesh/Refiner}、Q4 转移、流场/电荷转移已接通；喷嘴 App 仍组织保护区、指标、候选和重绑定 & 复用已有 AMR，收紧指标提供者、转移所有者和联合提交边界；不是重建 AMR。无变化时复制前返回的优化必须保留 \\
+\addlinespace[4pt]
+B11 App 模式 & 喷嘴保留固定材料、固定界面毛细、固定界面 EHD、运动介电、导电耦合五种推进范围 & 固定/禁用部分过程是验证组合，不是五套 NS。逐步由运行组合表达，兼容名称只在入口解释 \\
+\addlinespace[4pt]
+B12 Runtime/Plasma & Runtime 装载气体、反应、碰撞等；PIC 模块的 \code{run} 仍是大驱动；\code{IModule} 只有 \code{run()} & 运行适配向 Apps 收拢，配置按选中的模块装载；PIC/MCC 数值和已用重启流程先保持，不强制换成喷嘴时层 \\
+\addlinespace[4pt]
+B13 线性系统/构建 & 旧共享 solver 选择与喷嘴五个具名系统并存；CMake 仍把物理模块源码直接编入主程序 & 配置按实际系统消费；各模块建立真实库依赖与独立链接检查，不能只靠 include 字符串扫描 \\
+\addlinespace[4pt]
+\end{longtable}
+\endgroup
+
+三类分支的处理规则：
+
+\begin{enumerate}
+\item \textbf{物理模型差异保留：} XY/RZ、理想介电/漏电介质、固定/运动界面、PIC 显式/隐式等；物理定义不能被“统一”抹掉。
+\item \textbf{数值策略收归模块：} 网格行模板、压力求解策略、几何表示阶次、电荷时间策略；明确适用域和输出语义，不再层层传播布尔开关。
+\item \textbf{兼容/重复路径收缩：} 旧 reader、全物理配置、init-only 替代入口、重复时钟、App 内通用计算。先接同一权威入口，再做同输入对照，最后按消费者清单退出。
+\end{enumerate}
+
+\Needspace{6\baselineskip}\subsection{已有成果不重复建设}
+
+原喷嘴已完成动态 AMR 后的短程继续求解；无开放边界专门加密带的公共粗细边界离散已接通；当前网格为液体最低三级、界面/壁面/轴/入口四级、远场一级。详见\href{validation/electrospray/QUANTUM_Electrospray_Mesh_Policy_20260914.md}{网格与边界记录}。
+
+本次结构迁移可用的较新短程来源是 \href{validation/electrospray/QUANTUM_Electrospray_XY_Series_20260915.md}{XY 输出批次}：原九份输入、10/10 步、退出 0、一次真实 AMR，保留完整场和逐步物理收支。它是\textbf{结构对照种子，不是成熟喷射证明}。隐式电荷、旧介电及普通 EHD 另保留各自原输入基线，不能拿十步显式喷嘴覆盖全部路径。
+
+运动后曲率误差、长时间喷射、完整发射闭合仍未验收；当前四级输入约 13.5 s/步的保存统计也未达到 1 s 目标。详见\href{QUANTUM_Hydro_EHD_Progress.md}{物理进度}。结构迁移保留这些失败/不足，不用新的目录布局覆盖它们。
+
+\clearpage
+\section{从数学模型推导模块边界}
+
+本节固定物理含义，不提前承诺具体 C++ 类名。公式采用 SI；实际求解可以继续使用原代码单位，但转换应集中、可追溯，并保持现有运算顺序。
+
+\Needspace{6\baselineskip}\subsection{共同约定与度量}
+
+液相为负相，气相为正相；水平集用 $\phi$，电势用 $\Phi$，体电荷用 $\rho_e$，面电荷密度用 $q_s$，电导率用 $\sigma$，表面张力用 $\gamma$。
+
+\begin{equation}
+\boldsymbol n=\frac{\nabla\phi}{|\nabla\phi|},\qquad
+[a]=a^+-a^-,\qquad \kappa=\nabla_s\cdot\boldsymbol n.
+\end{equation}
+
+法向由液体指向气体。XY 按单位厚度积分，RZ 使用完整回转测度 $dV=2\pi r\,dr\,dz$、$dS=2\pi r\,ds$；轴上采用正则极限。RZ 的散度、曲率和黏性环向项由各自算子实现，不用在 App 多乘一次 $2\pi r$ 或以小正数替代轴线。
+
+网格提供真实原生面、粗细覆盖和有效体积，满足内部面通量反对称、粗面面积等于子面面积之和。\textbf{固壁切割定义计算域，液气界面定义材料与跳跃条件}，二者不能合并成一套可随意移动的边界对象。
+
+\Needspace{6\baselineskip}\subsection{流体：一个 NS 问题，不同合法离散策略}
+
+\begin{equation}
+\nabla\cdot\boldsymbol u=0,\qquad
+\partial_t\rho+\nabla\cdot(\rho\boldsymbol u)=0,
+\end{equation}
+
+\begin{equation}
+\begin{aligned}
+\partial_t(\rho\boldsymbol u)+\nabla\cdot(\rho\boldsymbol u\otimes\boldsymbol u)
+&=\nabla\cdot\boldsymbol T_H+\rho\boldsymbol g+\boldsymbol f_b,\\
+\boldsymbol T_H&=-p\boldsymbol I+2\mu\boldsymbol D.
+\end{aligned}
+\end{equation}
+
+模块接收域、材料、边界、冻结时层的外载荷和必要历史，返回速度、物理压力、通量和真实方程残差。45.2 Pa 供液是通用压力储库边界的数据，不是喷嘴专用 NS 分支；开放边界须明确回流物性和动量闭合。
+
+共同离散问题为
+
+\begin{equation}
+\begin{gathered}
+A U+C p=b,\qquad B U=b_{\partial},\\
+R_m=A U+C p-b,\qquad R_v=B U-b_{\partial}.
+\end{gathered}
+\end{equation}
+
+$B$ 是积分散度，$C$ 是同一度量下的压力载荷。当前 CN/AB2、增量投影和联合动量修正继续复用；投影不是另一种物理模型。完整域/拟合域不同的矩阵模板可以保留，但不应永久各自管理材料、压力含义、历史和残差定义。
+
+变密度时质量通量与动量通量的离散一致性必须审查；\textbf{从现有非守恒写法改为另一种守恒装配属于数值批次}，不得伪装成接口整理。压力是状态，不是仅供画图的后处理恢复值，也不能拿解析 Laplace 压差替换计算结果。
+
+\Needspace{6\baselineskip}\subsection{界面：几何、运动与体积约束有同一个状态来源}
+
+\begin{equation}
+\begin{gathered}
+\partial_t\phi+\boldsymbol v_\Gamma\cdot\nabla\phi=0,\qquad
+V_i^- = \int_{\Omega_i}\mathbf1_{\phi<0}\,dV,\\
+\frac{dV_i^-}{dt}+\sum_{f\subset\partial\Omega_i}F^-_{if}=0.
+\end{gathered}
+\end{equation}
+
+无相变时 $\boldsymbol v_\Gamma=\boldsymbol u_\Gamma$。Interface 接收有明确时层的速度采样/面通量和边界约束，产生最终液面、同一几何的体积及相通量、旧到新的材料映射。局部体积修正作用于这份液面，不能另存一份独立 VOF 来掩盖不守恒。
+
+Core 保留距离初始化、Hermite 多项式、求根、法曲率、积分等可复用原语；Interface 拥有物理输运顺序、约束自由度和接受后的液面状态。运输后的 $\phi$ 不必始终是精确距离；显示点值、$\alpha^-=V^-/V$、数值平滑相指标分别命名，不能互相覆盖。
+
+一般“固定接触位置”条件归 Interface，喷嘴 App 只绑定唇缘点；固定位置不意味着固定接触角。当前“一条喷唇到轴线的链”是后端能力限制，不进入通用状态定义。破裂/合并未支持时明确失败，不自动拆分并重置电荷。
+
+\Needspace{6\baselineskip}\subsection{电学：电势、面电荷及传导电流必须闭合}
+
+\begin{equation}
+\boldsymbol E=-\nabla\Phi,\quad \boldsymbol D_e=\epsilon\boldsymbol E,
+\quad -\nabla\cdot(\epsilon\nabla\Phi)=\rho_e,
+\end{equation}
+
+\begin{equation}
+[\Phi]=0,\quad [\boldsymbol E_t]=0,\quad [\boldsymbol D_e]\cdot\boldsymbol n=q_s,
+\qquad \boldsymbol J_c=\sigma\boldsymbol E.
+\end{equation}
+
+如启用体电荷演化，其模型为 $\partial_t\rho_e+\nabla\cdot(\rho_e\boldsymbol u+\boldsymbol J_c)=S_v$。当前漏电介质主线的相内自由体电荷为零，表面电荷演化；理想介电 $\sigma=0$ 且无初始/外加自由电荷时不推进电荷，但仍有极化力。体电荷能力按实际后端开放，不因写出方程就宣称已支持。
+
+对随液面运动的材料面元：
+
+\begin{equation}
+\begin{aligned}
+Q_a&=\int_{\Sigma_a(t)}q_s\,dS,\\
+\frac{dQ_a}{dt}&=\int_{\Sigma_a}(-[\boldsymbol J_c]\cdot\boldsymbol n-j_{\rm emit}+s_\Gamma)\,dS
+-\oint_{\partial\Sigma_a}\boldsymbol j_s\cdot\boldsymbol m\,dl.
+\end{aligned}
+\end{equation}
+
+积分电荷 $Q_a$ 及其两层历史归 Electricity；面元密度由实际面积恢复。材料映射已计入伸缩时，不再重复添加密度膨胀或另一次对流。界面电荷使用跳跃条件或一致的体源表示，不能双计。
+
+复用 \code{SurfaceChargeRelaxation} 的首步 BE、后续两层时间系数及旧欠松弛；电学模块内部负责每次迭代真实求场、两侧传导电流、最终电荷---电场同迭代一致性，以及电极电流闭合。显式路径保留为已有策略/对照；结构批次不撤销当前 $\Delta t\max(\sigma/\epsilon)\le0.25$ 限制。
+
+电势边界与电荷流入/流出边界分开；全 Neumann 的兼容条件和规范自由度归电学/椭圆服务，不让 App 临时钉一个喷嘴单元。隐式 PIC 的极化系数由 Plasma 提供给通用椭圆算子，不改名当成液体介电常数。
+
+\Needspace{6\baselineskip}\subsection{力的归属：物理牵引与离散加载分开}
+
+\begin{equation}
+\begin{gathered}
+\boldsymbol T_E=\epsilon(\boldsymbol E\boldsymbol E^T-\tfrac12|\boldsymbol E|^2\boldsymbol I),\\
+[\boldsymbol T_H+\boldsymbol T_E]\boldsymbol n=\gamma\kappa\boldsymbol n-\nabla_s\gamma.
+\end{gathered}
+\end{equation}
+
+对应流体界面载荷为 $(-\gamma\kappa\boldsymbol n+\nabla_s\gamma+[\boldsymbol T_E]\boldsymbol n)\delta_\Gamma$。Electricity 返回两侧电场与物理牵引，Interface/Core 返回同一几何的法向/曲率/积分点，Hydro 用压力相容的面/对偶体度量加载毛细力和电力。
+
+切向电牵引为 $q_s\boldsymbol E_t$，不能把导电界面仍当作只有法向极化力。已有各后端的单位转换和力符号先做显式适配对照；不在结构批次切换锐界面/平滑力模型。体电力与界面 Maxwell 力采用一致分解，避免与全应力散度重复计数。
+
+常曲率静滴的离散平衡和实际曲率误差是不同验收项；接口统一不能掩盖后者。变表面张力的表达保留，实际未支持的 Marangoni 能力明确拒绝。
+
+\Needspace{6\baselineskip}\subsection{AMR 与发射的扩展边界}
+
+AMR 是同一物理时刻的联合状态变换，不是推进一步时间：
+
+\begin{equation}
+(\mathcal M,\phi,U,p,Q,\text{histories})^n
+\longrightarrow(\mathcal M',\phi',U',p',Q',\text{histories}')^n.
+\end{equation}
+
+Core 决定拓扑与映射；Interface、Hydro、Electricity、Plasma 各自转移所拥有的状态并检查其守恒/约束；App 协调全部成功后提交。电场重求、速度散度恢复和历史重绑定沿用现有方法，不靠笼统插值完成。
+
+发射是喷嘴特有扩展，不混入电场或 NS 通用核。未来发射服务提供带符号电流、质量通量和粒子生成事件；界面失去的电荷必须等于接收方获得的电荷。当前电极传导电流不等于发射电流；完整发射模型另列物理任务，不作为“结构完成”的虚假前提或结论。
+
+\Needspace{12\baselineskip}
+\section{公共接口先定数据契约，再定类名}
+
+以下是拟议的\textbf{最小交换内容}，不是现有头文件声明。优先将已有数据结构适配成只读视图；不先造包含所有模块字段的巨型 Context，不把每次查询都变成虚函数，也不复制整场来换一个类型名。
+
+\begingroup\small
+\setlength{\LTpre}{5pt}\setlength{\LTpost}{7pt}
+\begin{longtable}{@{}P{\dimexpr0.2\textwidth-4.0pt\relax}P{\dimexpr0.25\textwidth-5.0pt\relax}P{\dimexpr0.55\textwidth-11.0pt\relax}@{}}
+\toprule
+\rowcolor{pale}
+\textbf{交换内容} & \textbf{写入/产生者} & \textbf{消费者及必带信息} \\
+\midrule\endfirsthead
+\toprule
+\rowcolor{pale}
+\textbf{交换内容} & \textbf{写入/产生者} & \textbf{消费者及必带信息} \\
+\midrule\endhead
+\midrule\multicolumn{3}{r}{\footnotesize 接下页}\\\endfoot
+\bottomrule\endlastfoot
+域与网格视图 & Core 网格/几何服务 & 全模块：原生单元/面 ID、活动域、体积/面积/对偶量、坐标制、边界几何 ID、粗细覆盖、网格版本；物理 BC 不塞进 Core \\
+\addlinespace[4pt]
+材料表与只读材料视图 & Core 材料值对象及统一绑定 & Hydro/Electricity：相 ID、SI 值、转换尺度和界面版本；面密度/黏度/介电平均规则仍由各自离散负责 \\
+\addlinespace[4pt]
+界面几何视图 & Interface 发布，Core 计算几何 & Hydro/Electricity/AMR：相对、取向、组件/面元 ID、积分点、法向、曲率、来源标识；不能仅传一组失去来源的点 \\
+\addlinespace[4pt]
+流体单步输入/结果 & Hydro & 输入材料、载荷、边界、$\Delta t$ 和历史；输出 $U,p$、体积流率、速度采样及动量/连续性残差；区分压力增量与物理压力 \\
+\addlinespace[4pt]
+相输运与材料映射 & Interface，使用 Hydro 的速度/通量 & Electricity 使用轨迹搬运积分电荷；Hydro/IO 使用同源体积分数和收支；注明起止时刻、速度版本、最终体积修正几何 \\
+\addlinespace[4pt]
+电学单步输入/结果 & Electricity & 输入旧电荷历史、新几何/材料映射和电学边界；输出同一次接受迭代的 $Q,\Phi,E^\pm$、电流、牵引及 Gauss/充电残差 \\
+\addlinespace[4pt]
+界面/体载荷 & Electricity 或其他明确的物理提供者 & Hydro：明确是应力、积分力还是力密度，施加位置、法向约定、时间层及单位；不得把同一来源作为两种表示重复相加 \\
+\addlinespace[4pt]
+AMR 请求/转移结果 & 各模块提供指标/约束；Core 提供网格候选 & App 协调；各状态带新旧身份、历史对应与接受报告，无拓扑变化不复制和重建 \\
+\addlinespace[4pt]
+\end{longtable}
+\endgroup
+
+\Needspace{6\baselineskip}\subsection{公共接口的硬条件}
+
+\begin{enumerate}
+\item \textbf{位置与单位：} 原生面速度、面体积流率、质量流率、传导电流分别表达，不能都叫 \code{flux}。单元/顶点电势不能用同一个数组契约混装；SI/代码单位转换必须有尺度来源。
+\item \textbf{身份与时层：} 至少能验证网格版本、界面版本、物理时间/阶段，以及需要的历史有效性；不匹配明确失败。无需在结构首批引入通用分布式版本系统。
+\item \textbf{所有权：} App 可以拥有模块对象的生命周期，但不直接改它的物理字段或历史数组。缓存归计算所有者；场查询只读，借用及材料轨迹回调不得越过有效期。
+\item \textbf{失败：} 单模块报告说明是否改动状态、失败阶段和能否继续。当前旧 Hydro 失败可能已改字段，因此迁移初期继续“失败即停”，不能承诺无成本回滚或自动减步重试。
+\item \textbf{接受：} 最终由 App 确认完整物理步；电荷内迭代只接受电学候选，AMR 只接受同一时刻的状态变换。把“模块子步成功”和“耦合步接受”明确分开。
+\item \textbf{性能：} 不为了候选接口每步深拷贝全部网格/场。保留已有 prepare/commit、缓存复用和复制前判断；每批检查新增复制、重复几何查询及矩阵重装配。
+\item \textbf{依赖：} 公共接口不含 \code{Electrospray*Config}、输出路径、任意字符串参数袋或运行层对象。求解器细节与后端模板尽量留在模块内部；模块内部可以复用现有 Eigen/SuperLU 实现。
+\end{enumerate}
+
+\Needspace{6\baselineskip}\subsection{当前喷嘴时序必须先原样保留}
+
+\begin{quote}\small\raggedright
+已接受时刻 n\par\smallskip
+\(\rightarrow\) 到期时检查 AMR；确有变化才准备、校验、联合提交同一时刻的新网格状态\par\smallskip
+\(\rightarrow\) Hydro：使用现有材料、历史和载荷完成原 NS 单步\par\smallskip
+\(\rightarrow\) Interface：原速度时间取样下输运 \(\rightarrow\) 原局部体积修正 \(\rightarrow\) 最终几何/相通量/材料映射\par\smallskip
+\(\rightarrow\) Electricity：搬运电荷历史 \(\rightarrow\) 原显式更新或欠松弛迭代 \(\rightarrow\) 一致电场/电流\par\smallskip
+\(\rightarrow\) Hydro 载荷接口：在最终几何上准备毛细力与 Maxwell 载荷\par\smallskip
+\(\rightarrow\) 跨模块收支检查 \(\rightarrow\) 接受 n+1 \(\rightarrow\) 按原规则输出\par\smallskip
+\end{quote}
+
+新载荷仍供下一次 NS 使用，不在本计划中改成半时层、预测补偿或全隐式流电联立。迁移前后须把旧函数实际的提交位置、观察回调位置逐项对齐；上图是责任分工，不宣称旧代码已经具备整步失败回滚。
+
+\Needspace{12\baselineskip}
+\section{字典：先收紧消费者，最后发布语法}
+
+\textbf{不要先发明版本 3，再让代码追着字典补实现。} 前几批保持正式 Electrospray 的九份字典、参数、默认值及输出行为不变，先做到每个设置到唯一消费者。后续需要移动键时另批发布、有迁移对照，不默默改变含义。
+
+\begingroup\small
+\setlength{\LTpre}{5pt}\setlength{\LTpost}{7pt}
+\begin{longtable}{@{}P{\dimexpr0.23\textwidth-4.6000000000000005pt\relax}P{\dimexpr0.31\textwidth-6.2pt\relax}P{\dimexpr0.46\textwidth-9.200000000000001pt\relax}@{}}
+\toprule
+\rowcolor{pale}
+\textbf{文件/职责} & \textbf{目前支持及混合处} & \textbf{目标归属与迁移约束} \\
+\midrule\endfirsthead
+\toprule
+\rowcolor{pale}
+\textbf{文件/职责} & \textbf{目前支持及混合处} & \textbf{目标归属与迁移约束} \\
+\midrule\endhead
+\midrule\multicolumn{3}{r}{\footnotesize 接下页}\\\endfoot
+\bottomrule\endlastfoot
+\code{geometry.dict} & 公共几何/相/边界定义 & 保持公共格式、几何编号及弧参数；静态几何不藏求解器参数 \\
+\addlinespace[4pt]
+\code{mesh.dict} & 现有初始/动态细化、相区及物理指标策略 & 网格范围、频率、等级、平滑/保护策略只在此定义；指标值由相应模块计算，必要支撑约束不是用户可关闭的物理容差 \\
+\addlinespace[4pt]
+\code{materials.dict} & 新版已有共享 SI 相物性、相间表面张力 & 作为唯一材料事实来源；不再在 App/电学中复制液体密度、黏度和表面张力 \\
+\addlinespace[4pt]
+\code{hydro.dict} & 新版流体模型/边界/数值门限，也带 Interface 输运/接触线设置 & NS、流体初态、速度/压力边界、流体守恒门限归 Hydro；现有 Interface 键先在读入边界映射到 Interface 配置，文件暂不移动 \\
+\addlinespace[4pt]
+界面专有输入（拟议） & \textbf{当前没有在此计划下新增 \code{interface.dict} 支持} & Interface 实际独立运行后再发布独立文件/块：界面身份、输运、重初始化策略、接触线、体积约束及其数值控制；不混入时间/电荷设置 \\
+\addlinespace[4pt]
+\code{electricity.dict} & 新版电模型/边界/电荷时间策略/电学门限；旧模式有全物理块 & 正式 Electricity 消费电势、体/面电荷和电学 BC；旧全物理块只做兼容输入，不能继续添加功能 \\
+\addlinespace[4pt]
+\code{solvers.dict} & 新版五个具名系统；其他 App 仍用历史配置 & 只放线性系统后端及线性收敛参数；物理收支门限归模块。系统名称到实际装配/求解位置一一可查 \\
+\addlinespace[4pt]
+\code{run.dict} & 新版 Time/Output/Log 及喷嘴耦合控制；其他运行器仍有独立时间设置 & 一个主时钟和统一输出规则；App 只选模块组合/耦合调度。其他 App 逐条迁移，不批量改版本号 \\
+\addlinespace[4pt]
+\code{units.dict} / \code{normalization.dict} & 现有单位及 RZ 体积闭合 & 集中明确机械、电学和粒子尺度；区分流体密度与参考电荷密度。保留现有基线的换算数值 \\
+\addlinespace[4pt]
+PIC/MCC 等专有字典 & 当前有效输入及 Runtime 装载 & 物理 reader/config 归 Plasma，通用单位仍复用；不套用两液相材料表，不在喷嘴重写碰撞设置 \\
+\addlinespace[4pt]
+\end{longtable}
+\endgroup
+
+正式新入口的数据流目标：
+
+\begin{quote}\small\raggedright
+各拥有者的 reader \(\rightarrow\) 各自类型化配置 \(\rightarrow\) App 只做几何/相/边界身份绑定 \(\rightarrow\) 各模块参数\par\smallskip
+旧输入 reader    \(\rightarrow\) 同一组类型化配置（单向兼容）\par\smallskip
+\end{quote}
+
+禁止“新配置 \(\rightarrow\) 旧全物理配置 \(\rightarrow\) 再拆回模块参数”的往返。App 持有数个模块配置的组合不等于大配置：组合中不能重新展开、复制并维护这些物性/容限成员。
+
+每个正式键都应可追到“解析位置 \(\rightarrow\) 类型成员 \(\rightarrow\) 几何/单位绑定 \(\rightarrow\) 实际计算消费者”；不支持的组合、未知键、重复定义和无人消费的选项明确诊断。诊断保留当前生效配置报告，不额外输出一套内容相同的文件。
+
+\Needspace{12\baselineskip}
+\section{分批执行：每批都关闭一项真实职责缺口}
+
+不按日历承诺大重构工期。以下是按依赖排序的工作包，每个子批都可单独构建、对照和交付；“正在包一层接口”不能报告成对应模块已经定型。
+
+\begingroup\small
+\setlength{\LTpre}{5pt}\setlength{\LTpost}{7pt}
+\begin{longtable}{@{}P{\dimexpr0.22\textwidth-4.4pt\relax}P{\dimexpr0.37\textwidth-7.4pt\relax}P{\dimexpr0.41\textwidth-8.2pt\relax}@{}}
+\toprule
+\rowcolor{pale}
+\textbf{批次} & \textbf{交付结果} & \textbf{关闭条件} \\
+\midrule\endfirsthead
+\toprule
+\rowcolor{pale}
+\textbf{批次} & \textbf{交付结果} & \textbf{关闭条件} \\
+\midrule\endhead
+\midrule\multicolumn{3}{r}{\footnotesize 接下页}\\\endfoot
+\bottomrule\endlastfoot
+M0 模型与现状（本轮） & 本计划、分支分类、责任/状态/字典契约 & 主干核查完成；实施前再补本批真实调用者和基线身份。不是全项目已完成穷举审计 \\
+\addlinespace[4pt]
+M1 配置真实分属 & 正式喷嘴不再经过旧全物理配置；旧 reader 单向适配 & 同一设置一个拥有者、相同输入有效值不变，实际计算消费可查 \\
+\addlinespace[4pt]
+M2 Hydro 收口 & 独立运行与喷嘴共用流体单步服务；公共方程/残差与装配生命周期收敛 & App 不直接调用动量/投影内部阶段；完整域/拟合域不再长期各自维护整套物理状态语义 \\
+\addlinespace[4pt]
+M3 Interface 成为独立模块 & 通用液面状态、输运、体积约束及材料映射离开喷嘴 App & 规定速度的独立界面 case 与喷嘴调用同一个服务；无 Hydro/电荷算法反向依赖 \\
+\addlinespace[4pt]
+M4 Electricity 收口 & 同一服务完成电势---电荷子步及物理电牵引；独立入口真正求解 & App 不写电荷方程、迭代或 P3 回调闭合；不需实例化 Hydro 初始化物性 \\
+\addlinespace[4pt]
+M5 AMR 职责收口 & 公共网格请求 + 模块各自转移 + App 联合提交 & 真实 AMR、无变化 AMR、拒绝候选均有明确状态保证；不丢历史，不恢复重复复制 \\
+\addlinespace[4pt]
+M6 全项目运行/构建边界 & 单模块驱动、EHD、喷嘴、PIC 适配只调模块；每域可独立链接 & 数值模块无 Runtime/App 反向依赖；例外逐项清零，公共服务不破坏 PIC/MCC/重启 \\
+\addlinespace[4pt]
+M7 字典与规范定型 & 统一正式用户入口、模块专有算例、退役清单、更新唯一规范 & 新旧输入等价、旧分支无未迁消费者才删除；计划设计不冒充已实现能力 \\
+\addlinespace[4pt]
+\end{longtable}
+\endgroup
+
+\Needspace{6\baselineskip}\stage{M1：先截断“大配置”向后传播}
+
+\textbf{M1 已完成。} M1b 已使电场、运动物性、界面、受力、电荷、AMR、时序与场输出直接使用模块类型或所需参数，并移除正式路径的新配置回装旧结构。旧 reader 与旧配置报告保留在输入边界；三条原输入完整对照通过，见 \href{validation/organization/QUANTUM_Modular_M1b_20260915.md}{M1b 记录}。数值算法的模块归属仍按 M2--M7 继续收紧。
+
+已按两个子批实施；以下保留各批的职责边界：
+
+\begin{itemize}
+\item \textbf{M1a（已完成）：} 保留 \code{readMaterialTable/readFittedFlowCase/readFittedElectricCase/readDirectLinearSystems/readRunControls} 的结果为各自类型，不立即压回旧结构；先迁移版本化检查、来源报告和一个完整物性/边界绑定链。M1a 阶段未迁移调用的临时转换已在 M1b 退出，原中间状态保留于阶段记录。
+\item \textbf{M1b（已完成）：} 逐个迁移 Setup、Coupling 和 IO 的参数，正式时间循环不再持有 \code{ElectrosprayPhysicalConfig}；旧输入在入口单向转换后调用相同服务。保留原 SI 换算顺序、默认、字段来源和输出列。
+\end{itemize}
+
+首批不新建字典、不改变 \code{physicsMode} 的既有含义、不改后端或时间步。消费者核查至少覆盖 \code{ElectrosprayVersionedInput}、\code{ElectrosprayMaterials/HydroDomain/Electrostatics}、毛细/导电接线和有效配置报告。
+
+\textbf{M1 验收：} 版本化输入/CLI/实际数值控制检查；原新版显式与隐式配置有效值对照；受影响正式喷嘴十步完整对照。若兼容或介电调用被改动，追加该路径原短程，不重复展开全物理矩阵。交付清楚写出仍剩几个旧配置消费者，不能只统计移动了多少文件。
+
+\Needspace{6\baselineskip}\stage{M2：先把流体单步独立出来，再实质合并装配}
+
+\textbf{公共连续性诊断已接入。} 完整域原生半面诊断、拟合域 NS/AMR 的通量与尺度、初始投影的原范数共用 \code{HydroContinuityBalance}；每次速度修正后重新评价，同一候选复用一致的通量。保留原三种判定方式和修正次数，不用商与容限的比较替换临界处可能不同的流量不等式。直接检查及原输入对照状态见\href{validation/organization/QUANTUM_Modular_M2b_Continuity_20260916.md}{连续性记录}。
+
+\textbf{载荷生成来源已接入公共单步。} 固定/时变来源与原生载荷一同传递，NS 检查网格身份、实际源时刻及可用的不可变液面；喷嘴 AMR 重建新载荷但不推进来源时间。21 项直接检查与 13 条原输入、398 步完整数值对照均通过，见\href{validation/organization/QUANTUM_Modular_M2b_Load_Source_20260916.md}{载荷来源记录}。这不是全部界面状态统一或完整装配生命周期归并；连续性已按较新批次收紧，预测/投影策略及状态发布继续审查，不另建分解缓存。
+
+\textbf{初始场和物性更新已归 Hydro。} \code{initializeState} 统一初始压力、速度及历史发布；\code{updateMaterials} 复用原物性内核并记录来源时间。公共 \code{advance} 不再允许漏初始化或无物性记录，AMR 保留并检查这些信息。运行适配只提供初值与材料，不直接设置其历史；接口与原输入对照见\href{validation/organization/QUANTUM_Modular_M2b_Initialization_20260916.md}{初始化记录}。材料更新序号不是完整界面版本，公开场尚未全面私有化。
+
+\textbf{共同联合修正和动量残差已接入。} \code{HydroCoupledBalance} 统一块装配、明确的压力基准行及原完整动量范数；原完整域逐面策略和拟合域稀疏 \code{C,D} 都调用同一服务，拟合域原独立联合装配已退出。保持各自载荷表达式求值、压力边界和验收门限；构建、直接检查及原输入对照见\href{validation/organization/QUANTUM_Modular_M2b_Balance_20260915.md}{装配记录}。后续连续性及运行迁移见本节较新记录；预测/投影行策略与状态发布仍须按能力分别审查。
+
+\textbf{当前 M2b 几何首批已实施。} 活动叶域、原生面几何和 XY/RZ 度量归 Core 的 \code{NativeLeafDomain}；流体域直接组合它，物理边界、速度自由度、对偶体积和压力矩阵仍在 Hydro。新 Core 服务可在不创建 Hydro 的条件下独立检查；六组原生几何/矩阵逐字节一致。原喷嘴复测和剩余装配工作见\href{validation/organization/QUANTUM_Modular_M2b_Geometry_20260915.md}{几何职责记录}。不把这一批几何迁移标为 M2b 装配全部完成。
+
+\textbf{M2a 首批已接通。} 两个生产驱动共用 \code{Hydrodynamics::advance}；步号/源载荷时刻、明确失败状态及只读场视图归 Hydro，拟合域材料赋值移出 App，原精确网格身份抽到 Core，AMR 保留子步身份。验收进度见 \href{validation/organization/QUANTUM_Modular_M2a_20260915.md}{M2a 记录}。旧字段消费者和原两套装配仍在，不能标记 M2 整体完成。
+
+\textbf{入口与取场边界已继续收紧。} 新旧入口对象级互斥、失败后禁止换入口和 AMR 约束保留已实现；喷嘴时间循环、网格接线及输出不再直接读取 Hydro 原始场，改用模块的只读视图、当前/历史速度快照和原生相流量查询。直接检查及同输入复测见\href{validation/organization/QUANTUM_Modular_M2a_State_20260915.md}{补充记录}。M2c 已退出旧模块运行器；均匀域算例接线/输出与回归仍有公开字段消费者，M2b 其余装配和载荷身份未完成。
+
+\begin{itemize}
+\item \textbf{M2a，单步边界：} 复用 \code{Hydrodynamics} 已有字段/历史和 \code{HydroSolveReport}，建立不依赖 \code{RunConfig/IModule} 的公共单步入口；接管材料、外载荷、边界、时间历史和残差。为完整域/拟合域提供明确的几何能力适配，不复制 NS。旧运行器暂调用适配入口；此阶段明确标为“入口统一，内核尚未收敛”。
+\item \textbf{M2b，公共度量与装配：} 从 \code{HydroFittedDomain} 等抽出确实无流体物理含义的有效域/面度量到 Core；压力口、无滑移、回流闭合留在 Hydro。统一 $A,B,C$ 的残差解释、历史生命周期和加载接口，逐段复用规则行/粗细行/边界行，不在 App 检查模板细节。
+\item \textbf{M2c，独立运行复用（完整均匀域适配已完成）：} Hydro/EHD 读文件、主循环与输出调度已归 App，原通用受力/收支归 Hydro、序列化归 IO；喷嘴和标准 Hydro case 继续调用共同数值单步。九条原输入覆盖 XY/RZ、压力口/规定标量边界、固定/运动带电界面及原喷嘴 AMR，见\href{validation/organization/QUANTUM_Modular_M2c_Runtime_20260916.md}{运行迁移记录}。界面单步、公开取场、完整电荷子步及最终字典尚待各自工作包，不用本批通过覆盖这些职责。
+\end{itemize}
+
+完整域与拟合域需要改变算式才能统一的部分单列“数值等价待证”；先保留适配与原对照，禁止为了删除旧路径降低边界/压力精度。真正退出某套装配前，须证明其所承载的合法能力已有公共实现。
+
+\textbf{M2 验收：} 对照被改动的原动量行/压力行与完整方程残差，再跑闭域/压力口/粗细网格中实际受影响的检查及原喷嘴。无电荷 case 不需要创建 Electricity。
+
+\Needspace{6\baselineskip}\stage{M3：把运动界面从喷嘴中完整抽出来}
+
+\textbf{独立规定输入入口已接入。} \code{Interface} App 与喷嘴调用同一完整运动服务，标准 \code{interface_prescribed_cap_rz} 已实际完成 10 步；不链接 Hydro/Electricity 的同一 App 也得到相同全部输出。初值/规定速度输入归模块，固定域几何复用从旧喷嘴移出的 Core 服务；11 项直接检查通过，原输入复测状态及能力限制见\href{validation/organization/QUANTUM_Modular_M3_Interface_Case_20260916.md}{独立界面算例记录}。\code{interface.dict} 当前只供此独立入口使用，不自动迁移其他 App。下一段为普通 Hydro/EHD 界面状态与完整来源契约，M3 整体尚未完成。
+
+\textbf{M3b 完整运动服务已归 Interface。} 支撑带、湿壁接触约束、原特征线/重构、修正自由度、最终状态和材料轨迹都由同一个模块入口负责；喷嘴只适配已有速度并保留几何编号。无 Hydro/App 的规定无散速度检查完成真实运动和一次 SuperLU 非线性修正，直接检查共 17 项通过；原输入对照、生命周期和能力范围见\href{validation/organization/QUANTUM_Modular_M3b_Interface_Motion_20260916.md}{完整运动记录}。正式独立 case 已由上述新批补齐；普通 Hydro/EHD 状态、完整来源契约仍待收紧；下列早期批次中的“运动准备待迁移”已由本条接续，不表示 M3 整体完成。
+
+\textbf{M3c 相通量及完整修正已归 Interface，并完成原样复测。} \code{InterfacePhaseFlux/InterfaceVolumeCorrection} 通过公共叶域、界面边界和冻结法向通量输入运行，Hydro 只适配原速度重构；独立 SuperLU 非线性检查、16 项相关检查及五条原输入共 78 步对照通过。输入生命周期及尚未迁移的完整运动准备见\href{validation/organization/QUANTUM_Modular_M3c_Interface_Transport_20260916.md}{相通量与修正记录}。Interface 库现依赖 Core 与公共线性代数，不依赖 Hydro、电学或 App。
+
+\textbf{相体积依赖已切开。} 原生半面切分、固定边界积分、局部体积及独立数据灵敏度已归 Interface，只消费 Core 公共域；独立测度检查及当批原输入对照通过，见\href{validation/organization/QUANTUM_Modular_M3b_Interface_Measure_20260916.md}{界面相体积记录}。相通量及完整修正已按上述 M3c 继续迁移，App 运动准备仍待收紧；不能把静态测度独立运行当作整个受约束输运已独立。
+
+\textbf{M3a 状态首批已接入。} 自由液面标量、活动掩膜、钉扎坐标、几何/面元及模板缓存归 \code{InterfaceState}；App 组合这一份状态，只另存喷嘴编号和初始接触诊断。来源对由公共接口保留，毛细接线直接消费模块状态；状态本身不依赖 Hydro 或电学。首批独立链接及原输入对照见\href{validation/organization/QUANTUM_Modular_M3a_Interface_State_20260916.md}{界面状态记录}。完整运动及普通 Hydro/EHD 界面状态接线未完成，M2 可写字段/状态发布也仍需收紧。
+
+\begin{itemize}
+\item \textbf{M3a，状态：} 拆出通用 scalar/面元/掩膜/版本/缓存与喷嘴的几何 ID 绑定；Core 的几何快照仍是同一份来源。固定壁和自由液面不互相覆盖。
+\item \textbf{M3b，运动：} 将 App 中通用的输运准备、约束自由度选择和结果构建移交 Interface；原 \code{ActiveLevelSetTransport} 的几何原语继续复用，物理时间规则由 Interface 负责。喷嘴 App 只传端点/边界约束和所需速度时层。
+\item \textbf{M3c，体积与相通量：} 复用现有 \code{HydroFittedVolumeCorrection*} 的线性/非线性方法，在明确公共度量、速度采样和相输运契约后移交其界面职责；纯面通量几何积分可留 Core，NS 速度重构留 Hydro。先不修改双四次修正自由度、正则化或曲率。
+\end{itemize}
+
+规定速度独立算例不必实例化 Hydro；耦合时使用 Hydro 的真实速度和通量。Electricity 只消费最终材料映射，不能再运行第二次液面输运。
+
+\textbf{M3 验收：} 原原生三次/双四次输运、体积修正、材料电荷重映射检查；一个既有规定运动参考的独立运行入口；原喷嘴同输入。已知运动曲率超限照实保留，并明确属于后续 Interface 数值修复。
+
+\Needspace{6\baselineskip}\stage{M4：把电荷---电场子步变成真正的模块服务}
+
+\begin{itemize}
+\item \textbf{M4a，电势问题：} 收束 \code{DielectricElectrostatics/Sharp/FittedSharp} 的输入、结果和能力检查；以现有 Poisson/P3 实现为内核。Geometry/电极绑定归输入适配，App 不装配跳跃或改电流值。
+\item \textbf{M4b，电荷阶段：} 将 \code{ElectrosprayConducting} 中通用的历史映射组织、场求解回调、旧欠松弛调用与最终电极闭合移入 Electricity；普通 EHD 的同类工作也经此服务。显式、BE/BDF 历史有效性及原限制保留，不自行改用全联立算法。
+\item \textbf{M4c，牵引与独立运行：} Electricity 提供同迭代两侧场/电牵引，Hydro 使用统一加载器。独立 Electricity 入口使用正式服务，给定固定或规定运动界面即可计算，不再为读物性创建 Hydro。
+\end{itemize}
+
+旧顶点电学的初始化、迭代、粒子发射混合实现按消费者拆账；保留有用算法来源，不能继续作为默认“独立电学已验证”的入口。对其 SparseLU 调用单列整改/退役对照，不允许在正式服务静默回退。
+
+\textbf{M4 验收：} 现有介电解析参考、充电衰减/传导电流、材料电荷重映射和欠松弛历史检查中被触及的项目；最终场与接受电荷同迭代；原导电/介电/EHD 受影响短程。同一电荷源不在体项和跳跃项重复计数。
+
+\Needspace{6\baselineskip}\stage{M5：收紧已有 AMR，不再实现一遍}
+
+\begin{itemize}
+\item 模块返回速度/梯度、界面分辨率、电学等实际指标及必要支撑保护；网格服务复用 \code{QuadtreeMeshRefiner} 合成目标并用 \code{mayAdaptToTargets} 先判断。
+\item 各模块以显式“旧\(\rightarrow\)新网格映射”转移状态。复用 \code{ActiveQuarticHermiteTransfer}、\code{HydroFittedMeshTransfer}、电荷 \code{rebindMesh} 等现有实现；压力/速度/两层电荷历史及累计物理收支都必须有明确处理者。
+\item App 保留“全部准备并通过 \(\rightarrow\) 联合提交”的编排，不承担指标计算或场转移公式。原场景限制和 Q4 保护支撑原样保留，任意拓扑变化另行验收。
+\end{itemize}
+
+\textbf{M5 验收：} 无变化路径不复制/重建；一次真实粗化/细化后继续求解；被拒候选不替换已接受网格。检查体积、电荷、动量/散度约束、历史身份及原短程完整物理输出。仅叶单元减少不能作为成功判据。
+
+\Needspace{6\baselineskip}\stage{M6：把收紧推广到整个项目，而非只留下一个干净喷嘴}
+
+\begin{itemize}
+\item \textbf{运行层：} \code{IModule::run()} 保留为过渡运行适配概念，不能当数值服务接口。独立 Hydro/Electricity/Interface/网格验证驱动放 Apps；EHD 与喷嘴共同调用模块服务，但可以有不同的、明确命名的耦合顺序。
+\item \textbf{Plasma：} 先迁移配置装载、运行适配和共享网格/场/椭圆边界，再拆大驱动；保留显式/隐式 PIC、MCC、粒子随机数及 checkpoint 的实际语义。粒子子循环由其模块管理，跨模块 App 只有一个宏观主时钟，不能为统一名字改变 PIC 时间积分。
+\item \textbf{Solvers：} 通用椭圆算子接收系数、源、边界及一致通量接口；介电系数由 Electricity 提供，隐式极化由 Plasma 提供。标量/张量以及不同自由度合法后端明确区分，复用已有装配，不做一刀切替换。
+\item \textbf{构建：} 为已抽出的模块建立明确的 CMake 库目标与公共头依赖。数值服务的链接测试不带 App 源码/包含目录；严格浮点源文件、LTO 边界及 SuperLU 属性随所属目标保留。
+\end{itemize}
+
+四个模块运行适配头文件的八项 Runtime include 例外随真实迁移逐项删除，最终清零；不得通过扩大检查例外、放宽目录扫描或模板间接包含来“通过”。旧 \code{Core/Lagrangian} 中物理受力职责也须按真实消费者移回模块，不能因 include 检查没报错就保留语义混合。
+
+\textbf{M6 验收：} 各模块独立构建/运行；受影响 PIC 的原固定网格、AMR 和连续/续算基线；共享椭圆服务的实际通量检查。保留已有用户输入，Plasma 未经迁移的字典不擅自升级版本。
+
+\Needspace{6\baselineskip}\stage{M7：最后收紧用户入口并固化规范}
+
+\begin{itemize}
+\item 根据已经落地的模块配置发布字典：特别是 Interface 的设置归属、Hydro 通用压力边界与 Electric 电荷边界，不直接照抄旧 PDF 的拟议版本 3。
+\item 把冻结材料/冻结界面等验证组合移到清楚的验证运行定义，旧 App 模式名称只作有期限、有消费者清单的兼容入口；不能默默把历史 case 改成另一种模型。
+\item 每模块维护少量长远有效的标准 case，说明方程、边界、参考、输出变量、验收门及实际限制。补齐 Interface 和真正独立 Electricity 的入口，优先包装现有参考，不按每次试验新建 case。
+\item 同步更新唯一的代码组织规范、字典参考、算例指南、依赖/布局检查和模块职责说明；不在各目录复制一份“新规范”。必要的主计划状态在本文件维护，阶段证据归 \code{docs/validation/organization/}。
+\item 旧路径达到“无生产消费者、历史参考可追溯、替代能力经过原输入验证”才提出精确删除/归档清单。此计划本身不授权清理用户计算结果、安装软件或无关文件。
+\end{itemize}
+
+\textbf{M7 验收：} 支持能力矩阵与实际 reader/消费者一致；默认参数没有漂移；标准命令仍为 \texttt{QUANTUM.exe --case <运行目录>}；新运行写 \code{runs/}，编译写 \code{build/}，标准输入留 \code{cases/}。当前 Tecplot fields/series、meta 清单和启动覆盖/未支持续算规则保留，除非另批有明确变更要求。
+
+\Needspace{12\baselineskip}
+\section{验证安排：跟着职责走，不为整理重跑所有物理实验}
+
+\Needspace{6\baselineskip}\subsection{复用现有证据与少量长期算例}
+
+\begingroup\small
+\setlength{\LTpre}{5pt}\setlength{\LTpost}{7pt}
+\begin{longtable}{@{}P{\dimexpr0.19\textwidth-3.8pt\relax}P{\dimexpr0.43\textwidth-8.6pt\relax}P{\dimexpr0.38\textwidth-7.6pt\relax}@{}}
+\toprule
+\rowcolor{pale}
+\textbf{负责模块} & \textbf{优先复用的既有锚点} & \textbf{说明} \\
+\midrule\endfirsthead
+\toprule
+\rowcolor{pale}
+\textbf{负责模块} & \textbf{优先复用的既有锚点} & \textbf{说明} \\
+\midrule\endhead
+\midrule\multicolumn{3}{r}{\footnotesize 接下页}\\\endfoot
+\bottomrule\endlastfoot
+Core 网格/几何 & \code{core_mesh_adaptation}、\code{core_quartic_mesh_transfer}、\code{core_mesh_cache_contract} & 网格身份/转移检查，不等于耦合物理验收；独立网格运行入口后续补齐 \\
+\addlinespace[4pt]
+Hydro & \code{hydrodynamics_inlet_outlet_planar/rz}、\code{hydrodynamics_capillary_planar/rz}；\code{hydro_fitted_adaptive}、\code{hydro_coupled_pressure} & 分开压力边界、粗细模板、静滴压差/寄生流；只选被本批改动的组合 \\
+\addlinespace[4pt]
+Interface & \code{hydro_native_quartic_transport}、\code{hydro_native_quartic_balance}、既有曲率参考 & 目前是回归/探针，不假称已是独立 Interface App；迁移时保留相同数学参考 \\
+\addlinespace[4pt]
+Electricity & 既有介电滴、\code{ehd_charge_relaxation_planar}、\code{ehd_surface_charge_transport}、\code{ehd_surface_charge_mesh_transfer}、原生 P3 电流检查 & 当前充电 case 仍经 EHD/Hydro，独立入口要去掉无关求解而保留参考和输入物理量；显式/隐式分别验证 \\
+\addlinespace[4pt]
+App 耦合 & 原喷嘴四级 AMR 十步来源、\code{electrospray_conducting_implicit_short_rz}、旧介电及受影响 EHD 原短程 & 检查真实消费者、耦合时层和全部接受步；不拿新小算例替换原失败 \\
+\addlinespace[4pt]
+Plasma/椭圆 & 原 PIC 显式/隐式及 Poisson 标准 case；原 AMR/checkpoint 回归 & M6 前先固定实际消费路径与程序身份；不在只改喷嘴配置的 M1 跑整套 Plasma \\
+\addlinespace[4pt]
+\end{longtable}
+\endgroup
+
+名称指仓库已有测试/标准输入，不表示本轮重新执行或每项物理精度均已通过。新的独立算例若沿用旧耦合参考，应分别说明输入等价和驱动变化，不能要求有意关闭 Hydro 后所有原耦合输出逐字节相同。
+
+\Needspace{6\baselineskip}\subsection{每个结构子批的最小闭环}
+
+\begin{enumerate}
+\item 固定本批源代码/程序身份、原输入、完整输出及失败证据；基线目录只读。先核对归档程序与当前输入是否匹配，不拿不同版本/网格作对照。
+\item 列出实际更改的模型能力、函数消费者、字段/单位/时层；提前声明预期只改路径/日志还是完全不变。
+\item 运行结构与直接契约检查；只有触及对应模块才运行对应数值检查。
+\item 对受影响原 case 做短程全步对照。纯结构以原生数值输出逐字节/原比较器等价为目标；仅允许预先列明的路径、时间统计、表示格式等非物理差异，不泛化忽略列。
+\item 如果算式/装配顺序必须变动导致物理数值变化，停止把该部分当作纯结构迁移；列出差异并转为独立数值工作包，用原守恒与收敛口径验收。
+\item 更新剩余消费者/临时适配清单；原失败不删，未闭合职责不标完成。
+\end{enumerate}
+
+只有触及精度或离散方法的批次才安排原静态压差、寄生流、实际曲率、薄层、时间/空间收敛矩阵。物理问题未通过不等于必须停止所有结构工作，但应限制该路径的能力声明。
+
+性能作为非退化检查：同一输入、线程数、构建属性和输出设置，区分初始化、普通步与 AMR 步，必要时重复测量；不因接口抽取增加全量复制、重复电场解或模板重建。1 s 量级目标仍是独立性能主线，不用不同网格的统计宣称达到。耗时记录放检查报告，不重新加回用户控制台。
+
+\Needspace{12\baselineskip}
+\section{如何让推进可跟进}
+
+每次实施开始明确“当前批次、收回哪项职责、原调用变成什么”；过程中报告正在修改还是正在做哪一项必要对照。最终固定报告四项：
+
+\begin{itemize}
+\item \textbf{本批已收紧：} 哪个状态/方程/配置现在有唯一拥有者，App 少承担了什么。
+\item \textbf{未动部分：} 原时间格式、网格、物性、边界、旧参考和门限是否保持。
+\item \textbf{对照结论：} 哪些原输入实际跑完、哪些数值相同、哪些失败或能力限制仍在。
+\item \textbf{剩余接口债务：} 临时适配、旧消费者、未统一装配，不用代码行数代替完成度。
+\end{itemize}
+
+最终定型必须同时满足：
+
+\begin{itemize}
+\item[$\square$] 四个主能力域都有明确数学问题、公共输入/结果、状态与历史所有者。
+\item[$\square$] 喷嘴和独立运行调用同一模块服务；App 不包含 NS、电荷迭代、界面输运或体积修正算法。
+\item[$\square$] Hydro 统一的不只是函数名；公共方程残差、物理压力和装配生命周期确实收敛。
+\item[$\square$] Electricity 独立入口真正求解，电势/电荷/电流一致；Interface 不依赖喷嘴几何或 Hydro 求解器才能运行。
+\item[$\square$] 一份权威网格/自由液面、一个主时钟；AMR 历史转移、候选接受及失败后行为明确。
+\item[$\square$] 正式字典设置有唯一拥有者和实际消费者；旧大配置不是新入口的中转站。
+\item[$\square$] 模块可独立链接；Runtime 反向依赖例外清零，未用例外与兼容分支按清单退出。
+\item[$\square$] 有少量可复现的模块专有算例；原失败和长时间物理验收状态单独公开。
+\item[$\square$] 唯一正式规范与实现同步，输出不冗余、目录语义清楚，后续新增功能受检查约束。
+\end{itemize}
+
+\textbf{M3 已使原喷嘴的完整运动和体积约束归 Interface，并补齐使用同一服务的正式规定速度独立入口；下一段收紧普通 Hydro/EHD 的界面状态及单步消费。} 保留 M2 剩余状态发布/装配职责，NS 的合法预测/投影行与物理边界不强行合并。可写准备数组、完整历史来源与普通 Hydro/EHD 的界面状态尚未全面收口，M4--M7 的电荷、AMR 转移、运行/构建及字典定型继续推进，不恢复 App 数值实现或 Hydro 反向依赖。
+
+\Needspace{12\baselineskip}
+\section{源码依据与交付记录}
+
+以下核查入口随实现更新；本节末两段保留 M0 制定计划时的交付记录，不代表当前仍未实施。M1a、M1b 的修改、构建、原输入对照及剩余职责见各自阶段记录。
+
+重点核查位置（随实施可改名；迁移报告需更新消费者）：
+
+\begin{itemize}
+\item 输入：\href{../src/Apps/Electrospray/IO/ElectrosprayVersionedInput.cpp}{新版绑定}、\href{../include/Apps/Electrospray/IO/ElectrosprayVersionedInput.h}{新版结果类型}、\href{../include/Modules/Hydrodynamics/FittedFlowCaseConfig.h}{Hydro 配置}、\href{../include/Modules/Electricity/FittedElectricCaseConfig.h}{Electric 配置}。
+\item 流体：\href{../src/Apps/Hydrodynamics/HydrodynamicsApp.cpp}{Hydro App}、\href{../src/Apps/Hydrodynamics/HydroCase.cpp}{共享算例状态}、\href{../include/Modules/Hydrodynamics/Hydrodynamics.h}{数值入口与状态}、\href{../src/Modules/Hydrodynamics/HydrodynamicsFitted.cpp}{拟合域单步}。
+\item 界面：\href{../include/Apps/Electrospray/Setup/ElectrosprayInterface.h}{App 状态}、\href{../src/Apps/Electrospray/Coupling/ElectrosprayInterfaceMotion.cpp}{运动流程}、\href{../include/Modules/Interface/InterfaceVolumeCorrection.h}{体积修正契约}、\href{../include/Modules/Interface/InterfaceTransportInput.h}{边界与通量输入}。
+\item 电学：\href{../src/Modules/Electricity/ElectricityModule.cpp}{旧独立入口}、\href{../include/Modules/Electricity/Electricity_impl.h}{旧模板}、\href{../include/Modules/Electricity/SurfaceChargeRelaxation.h}{现行电荷欠松弛契约}、\href{../src/Apps/Electrospray/Coupling/ElectrosprayConducting.cpp}{喷嘴导电阶段}、\href{../src/Apps/Electrohydrodynamics/Coupling/DielectricCoupling.cpp}{普通 EHD 接线}。
+\item 主时序/AMR：\href{../src/Apps/Electrospray/ElectrosprayTimeLoop.cpp}{喷嘴时间循环}、\href{../src/Apps/Electrospray/Coupling/ElectrosprayMeshAdaptation.cpp}{现行 AMR 联合准备}。
+\item 运行/构建：\href{../src/Apps/Runtime/RunController.cpp}{Runtime}、\href{../src/Apps/SingleModule/SingleModuleApp.cpp}{单模块注册}、\href{../CMakeLists.txt}{CMake}、\href{../tests/architecture/check_dependencies.py}{现行依赖检查}。
+\end{itemize}
+
+本轮只新增本计划并调整文档索引/衔接提示，原蓝图 PDF 不改写。没有启动新的物理计算、没有修改 \code{cases/electrospray/system}、没有替换正式 EXE，也没有清理历史结果。M1--M7 均为后续实施工作，不把本轮源码核查当作这些批次的完成证据。
+
+文档交付检查：直接运行 \code{tests/architecture/check_dependencies.py} 与 \code{check_layout.py} 均通过；依赖扫描为 473 个源码/头文件、仍有原八项精确适配例外，说明当前边界尚未完成 M6 收紧。本计划 27 个本地链接均有效。上述检查不是数值或物理验收。
+
+\end{document}

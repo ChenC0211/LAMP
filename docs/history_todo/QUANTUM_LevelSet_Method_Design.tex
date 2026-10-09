@@ -1,0 +1,564 @@
+% !TeX program = xelatex
+% Standalone document; build twice with XeLaTeX. No external figures or bib file.
+\documentclass[11pt,a4paper]{article}
+\usepackage{fontspec}
+\IfFontExistsTF{SimSun}{\setmainfont{SimSun}[BoldFont=SimHei,ItalicFont=KaiTi]\setsansfont{Microsoft YaHei}}{\setmainfont{FandolSong-Regular}[BoldFont=FandolSong-Bold,ItalicFont=FandolKai-Regular]\setsansfont{FandolHei-Regular}}
+\IfFontExistsTF{Consolas}{\setmonofont{Consolas}}{\setmonofont{Latin Modern Mono}}
+\XeTeXlinebreaklocale "zh"
+\XeTeXlinebreakskip=0pt plus 1pt
+\usepackage{amsmath,amssymb,bm,booktabs,longtable,array,tabularx,xcolor,graphicx,enumitem,tikz,listings}
+\usetikzlibrary{arrows.meta,positioning}
+\definecolor{ink}{RGB}{25,49,70}
+\definecolor{accent}{RGB}{0,109,120}
+\definecolor{pale}{RGB}{237,245,247}
+\usepackage[obeyspaces]{url}
+\usepackage[unicode,colorlinks=true,linkcolor=ink,urlcolor=accent,citecolor=accent,bookmarksnumbered=true]{hyperref}
+\setlength{\textwidth}{162mm}
+\setlength{\textheight}{246mm}
+\setlength{\oddsidemargin}{\dimexpr24mm-1in\relax}
+\setlength{\evensidemargin}{\oddsidemargin}
+\setlength{\headheight}{16pt}
+\setlength{\headsep}{6mm}
+\setlength{\topmargin}{\dimexpr23mm-1in-16pt-6mm\relax}
+\setlength{\footskip}{12mm}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{4pt}
+\setlength{\emergencystretch}{4em}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.22}
+\renewcommand{\contentsname}{目录}
+\renewcommand{\refname}{参考文献}
+\renewcommand{\figurename}{图}
+\renewcommand{\tablename}{表}
+\setcounter{tocdepth}{2}
+\setlist{nosep,topsep=4pt,leftmargin=2em}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\vct}[1]{\boldsymbol{#1}}
+\newcommand{\code}[1]{{\small\nolinkurl{#1}}}
+\newcommand{\doi}[1]{\href{https://doi.org/#1}{doi:#1}}
+\newcommand{\jump}[1]{\left[\!\left[#1\right]\!\right]}
+\lstset{basicstyle=\small\ttfamily,backgroundcolor=\color{pale},breaklines=true,columns=fullflexible,keepspaces=true,showstringspaces=false}
+\makeatletter
+\g@addto@macro\UrlBreaks{\do\A\do\B\do\C\do\D\do\E\do\F\do\G\do\H\do\I\do\J\do\K\do\L\do\M\do\N\do\O\do\P\do\Q\do\R\do\S\do\T\do\U\do\V\do\W\do\X\do\Y\do\Z}
+\def\ps@quantum{\def\@oddhead{\small\textcolor{ink}{QUANTUM\quad 水平集方法设计}\hfil 2026-09-21}\let\@evenhead\@oddhead\def\@oddfoot{\hfil\small\thepage\hfil}\let\@evenfoot\@oddfoot}
+\pagestyle{quantum}
+\makeatother
+\hypersetup{pdftitle={QUANTUM 面向电喷雾破碎的水平集方法设计},pdfauthor={QUANTUM 项目文档},pdfsubject={守恒、曲率、拓扑变化、轴对称几何和电流体耦合}}
+\begin{document}
+\begin{titlepage}
+\thispagestyle{empty}
+\vspace*{17mm}
+{\sffamily\Huge\bfseries\color{ink} QUANTUM\par}
+\vspace{10mm}
+{\LARGE\bfseries 面向电喷雾破碎的\par 水平集方法设计\par}
+\vspace{7mm}
+{\large 守恒输运、可靠曲率与拓扑变化的统一安排\par}
+\vspace{13mm}
+\noindent\colorbox{pale}{\parbox{150mm}{\vspace{3mm}
+\textbf{推荐决策}\par
+以保守有限体积相体积为基础，采用 CLSVOF 型耦合：\par
+\textbf{相通量保证质量；水平集提供位置和方向；局部分支几何估计曲率；流体、电场与电荷共用一次接受的界面。}\par
+\vspace{2mm}
+先建立可解释、可控成本的二阶基线，再提升光滑区几何阶次。停止把每个单元的体积误差都转化为全局高阶水平集自由度的强制修正。
+\vspace{3mm}}}
+\vfill
+\noindent\textbf{文档性质：}方法研究与工程设计，非新增算法实现报告。\par
+\noindent\textbf{覆盖范围：}二维 XY、轴对称 RZ、喷嘴供液、颈缩断裂、多滴与电荷接续。\par
+\noindent\textbf{当前动作：}实现与 B1/B2 长算例已按要求暂停；本轮不修改求解器和算例字典。\par
+\vspace{6mm}
+\noindent 版本 1.0\qquad 2026 年 9 月 21 日\par
+\noindent 基于本地论文、论文原文及当前项目源码与已有运行记录。
+\end{titlepage}
+\tableofcontents
+\clearpage
+
+\section{要先解决的不是更多算例，而是方法的职责冲突}
+\subsection{本稿的结论与适用边界}
+项目的目标是算出供液形成射流、颈部变细、液滴脱落以及带电子滴继续运动。这个目标要求同时控制\textbf{相体积误差、法向与曲率误差、离散受力误差，以及拓扑事件前后的材料与电荷归属}。单独把水平集插值阶次提高，或把体积方程残差压到机器精度，都不能覆盖这四项。
+
+建议把现有“Q4/Hermite 预测后，以逐单元体积约束反复修正高阶系数”的生产主线，调整为\textbf{保守体积分数与水平集耦合的主线}。沿用既有模块组织、网格、流体和电学求解器；只重定 Interface 内部量的权威归属及消费者契约。经典 CLSVOF 已包含三维与轴对称两相流设计\cite{sussman2000}，与射流破碎的耦合也有直接应用\cite{menard2007}。本文选择的是这一成熟方法族，\textbf{不是宣称本文提出的全部 RZ、AMR 和电荷集成细节已经得到文献证明}。
+
+必须保留一个明确的限制：有限体积相体积可以离散守恒；从它重建出的光滑水平集零面，通常只有\emph{受控的几何体积一致性}，并非逐单元完全一致。这一差异要作为独立误差输出，不能用守恒相指标的好看数字掩盖几何漂移。若后续证明该差异不能满足电喷雾精度，再提升局部几何重构，而不是立即恢复全域逐系数强制修正。
+
+\subsection{目前证据支持什么，不支持什么}
+\begin{longtable}{L{35mm}L{114mm}}
+\toprule 已有观察 & 对方法设计的含义\\\midrule\endhead
+B3 固定步长空间比较 & 三档网格最终曲率相对 $L_2$ 约 $1.204\%\to0.1221\%\to0.0205\%$，有积极空间趋势；时间精度和真实自由界面动力学仍未确立。现有高阶几何有可复用价值。\\
+B1/B2 旧完整周期失败 & 根包围、图段采样、积分和非线性修正发生故障，部分时刻几何仍有较宽可分辨结构。这暴露了实现复杂性，不能据此证明水平集或高阶方法本身不可行。\\
+喷雾时间通量试改 & 极小负目标体积触发可行性拒绝，且初态/首步湿壁扇区表达存在接续问题；试改已撤回。需要从通量构造、有界性和误差尺度一起设计，不能仅放松一个相对门限。\\
+已有多分量库存 & 几何分量、液体连通域和制造事件有基础；真实断裂后的流体载荷、电荷及历史尚未完整迁移，不能把“轮廓数变了”当作全物理拓扑能力。\\
+用户暂停后的状态 & 新 B1/B2 进程已主动停止；包装脚本退出码不能解释为新的算法失败。本稿不追加运行结果。\\\bottomrule
+\end{longtable}
+证据入口为 \code{docs/QUANTUM_Hydro_EHD_Progress.md}、B1/B2/B3 算例 README 与 2026-09-19 的体积/曲率专题分析。上述结果只用于解释设计动机，不代替新方法验收。
+
+\subsection{四种误差必须分开}
+设 $\chi_l$ 为液相指示函数，$C_K$ 为单元相体积分数，$\phi<0$ 表示液相，$\Gamma=\{\phi=0\}$。至少分开报告：
+\begin{enumerate}
+\item 输运误差：$\sum_K C_KV_K$ 是否符合入口、出口和源项收支；共享面的通量是否相消。
+\item 几何误差：$\Gamma$ 的位置和形状是否正确，$C_K^\Gamma$ 与 $C_K$ 是否一致到离散精度。
+\item 导数误差：在正确分支上估计的 $\vct n,\kappa$ 是否准确、是否随网格改善。
+\item 耦合误差：同一界面上的压力、毛细力、Maxwell 力以及动量/电荷通量是否相容。
+\end{enumerate}
+例如若界面位置误差为幅值 $a$、波长约 $h$ 的振荡，二阶导数误差可达 $O(a/h^2)$。即便体积正负误差抵消、总量几乎不变，曲率仍可能显著振荡。这是“守恒很好但力很差”的基本机制，不是再提高积分精度就能解决的问题。
+
+\section{从项目需求反推数学与离散契约}
+\subsection{模型范围和符号}
+近期主线采用不可压、不可混溶、常相密度/黏度、无相变的两相 Navier--Stokes 模型，表面张力 $\gamma$ 为常数；电学以漏电介质模型为主。电离、蒸发、离子发射和三维非轴对称鞭甩需要另立物理模型，不能由界面算法自动提供。
+\begin{align}
+ \nabla\cdot\vct u&=0, &
+ \partial_t\chi_l+\nabla\cdot(\chi_l\vct u)&=0,\label{eq:phase}\\
+ \partial_t(\rho\vct u)+\nabla\cdot(\rho\vct u\otimes\vct u)
+ &=-\nabla p+\nabla\cdot(2\mu\vct D)+\rho\vct g+\vct f_\gamma+\vct f_E,\label{eq:momentum}\\
+ \rho&=\rho_g+(\rho_l-\rho_g)\chi_l, &
+ \vct D&=\tfrac12(\nabla\vct u+\nabla\vct u^T).
+\end{align}
+法向由液体指向气体，$\vct n=\nabla\phi/|\nabla\phi|$，曲率取 $\kappa=\nabla\cdot\vct n$，因此圆/球液滴曲率为正，静态 $p_l-p_g=\gamma\kappa$。此符号下 $\vct f_\gamma=-\gamma\kappa\vct n\delta_\Gamma=\gamma\kappa\nabla\chi_l$。不能直接照抄采用相反曲率符号的文献公式。
+
+XY 使用单位厚度面积测度；RZ 使用真实旋转体测度：
+\begin{equation}
+ \dd V=2\pi r\,\dd r\dd z,\qquad
+ \dd A_\Gamma=2\pi r\,\dd s,\qquad
+ \kappa_{RZ}=\kappa_m+\frac{n_r}{r}.
+\end{equation}
+所有体积、面通量、面电荷和表面力必须使用同一套测度。可以在内部统一省去 $2\pi$，但必须对所有模块及输出一致省去，不能只在一个模块补乘。
+
+\subsection{生产方法必须提供的六项契约}
+\begin{longtable}{L{31mm}L{118mm}}
+\toprule 契约 & 必须给出的量与性质\\\midrule\endhead
+相体积与通量 & $0\le C_K\le1$；一个共享面只有一个带方向的步内液相通量；开放边界显式记账；不通过删小滴、截断后不补偿或全局缩放保质量。\\
+已接受几何 & 一次提交一个 $\Gamma_h$，携带步号、网格版本、分支、表面分量、液体连通域、端点类型及曲率质量标记。力、电学和输出不能各自重建一条不同曲线。\\
+局部几何精度 & 光滑可分辨界面至少以二阶曲率趋势为基线目标；轴端用解析极限；靠近另一分支不跨折角求导；真实尖角/奇异点不承诺有限高阶曲率。\\
+拓扑与材料 & 识别分裂、合并、出域、入域和 AMR 变化；体积、动量、电荷分别迁移；新表面 ID 不等于材料映射。\\
+一致耦合 & Hydro 使用相通量导出的质量通量；Electricity 使用同一几何及表面材料转移；App 只在全部候选成功后提交时间步。\\
+成本与可诊断性 & 常规步以局部几何和窄带计算为主；精确谓词、加密算术按需触发；不默认每步全局几何 KKT、多套完整积分和整套 benchmark。\\\bottomrule
+\end{longtable}
+
+\clearpage
+\section{文献路线比较与明确取舍}
+\subsection{纯高阶、保守水平集与 CLSVOF 的差别}
+\begin{longtable}{L{29mm}L{51mm}L{65mm}}
+\toprule 路线 & 可借鉴之处 & 项目中的主要代价／结论\\\midrule\endhead
+高阶 LS / GALS / jet & 一致输运标量与导数，紧模板、光滑区方向精度好\cite{nave2010}。 & 本身不保证相体积守恒；近邻分支的距离折角仍存在。保留作几何预测器，不再独自承担所有守恒约束。\\
+粒子水平集 & 粒子纠正数值扩散，可保留细结构\cite{enright2002}。 & 粒子不是严格有限体积账本；粒子数量、播种和 AMR/壁面规则增加成本。暂不作为主线。\\
+ACLS 保守水平集 & 保守输运平滑指标；距离重建、改进重初始化可减小形变\cite{olsson2005,desjardins2008,chiodi2017}。 & 守恒 $\int\psi\dd V$ 不等于严格守恒 $\psi=1/2$ 包围体积；薄颈与变网格的厚度需管理。作为一种有价值的备选，而非同时维护第二生产实现。\\
+CLSVOF & 有界相体积输运提供质量依据，LS 提供法向和几何；有轴对称与射流应用\cite{sussman2000,menard2007}。 & 增加 $C$ 与 $\phi$ 的同步、PLIC 和几何通量；光滑零面和体积的差异必须受控。\textbf{推荐主线。}\\
+VOF + 高度函数 & 几何守恒与曲率估计相结合，平衡力在毛细问题中有效\cite{cummins2005,popinet2009}。 & 标准高度函数要求可用的单值列；项目仍需要 LS 的投影、材料几何和尖锐电学接口。吸收曲率方法，不把项目改造成另一整套流体软件。\\
+相场 / MOF 等 & 相场以自由能提供另一种拓扑描述；MOF 增加矩信息改善重构。 & 相场需要界面厚度/迁移率的物理与数值收敛；MOF 增加守恒量和重构复杂度。现阶段都不是最低风险迁移。\\\bottomrule
+\end{longtable}
+
+\subsection{为何不直接“换成保守水平集就结束”}
+以液相平滑指标 $\psi=(1+\exp(\phi/\epsilon))^{-1}$ 为例，保守离散使 $\int\psi\dd V$ 按通量演化。但是
+\begin{equation}
+ \int_\Omega\psi\,\dd V\ne\int_\Omega H(-\phi)\,\dd V
+\end{equation}
+在有限 $\epsilon$ 与有限网格下通常成立；曲率、邻近界面重叠和边界截断会影响差值。Desjardins 等原文明确区分两者，Janodet 等的自适应 ACLS 工作也保留了这一限制\cite{desjardins2008,janodet2022}。这不否定 ACLS；只是本项目要求核对每个子滴体积、表面积和电荷，使用独立几何体积账本更容易说明与追踪误差。
+
+高阶曲率文献表明，可靠曲率不仅取决于差分公式，还取决于界面输运精度及曲率沿最近点的延拓\cite{coquerelle2016}。因此不把“四阶曲率”列为首版全域保证；先实现光滑区可验证的二阶与完整的失效识别，再决定局部升级。
+
+\subsection{对原设计的修订，而非否定已做工作}
+2026-09-19 方案将 CLSVOF 比较放在 P2 收口后。本稿调整为：\textbf{先确定守恒、同步与曲率契约，再做 CLSVOF 原型；不以跑完旧主线所有长算例作为开始设计的前提。}
+
+既有多根/图段库存、端点类型、连通域、精确谓词、材料映射和事务提交可复用。Q4 体积 KKT 修正保留作对照，不再成为每步必经流程。稳定性与成本仍须按同一精度目标比较，不预先承诺加速倍数。
+
+\clearpage
+\section{推荐算法：谁守恒，谁决定几何}
+\subsection{状态归属与两种表示之间的关系}
+\begin{longtable}{L{34mm}L{115mm}}
+\toprule 状态 & 权威用途与更新方式\\\midrule\endhead
+$C_K,\ V_K$ & 液相库存为 $C_KV_K$。物理时间推进仅由共享面相通量及显式源项更新；重距离不能修改它。\\
+$\mathcal F_f^l,\mathcal F_f$ & 一个接受步内的液相体积与总体积通量，含符号、子面、子步和边界归属。为 Hydro 提供质量账本。\\
+$\phi^\star$ 与 jet & 物理输运的几何预测，提供方向、分支对应和材料轨迹；不以其负相积分覆盖 $C$。\\
+PLIC 辅助几何 & 给定法向后用 $C_K$ 求单元内平面位置，负责几何通量与同步的体积依据；不是电学另行使用的一套表面。\\
+$\phi_h,\Gamma_h$ & 从 $C$ 和几何预测同步得到的已接受窄带标量及零面；所有表面物理、求交、投影和可视化共用它。\\
+$\vct n_h,\kappa_h$ & 在 $\Gamma_h$ 上定义，由有效高度函数或局部分支拟合估计并投影；携带方法来源和质量，不与噪声大的全局距离 Hessian 强行绑定。\\
+拓扑与材料转移 & 几何 ID、液体 ID、分支 ID 分开；保存从旧到新的体积/表面材料对应，电荷值仍由 Electricity 持有。\\\bottomrule
+\end{longtable}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[node distance=6mm,box/.style={draw=accent,rounded corners=2pt,fill=pale,align=center,text width=133mm,inner sep=6pt,font=\small},arr/.style={-{Latex[length=2mm]},thick,color=accent}]
+\node[box] (a) {同一组中间时刻、离散无散的面体积通量与速度轨迹};
+\node[box,below=of a] (b) {保守推进 $C$\quad +\quad 一致预测 $\phi^\star$、方向和材料轨迹};
+\node[box,below=of b] (c) {由 $C$ 确定 PLIC 偏置\quad $\longrightarrow$\quad 窄带同步／分支距离重建};
+\node[box,below=of c] (d) {只发布一套 $\Gamma_h$、法向、曲率、连通域和材料转移\quad 同时记录 $C^\Gamma-C$};
+\node[box,below=of d] (e) {Hydro：一致质量动量与平衡力\quad Electricity：同面电场与保守电荷};
+\node[box,below=of e] (f) {全部候选成功后统一提交；失败则整步回滚、缩步或局部加密};
+\draw[arr](a)--(b);\draw[arr](b)--(c);\draw[arr](c)--(d);\draw[arr](d)--(e);\draw[arr](e)--(f);
+\end{tikzpicture}
+\caption{拟议的更新依赖。PLIC 是输运辅助表示；下游只消费统一发布的界面。}
+\end{figure}
+
+\subsection{有界保守的相体积更新}
+对固定控制体 $K$，定义从 $K$ 向外的面通量符号 $s_{Kf}$：
+\begin{align}
+ \mathcal F_f &=\int_{t_n}^{t_{n+1}}\int_f\vct u\cdot\vct n_f\,\dd A\dd t,\\
+ \mathcal F_f^l &=\int_{t_n}^{t_{n+1}}\int_f\chi_l\vct u\cdot\vct n_f\,\dd A\dd t,\\
+ V_KC_K^{n+1}&=V_KC_K^n-\sum_{f\subset\partial K}s_{Kf}\mathcal F_f^l.\label{eq:fv}
+\end{align}
+内部面只计算一次；全域求和后仅剩物理边界通量。用中点或预测校正获得二阶时间的速度与界面轨迹，但\textbf{整步二阶必须包括速度、几何、质量和载荷的时层一致性}。若一个面在步内反向流动，分时间段累计流入/流出，不能从净通量的符号推断全部供体。
+
+建议原型采用\textbf{几何非分裂通量}，以给定面扫掠区域与供体 PLIC 液相交叠求 $\mathcal F_f^l$。Owkes--Desjardins 的非重叠扫掠构造提供参考\cite{owkes2014}；直接用各面独立反追的多边形可能重叠，不能仅因“几何积分”就宣称有界守恒。其三维 Cartesian 构造迁到 RZ/拟合单元还需满足加权几何守恒律，不视为直接复制可得。
+
+为使实现具有一个可证明的有界基线，预留\emph{同面反扩散通量限制}：每个子步满足 $\sum_f\max(s_{Kf}\mathcal F_f,0)\le V_K$，且离散总体积通量满足 $\sum_fs_{Kf}\mathcal F_f=0$ 时，以一阶上风得到有界 $C_K^L$，对高精度通量的增量统一限幅：
+\begin{equation}
+ \mathcal F_f^l=\mathcal F_f^{l,L}
+    +\theta_f(\mathcal F_f^{l,H}-\mathcal F_f^{l,L}),\qquad0\le\theta_f\le1.\label{eq:limiter}
+\end{equation}
+同一 $\theta_f$ 同时用于两侧单元，根据各自可接受的正、负体积增量预算计算，保证 $0\le C^{n+1}\le1$。这保留共享通量守恒；不能先逐单元裁剪 $C$ 再把损失忽略。正常光滑区应尽量保持 $\theta_f=1$；频繁限幅意味着精度、速度散度或几何通量有问题，应计数并触发局部改善，而不是把限幅当成不可见补丁。
+
+\subsection{RZ 与真实网格的几何处理}
+\textbf{RZ 的二维速度不满足普通面积无散。} 实际关系为
+\begin{equation}
+ \partial_r(ru_r)+\partial_z(ru_z)=0.
+\end{equation}
+故不能用二维面积守恒扫掠后简单乘一个单元中心半径。对矩形单元，$V_K=\pi(r_+^2-r_-^2)\Delta z$；切割多边形及扫掠多边形都积分 $2\pi r$，即面积的一阶径向矩。对一般映射单元，积分真实 Jacobian 与 $r$；几何裁剪必须在物理网格上定义。
+
+给定单位法向 $\vct n_K$，PLIC 偏置 $b_K$ 由单调方程确定：
+\begin{equation}
+ \int_{K\cap\{\vct n_K\cdot\vct x\le b_K\}}\dd V=C_KV_K.
+\end{equation}
+先括区间再求根；这里每单元只有一个偏置未知量，不是全界面 Q4 多列的耦合守恒修正。壁面切割则将 $K$ 换成实际流体体积，入口相态来自明确边界条件。初始湿壁扇区和下一步扇区必须使用同一几何定义。
+
+首版在窄带内维持同层网格，粗细转换放到窄带之外；仍保留远场 AMR 的收益。以后接通真正界面粗细过渡时，粗面通量等于细子面通量之和，加密分配和粗化限制满足 $\sum C_{\mathrm{child}}V_{\mathrm{child}}=C_{\mathrm{parent}}V_{\mathrm{parent}}$。不能插值 $\phi$ 后重新积分覆盖守恒库存。
+
+\subsection{水平集预测、重距离与同步顺序}
+\begin{enumerate}
+\item 使用与体积通量一致的时间速度做特征线预测。保留既有 jet 链式法则一致性；网格尺度以下的导数细节不自动意味着物理可分辨。
+\item 用 $\phi^\star$ 的可靠法向确定 PLIC 方向，以已更新 $C$ 确定偏置。法向失效时用受控的局部体积分数几何拟合；不得沿用未检查的上一帧曲率。
+\item 从 PLIC 提供的局部界面位置重建有符号距离窄带，保留分支标签与最近点候选，再形成共享节点的 $\phi_h$ 和 $\Gamma_h$。首版使用标准 CLSVOF 型同步，有限阶插值；不同时研发全域最优曲面。
+\item 一次提取 $\Gamma_h$，再计算体积一致性、法向、曲率、表面面积和材料对应。若局部拟合用于改善零面，必须先纳入这次几何提交，然后所有消费者使用其结果。
+\item 以已接受界面为零边界，向外构建剩余距离带。可结合 closest point、fast marching 和 kink 检测\cite{henri2022}；不得重新移动已提交的零面来“变得更像距离函数”。
+\end{enumerate}
+同步阶段可以改变几何预测的位置；这属于\emph{数值重映射}，不是额外物理速度，必须进入表面材料/电荷的重映射。无论同步和重距离如何做，都不得改变守恒 $C$。首版不要求整个全局距离场 $C^2$ 光滑；中轴线处本来不可微，强行光滑会跨分支污染曲率。
+
+\subsection{不把表示差异藏起来：一致性误差预算}
+定义
+\begin{equation}
+ C_K^\Gamma=\frac1{V_K}\int_K H(-\phi_h)\dd V,\qquad
+ E_{C\Gamma}=\frac{\sum_KV_K|C_K^\Gamma-C_K|}{V_{l,\mathrm{ref}}}.
+\end{equation}
+同时报告有符号总差、各液滴的差以及界面位置误差 $E_x$，不能只看可相消的总差。设计要求为：$E_{C\Gamma}$ 随网格下降且不长期累积；典型位置偏差应低于同网格空间截断误差。首版针对可分辨光滑测试，可把 $E_{C\Gamma}\le10^{-3}$ 作为\emph{暂定工程目标}，但最终按滴径/电荷误差预算与收敛趋势决定，不能把它当普适定理。
+
+当 $E_{C\Gamma}$ 过大，首先检查法向、几何重建和局部分辨率；必要时细化或采用局部体积矩约束的高阶重构。\textbf{不允许每步把 $C\leftarrow C^\Gamma$ 来伪造一致，也不允许宣称几何体积严格守恒。} 若应用确实要求每个切单元的光滑几何体积也精确相等，那么那是第二阶段的受约束曲面问题，应单独评估可行性与成本。
+
+\clearpage
+\section{曲率：从局部界面形状求，而非到处对全局距离二次求导}
+\subsection{为什么高阶多项式仍可能给出差曲率}
+在二维，任意光滑隐函数的曲率为
+\begin{equation}
+ \kappa_m=\frac{\phi_{xx}\phi_y^2-2\phi_x\phi_y\phi_{xy}+\phi_{yy}\phi_x^2}
+ {(\phi_x^2+\phi_y^2)^{3/2}}.
+\end{equation}
+这一公式不要求 $\phi$ 恰好是距离函数，但要求导数准确、梯度非退化。四次插值既不能保证系数无噪声，也不能保证跨单元二阶导数平顺。在守恒修正产生网格尺度波纹时，直接使用 Hessian 会放大其影响。把 $|\nabla\phi|$ 强制调成 1 也不能自动修复已经错误的零面。
+
+更基本的问题是\textbf{距离函数的中轴折角}：两个液滴接近，或同一个液体折返后两侧相近，最近界面分支会切换。全局距离场在那里不光滑；跨越该区域的差分即使阶次很高也不适用。Ervik 等特别指出，只按全局液体分量分离还不够，同一物体的局部折返同样会出问题\cite{ervik2014}。因此应识别\emph{局部分支}，而不只是液滴 ID。
+
+\subsection{一套明确的曲率估计层次}
+首版只提供两种几何来源及一个明确的不可用状态，避免几十种自动切换规则：
+\begin{enumerate}
+\item \textbf{优先使用有效高度函数。} 在适合的局部坐标方向，从守恒 $C$ 建立单值界面列；模板各列必须穿过同一局部分支，且两端有明确纯相或合法物理边界。用一致高度求导，在目标 $\Gamma_h$ 上给出曲率。
+\item \textbf{无法形成高度列时，做同分支局部几何拟合。} 从已接受界面的交点/最近点及可靠高度信息，按局部切向坐标拟合二次或三次曲线；用实际物理距离加权和缩放，检查条件数、残差、法向变化及模板覆盖。拟合仅用于导数估计时不移动零面。
+\item \textbf{两者均失效时，返回需要加密或事件处理。} 不把零曲率、上一帧曲率或任意上限当成成功结果。为完成事件穿越而允许的局部低精度重构必须有范围、质量标记和守恒收支，并与光滑区精度分开报告。
+\end{enumerate}
+VOF 高度函数和自适应平衡力研究支持这一类思路\cite{cummins2005,popinet2009}；本文的分支判定、RZ 转换与当前网格上的拟合准则属于工程设计。低阶几何点的简单抛物线拟合\emph{不必然产生二阶曲率}，需要足够精度的高度/位置数据；这是原型阶段必须检查的一项。
+
+取局部法向大致沿 $\eta$ 正方向，界面写为 $\eta=f(\xi)$，液体在其下方，则
+\begin{equation}
+ \vct n=\frac{(-f',1)}{\sqrt{1+f'^2}},\qquad
+ \kappa_m=-\frac{f''}{(1+f'^2)^{3/2}}.
+\end{equation}
+建议用 $\hat\xi=\xi/h$ 进行拟合，避免微米坐标下矩阵各列量纲差异。系数通过 QR 或其他稳定最小二乘求解；不形成易放大条件数的法方程。平滑区可使用三次拟合减少偏差，但模板不能穿过另一个分支、尖角或接触点。
+
+\subsection{RZ 高度与轴端不能套用二维面积公式}
+对于 $r=R(z)$、内部为液体的轴对称射流，
+\begin{equation}
+ \kappa_{RZ}=-\frac{R''}{(1+R'^2)^{3/2}}
+                +\frac{1}{R\sqrt{1+R'^2}}.\label{eq:rzjet}
+\end{equation}
+这同时包含母线曲率和环向曲率。若一列自轴线起连续充液，列液体体积满足
+\begin{equation}
+ \frac{V_{l,\mathrm{column}}}{\Delta z}
+       =\pi\,\overline{R^2},
+\end{equation}
+由此得到的是 $R^2$ 的列平均，不是 $R$ 的精确点值；二阶基线可用与列平均一致的重构。离轴环状液体或一列多界面需要区分内外半径，不能对总液体体积开一次平方根当成外界面位置。对 $z=f(r)$ 的列，需保留 $r$ 加权高度和非均匀径向度量。
+
+靠近光滑轴端，用偶函数 $z=f(r)=a_0+a_2r^2+a_4r^4+\cdots$ 拟合；若法向朝上，则
+\begin{equation}
+ \lim_{r\to0}\frac{n_r}{r}=-f''(0),\qquad
+ \kappa_{RZ}(0)=-2f''(0)=2\kappa_m(0).
+\end{equation}
+一般法向相反时整体变号。不要用 $n_r/\max(r,\varepsilon)$ 遮盖轴线奇异形式。对于真实锥尖或断裂奇异点，光滑偶函数假设不成立，不能以光滑轴端公式给出虚假的高精度。
+
+\subsection{近邻界面、窄颈和钉扎端点}
+每个曲率查询至少知道当前局部分支、最近点、第二候选分支距离、有效模板范围和端点类型。即使两侧属于同一液体连通域，只要法向/最近点归属不连续，就不能合并模板。使用局部图距离或同支沿弧长邻接筛选点，比仅用欧氏距离近邻更可靠。
+
+固定喷嘴接触点只给定位置；接触角可变时，不能额外强加一个固定角度。采用符合壁面几何的单侧拟合，位置约束和角度模型分开。接触点附近的应力奇异与启动不相容可能限制解的收敛，不能用界面滤波替代物理边界模型。曲率质量指标应分别列出自由光滑段、轴端、钉扎端和事件区。
+
+将 $\kappa$ 沿法向延拓到力作用带时，应使用同分支最近点对应，使 $\kappa(\vct x)=\kappa_\Gamma(\operatorname{cp}_\Gamma\vct x)$。直接计算偏移等值面的曲率会得到与界面不同的值。最近点延拓的精度和输运精度同样重要\cite{coquerelle2016,henri2022}。
+
+\subsection{误差目标：先保证二阶与受力，再争取四阶}
+首版目标是：解析光滑圆/球与平滑运动界面上，位置和曲率出现稳定下降趋势，曲率相对 $L_2$ 以二阶为设计基线；近邻分支不出现折角造成的 $O(1/h)$ 假尖峰；轴端和普通段分别达标。尖角、欠解析卫星滴及断裂瞬间不参加光滑曲率阶次拟合。
+
+只在这一基线通过后，再尝试四阶局部几何/高阶 closest point 延拓。升级必须改善\emph{同样流体网格上的压力与寄生流}，而不仅是解析球上一个导数表。现有 Q4 的价值首先在方向预测和几何查询，不应为了继续使用全部高阶自由度而增加不必要的全局约束。
+
+\clearpage
+\section{与流体、电场和电荷的相容耦合}
+\subsection{质量与动量必须使用同一个相通量}
+由式 \eqref{eq:fv} 导出面质量通量
+\begin{equation}
+ \mathcal M_f=\rho_l\mathcal F_f^l+\rho_g(\mathcal F_f-\mathcal F_f^l),\qquad
+ m_K=V_K[\rho_g+(\rho_l-\rho_g)C_K].
+\end{equation}
+动量的对流更新使用该 $\mathcal M_f$ 乘以相容的面速度。大密度比下，仅把动量写成保守形式而使用另一套密度通量，仍可能产生明显错误\cite{raessi2012}。不能由 LS 重新平滑出一套输运密度覆盖 $m_K$。
+
+当前 Hydro 的速度/压力自由度与体积控制体不一定同位，因此还要从原生相通量构造\emph{速度对偶控制体}的质量通量，使其质量变化与动量控制体一致。需要证明均匀速度在无外力平移中的保持；把单元面通量数组直接塞到另一网格位置，不等于完成一致性迁移。
+
+\subsection{毛细力与压力梯度的离散平衡}
+在本稿符号下，可将常表面张力的离散力写作
+\begin{equation}
+ \vct f_{\gamma,h}=\gamma\kappa_f G_hC,
+ \qquad -G_hp+\vct f_{\gamma,h}=0
+ \quad\text{当 }p=p_g+\gamma\kappa_0C,\ \kappa_f=\kappa_0.\label{eq:balance}
+\end{equation}
+这里 $G_h$ 必须就是压力算子使用的梯度、面位置及度量；若使用 $C^\Gamma$ 或其平滑函数作为力指标，压力平衡也须使用同一个指标，不能混配。密度、压力修正、轴对称力和对偶体积分都要同步检查。
+
+式 \eqref{eq:balance} 是常曲率的离散一致性目标，不意味着一般流动寄生流为零。曲率空间误差、几何偏差、时间分裂和线性求解误差仍会产生速度。保留当前压力相容载荷思路，先对多分量和新相状态完成接线；\textbf{首轮不同时重写成全新的 ghost-fluid 压力求解器}。尖锐压力跳跃可作为后续独立升级。
+
+\subsection{同一几何上的电学模型}
+对无体自由电荷的漏电介质，在每相求
+\begin{equation}
+ \nabla\cdot(\epsilon\nabla\Phi)=0,\qquad\vct E=-\nabla\Phi,
+ \qquad \jump{\Phi}=0,\qquad
+ q_s=\vct n\cdot\jump{\epsilon\vct E},
+\end{equation}
+其中 $\jump{a}=a_g-a_l$。Maxwell 应力为
+\begin{equation}
+ \vct T_E=\epsilon(\vct E\otimes\vct E-\tfrac12|\vct E|^2\vct I).
+\end{equation}
+用同一 $\Gamma_h$、法向与面积积分计算电学跳跃和界面应力；法向力、切向力都要保留。$q_s\vct E_t$ 的符号必须与上述跳跃约定相容。VOF 电流体的电荷守恒工作提供了整体参考\cite{lopez2011}，但其体电荷离散不能直接当成当前单链表面电荷实现的拓扑迁移算法。
+
+体积密度采用 $C$，尖锐介电界面采用 $\Gamma_h$，允许二者存在受控的表示误差；该误差进入 $E_{C\Gamma}$ 和网格收敛预算。电场、毛细力与电荷\emph{几何}则必须统一，避免额外位置偏差。现有 P3 电场阶次不等于新几何下整体三阶：若界面重构仅二阶，电学整体精度可能受它限制，应如实评估。
+
+\subsection{守恒对象是面元总电荷，而不是电荷密度插值}
+对随材料移动的表面片 $S(t)$，忽略表面扩散时，
+\begin{equation}
+ \frac{\dd}{\dd t}\int_{S(t)}q_s\dd A
+       =\int_{S(t)}(\vct J_l-\vct J_g)\cdot\vct n\dd A,
+ \qquad\vct J=\sigma_e\vct E.\label{eq:charge}
+\end{equation}
+表面伸缩由变化的 $\dd A$ 自动进入；对于不随材料运动的面元，还需加切向相对输运通量与开端点通量。RZ 的面元总电荷为 $Q_a=\int_{S_a}q_s2\pi r\dd s$。
+
+物理推进和数值重网格/同步分开：前者包含导电源与切向输运，后者做纯守恒转移
+\begin{equation}
+ Q_a^{\mathrm{new}}=\sum_b W_{ab}Q_b^{\mathrm{old}},\qquad
+ W_{ab}\ge0,\qquad\sum_aW_{ab}=1,\label{eq:remap}
+\end{equation}
+式 \eqref{eq:remap} 适用于没有物理出域的旧材料片；出域份额单独记账。$W$ 来自随运动后的表面材料重叠或局部守恒投影，不是按各子滴总面积任意分配。最后再用 $q_a=Q_a/A_a$ 得到密度。面积很小但电荷有限时应标记局部电场/分辨率风险，不能直接丢弃 $Q_a$。
+
+\subsection{时间推进与事件历史}
+推荐先以固定物理步长构建二阶预测校正契约：由旧状态预测中间速度与载荷；以该速度推进相体积和几何；在候选几何上推进电荷并解电场；用中间载荷修正 Hydro。如速度修正影响所用相通量，则重算同一步候选账本，不能给同一接受步混用两组速度。强电毛细耦合必要时做有限次 Picard 迭代，收敛判据落在物理状态与收支，而非只在电势变化。
+
+现有 CN/AB2、BE/BDF2 及耦合时序需要逐项匹配，不因 Interface 改造自动升级为全隐式二阶耦合。在拓扑事件或缺失历史时，\textbf{整个受影响耦合步一致地重新启动为一阶}，随后重建历史；不能新表面直接继承旧单链 BDF2 下标。之后若实现变步长，必须使用相应系数，不能沿用等步长公式。
+
+App 持有唯一时钟与提交权。候选 $C,\Gamma,\vct u,p,Q,\Phi$ 以及材料映射全部成功后一起提交；任一模块失败，均恢复旧状态。物理时间步可按
+\begin{equation}
+ \Delta t\lesssim\min\left(C_u\frac{h}{U},\
+ C_\gamma\sqrt{\frac{(\rho_l+\rho_g)h^3}{\gamma}},\
+ C_\mu\frac{\rho h^2}{\mu},\ C_E\,t_E,\ C_n\frac{a_{\min}}{|\dot a_{\min}|}\right)
+\end{equation}
+评估；其中黏性/导电约束取决于显隐式处理，$t_E$ 需结合局部电应力及电荷松弛确定。该式是设计尺度，不是可直接照填的稳定性定理。隐式处理某一项不免除该物理过程的时间精度要求。
+
+\clearpage
+\section{拓扑变化：允许断裂，同时说明何时没有足够分辨率}
+\subsection{拓扑、几何分支与液体连通域分开}
+一滴可以有多条局部分支；一个液体连通域也可能包含内孔或多个边界分量。数据结构至少区分：局部图段与分支、表面连通分量、液体连通域，以及它们的父子事件关系。周期面、轴端、对称端、壁面钉扎端和真实开边界均是几何边界语义，不能用“开放链”一类状态混在一起。
+
+相邻单元连通关系以共享面液体开口和一致的几何切割确定；不能只用 $C>1/2$ 标记液体，后者可能把细颈提前切断。对于 PLIC 相邻单元面迹的小失配，需通过共享的面分割/零面提取消解，并检查最终 $\Gamma_h$ 的连续性；不能把不相接的单元平面直接拼成电学闭合表面。
+
+\subsection{平滑对流测试和真实断裂的要求不同}
+光滑 Lipschitz 速度的连续流映射在有限时间内保持拓扑；因此回逆单涡中出现意外碎滴，是分辨率或数值表示问题，不应当作“成功模拟破碎”。真实毛细或电毛细断裂则会向奇异颈缩演化，有限网格无法解析零半径及其无限曲率。
+
+\textbf{任何有限分辨率的断裂计算都需要明确事件截断尺度。} 允许方法在局部不可分辨时完成一个数值拓扑事件，随后考察断裂时间、主滴体积和可分辨卫星滴是否随加密趋稳；不能承诺奇异瞬间全场高阶或唯一卫星滴数量。液滴接触后的合并还涉及薄气膜排液和可能的分子尺度破膜，单凭水平集两零面接触无法预测所有碰撞结局。
+
+\subsection{加密指标与事件处理流程}
+建议用最小颈半径/膜厚、邻分支距离、$h|\kappa|$、曲率拟合质量和电场变化共同驱动窄带 AMR。$a_{\min}/h$ 与两分支间距分别记录；全局曲率最大值不足以识别所有薄片。首版可用颈/间隙约 $6$--$8$ 个网格作为提前加密提示，\emph{这是待校准的工程起点，不是断裂的物理判据}。
+\begin{enumerate}
+\item 在接受步之前检查预测颈缩与分支接近，提前扩展细网格带，避免细结构已消失后才加密。
+\item 若分辨率仍不足，先缩步/加密；达到设定最高分辨率后，按已声明事件策略处理，记录事件区、时间区间及截断尺度。
+\item 在事件区由守恒 $C$ 和周围可分辨几何重建新的分支，保留全部体积，不通过删除小体积单元生成断裂。
+\item 建立新旧体积重叠、材料路径与局部表面对应，分别处理动量和电荷。发布新几何后，让子滴继续推进；只输出断裂帧不算完成。
+\item 重新建立电学边界归属、压力约束及多步历史，全部模块一起接受该事件。
+\end{enumerate}
+一个单元的一份 $C$ 加一个平面不能解析任意多个细界面。多根库存有助于发现问题，却不能补充缺失信息。首版对同单元多分支优先加密，终极欠解析区按事件策略处理；不要默默把多个分支压成一条线，还声称它们都被解析。
+
+\subsection{子滴电荷与新生表面的处理}
+断裂前远离颈部的旧表面，通过材料对应连续转移电荷；两侧子滴的电荷主要由各自继承的表面材料及步内导电通量决定。残余颈区需采用\textbf{局部守恒的带标签重映射}，同时给出该区包含的体积和电荷比例；比例过大时不能把子滴电荷预测称作可信。
+
+新生封口表面没有一一对应的旧面元。首版事件模型可在局部颈区重建电荷分布并保持该区总电荷，随后重新解电场/导电演化；这是一项必须验证的模型选择，不是由总电荷守恒唯一决定的答案。不得把整滴电荷按新面积重分，也不能无说明将新生面置零而丢失颈区旧电荷。合并时同理处理消失的接触表面电荷。
+
+脱离喷嘴后，液滴不能继续使用喷嘴电极的指定电势。漏电介质滴继续求内部电势；若另用理想导体极限，孤立滴的等势常数未知，应由它的总电荷约束确定。外加电势、电极电流、出域带走的电荷分别记账。
+
+\subsection{亚网格液滴与完整项目范围}
+首轮生产目标是\emph{已解析}的主滴生成和运动。滴径不足约 $8h$ 时只标为欠解析，不以其数量拟合精确粒径分布；该阈值仍需由精度研究校准。后续若增加拉格朗日液滴模型，转换需同时携带质量、动量、电荷和必要能量，并明确阻力、蒸发与库仑作用模型。本方案不通过隐式删滴实现性能提升。
+
+RZ 可描述轴向毛细/电毛细破碎及同轴液滴，不能覆盖非轴对称摆动、鞭甩、离轴库仑分裂及完整三维喷雾云。Interface 的 ID、测度与转移接口应预留三维语义，近期不以实现整个三维求解器阻塞 RZ 主线。
+
+\section{工程实施：收敛为一条主线，而非再增加大量分支}
+\subsection{模块边界与可复用代码}
+\begin{longtable}{L{31mm}L{118mm}}
+\toprule 归属 & 建议职责\\\midrule\endhead
+Core / Geometry & 原生单元/子面度量、几何裁剪和矩、可靠求交与谓词、局部坐标及最近点。不读取物性、case 名称或算法字典。\\
+Modules / Interface & 唯一持有 $C,\phi,\Gamma$、通量账本、曲率质量、连通域与材料映射。把预测、相输运、同步、几何查询分成职责明确的内部步骤。\\
+Hydrodynamics & 无散面通量、对偶质量/动量、压力与表面力相容装配；接受多分量几何，不再假设只有一条钉扎到轴链。\\
+Electricity & 电势、电荷总量及其历史、导电源和边界电流；使用 Interface 提供的材料映射，不自行通过点序号猜父子面元。\\
+Apps / Electrospray & 唯一时钟、耦合预测校正、候选回滚/提交、事件重启及输出调度。IO 不计算曲率和物理收支。\\\bottomrule
+\end{longtable}
+
+重点复用 \code{InterfaceState}、\code{InterfaceTopology}、\code{InterfaceMotion} 的状态与材料语义，以及当前 Core 原生面/轴端处理。需要改变的是状态契约和消费者依赖，\emph{不是把另一个整套 NS 求解器塞到 Interface 里}。既有共享根和精确算术仍用于身份、相切和几何分割；常规 PLIC 面积矩、距离与曲率不应默认全部走最昂贵算术。
+
+\subsection{推荐三个工作包与一个应用收口}
+\begin{longtable}{L{18mm}L{81mm}L{46mm}}
+\toprule 阶段 & 一次完成的较大修改 & 收口条件\\\midrule\endhead
+A：界面基线 & $C$ 和共享通量、PLIC、LS 同步、分支曲率、XY/RZ 测度、统一几何查询；窄带先同层。明确弃用旧 KKT 作为新主线每步条件。 & 一轮几何＋输运综合验证；守恒、曲率、表示差异和成本同时可解释。\\
+B：无电破碎 & Hydro 一致质量动量、多分量平衡力、周期/对称边界、AMR 保守接续与事件流程。 & 静滴/移动滴和无电液柱；首次断裂后子滴继续推进，主量有网格趋势。\\
+C：带电接续 & 多面元电荷保守映射、断裂区处理、孤立滴电势、历史重启及整体回滚。 & 无运动充电＋带电几何事件＋一次带电破碎，电流/电荷闭合且分配可信。\\
+D：喷嘴应用 & 固定接触点、实际供液/电压、合理时间窗、出口与滴统计，集中优化主要耗时。 & 一次真实喷嘴带电脱落并继续；逐步扩展多次脱落与物理对照。\\\bottomrule
+\end{longtable}
+这些工作包重排原 P1--P5 的方法与耦合内容，不把已完成库存清零。首先实施 A 的最小闭环；\textbf{本次文档交付不自动开始 A}，保持用户要求的暂停状态。
+
+\subsection{原型需要回答的三个问题}
+\begin{enumerate}
+\item 在相同流体网格下，守恒 $C$ 与公开几何 $\Gamma_h$ 的偏差是否稳定受控，曲率和力是否比现有修正流程更可靠？
+\item XY 成立后，RZ 加权通量、轴端、钉扎段是否仍满足同样契约，而无需一套不断增加的特殊容限？
+\item 以达到同等位置/曲率误差为准，几何、同步和求解的总成本是否可接受？减少失败重跑也是成本的一部分。
+\end{enumerate}
+若 A 失败，先按通量有界性、同步误差、曲率模板三类定位；不立刻扩大到几十个新算例。若主要瓶颈确实是光滑几何与体积分数无法同步，再选择局部高阶体积矩重构；只有在精度要求允许几何体积小幅漂移而几何裁剪成本无法接受时，才重新比较改进 ACLS。每次路线取舍都基于已定义误差，不同时维护三套生产算法。
+
+\subsection{容限、性能与字典}
+体积判断采用绝对与相对尺度的组合，例如单元收支残差尺度 $\epsilon_{V,K}=\epsilon_{\mathrm{abs}}V_K+\epsilon_{\mathrm{rel}}\max(V_KC_K,\sum_f|\mathcal F_f^l|)$，并另计求积和舍入估计。接近零的目标不能只相对一个更小的数判断；但计算误差预算也不能拿来掩盖明显越界。微小修复若确有必要，应通过共享通量作等量交换并记账，而非静默裁剪。
+
+常规每步只记录相收支、$C$ 范围、几何一致性、曲率失效/降阶数、事件与电荷收支及各阶段耗时。详细根包围和积分轨迹只在定位故障时开启。只维护当前窄带、缓存本次候选的几何查询，减少同一面重复积分；优化的前提是状态版本和失效规则清楚。
+
+\textbf{本稿不新增可直接使用的字典字段。} 现有 \code{interface.dict} 仍表示当前实现。未来只暴露稳定的物理/精度选择：界面方法、最细界面分辨率、事件/欠解析策略及诊断等级；内部求根次数和每个线性代数阈值不逐项变成用户旋钮。\code{materials.dict} 持有物性，\code{run.dict} 持有唯一物理时间控制。不能通过添加一个尚不存在的 \code{allowBreakup} 获得断裂能力。
+
+\clearpage
+\section{轻量而有辨别力的集中验证}
+\subsection{验证节奏}
+实现中按需要增量编译；只有出现具体故障或改变重要契约时才运行最小定位。\textbf{每个较大工作包末尾集中跑一轮相关验证}，不每改一个函数就跑全部 CTest 和三档长算例。一个工作包保留一份汇总，失败证据保留但不扩散成不断新增的进度报告。
+
+验收首先检验方法承诺，不以“进程退出零”作为数值通过。初次开发用两档网格检查趋势；包收口时对关键代表补第三档，并只在一个代表问题上做时间减半。不得在空间与时间同时变化的结果上直接宣称纯空间阶次。
+
+\subsection{最小验证矩阵与各自回答的问题}
+\begin{longtable}{L{26mm}L{72mm}L{47mm}}
+\toprule 组别 & 设置与观测 & 放在哪个收口\\\midrule\endhead
+G：解析几何 & 圆、RZ 球、偏移圆；近邻双滴与同体折返；轴端/固定端；积分、位置、法向、曲率与分支选择。 & A；一次批处理，不每种几何各写一套流水线。\\
+T：规定运动 & B2 回逆单涡 $T=2$ 为光滑输运主项；B3 RZ 固定端解析运动检查加权体积和轴端。B1 开槽圆仅在 A 收口补一次角点压力测试。 & A；B1 尖角不考核曲率最大误差，B2 意外断裂不能算成功。\\
+F：力与动量 & XY/RZ 静滴；大密度比无外力均匀平移滴检验一致动量；必要时把毛细移动滴作代表动态项。 & B；同时看压差、寄生流、均匀速度保持，区分几何和算子误差。\\
+P：无电断裂 & Rayleigh--Plateau 先小扰动增长，后有限扰动断裂，参数沿用原 B5 规格。 & B；断裂时刻、主滴体积、最小颈径和解析/欠解析卫星滴，继续推进子滴。\\
+E：电荷接续 & 固定几何充电／导电收支；制造分裂映射；再做带电自由界面事件。 & C；制造事件只验证转移，不能代替真实电毛细动力学。\\
+S：喷嘴闭环 & 原喷嘴几何、供液和电势；先覆盖一个脱落周期，再看多次脱落。 & D；供液质量、流出质量、电极电流、液滴电荷与可分辨滴径。\\\bottomrule
+\end{longtable}
+
+\subsection{明确区分目标数值与普适标准}
+对无相变封闭域，相体积收支定义为
+\begin{equation}
+ R_V^n=\sum_KV_KC_K^n-\sum_KV_KC_K^0
+             +\sum_{m<n}\sum_{f\in\partial\Omega}\mathcal F_{f,m}^l.
+\end{equation}
+开放边界的符号按向外定义；有源项时另加其累计项。建议以 $|R_V|/V_{l,\mathrm{ref}}\le10^{-10}$ 作为双精度、适中步数的首版输运账本目标，长算例应同时和舍入累计预算比较。不能把几何体积 $V_l^\Gamma$ 填进该式却仍沿用 $C$ 的守恒结论。
+
+曲率用界面面积加权范数
+\begin{equation}
+ E_{\kappa,2}=\left(\frac{\int_{\Gamma_h}|\kappa_h-\kappa_{\mathrm{ref}}|^2\dd A}
+ {\int_{\Gamma_h}|\kappa_{\mathrm{ref}}|^2\dd A}\right)^{1/2},
+\end{equation}
+参考曲率通过最近点或解析参数对应到数值界面，不靠不同面元下标硬比。近平面参考曲率为零时改用特征长度归一化的绝对误差。首版光滑代表最细档可取 $E_{\kappa,2}<1\%$，并要求网格改善；轴端误差单列。
+
+静滴沿用原 B4 的建议目标：最细档压差相对误差 $<1\%$，$U_{\max}/\sqrt{\gamma/(\rho_lR)}<10^{-3}$，并出现下降趋势。电荷收支使用面元总电荷加边界电流/出域电荷核算；源积分与线性求解误差决定其容限，纯重映射则要求达到舍入量级。\textbf{所有这些门限均为项目拟议目标，不是文献对任意网格的保证。}
+
+对物理断裂，不在奇异瞬间拟合曲率收敛阶。比较两档最细网格的断裂时间、主滴体积和电荷，暂以数个百分点差异作为是否需要继续细化的判断起点；同时报告事件区占总量比例与最低可解析滴径。若这些量仍不稳定，应明确“不足以给出定量喷雾预测”，而不是不断调阈值直到统计数字相近。
+
+\subsection{一份阶段汇总应该只包含什么}
+参数与程序版本、完整终时、网格/时间步、上述误差与守恒指标、失效/事件次数、主要耗时，以及结论支持的范围即可。成功结果保留关键帧和时间序列；详细非线性/几何追踪只留给定位失败。不重新生成已由相同程序和输入完成的证据，也不拿短程 smoke 替代完整周期。
+
+\section{设计决策清单与仍需解决的风险}
+\begin{longtable}{L{36mm}L{113mm}}
+\toprule 现在可以确定 & 理由与后续边界\\\midrule\endhead
+主线选 CLSVOF 型耦合 & 相通量、体积和大密度比动量契约清楚；保留 LS 对几何与电学查询的价值。先做 A 的闭环，不立即迁移全部喷嘴。\\
+几何体积误差单列 & $C$ 守恒不等于 $\Gamma_h$ 严格守恒；必须评估同步误差及其对曲率、电场和子滴统计的影响。\\
+曲率优先高度／分支拟合 & 避免全局距离折角和 Q4 系数噪声直接进入毛细力；RZ 轴端、同体近邻分支有专门处理。\\
+先二阶基线，后局部高阶 & 可验证的力与误差比插值阶次更重要；高阶只用于可靠光滑区，不承诺断裂奇异处高阶。\\
+通量和材料转移是公共契约 & 守恒体积、动量和电荷各有自己的量，不能靠一套面元 ID 或全局缩放同时修复。\\
+按工作包集中验证 & 以小矩阵识别独立机制，完整网格与时间研究放在收口，不再逐小步堆积验证。\\\bottomrule
+\end{longtable}
+最需要尽早验证的风险是：\textbf{RZ 几何通量的加权有界性、PLIC 到连续零面的同步精度、无有效高度列时的曲率质量，以及事件区电荷重映射的网格敏感性}。这些是原型的研究问题，不能用文献已有 CLSVOF 结果代替项目自己的实现证明。
+
+本稿建议的推进方式是先完成这一套闭合的方法契约，再集中做一个较大的 Interface 改造包。现有失败算例转为查验特定机制的工具；它们不再决定整个方法应逐项追加什么补丁。
+
+\appendix
+\clearpage
+\section{文献使用记录与源码对应}
+\subsection{本地文献：选择性阅读范围}
+根目录为\par
+\noindent D:\textbackslash !-参考文献\textbackslash 1-核心领域\textbackslash 流体计算\textbackslash 运动界面捕获方法\par
+下表给出可定位的文件名前缀/题名及本次直接阅读的 PDF 文件页，页码从 1 开始，非印刷页码。这里只声明实际查看的部分，不声称逐页审阅全部文献。
+\begin{longtable}{L{31mm}L{21mm}L{93mm}}
+\toprule 文献 & PDF 页 & 本地定位与用途\\\midrule\endhead
+Olsson--Kreiss 2005 & 1--2 & \code{Level Set/@-2005-A conservative...I.pdf}；保守平滑指标及方法定位。\\
+Desjardins 等 2008 & 1--2、5--8 & \code{Level Set/2008-An accurate conservative...}；几何体积与指标积分的差别、法向和重初始化。\\
+Chiodi--Desjardins 2017 & 1 & \code{Level Set/2017-A reformulation...}；距离映射重初始化及其改善范围。\\
+Janodet 等 2022 & 1 & \code{Level Set/\#-2022-A massively parallel...}；AMR/非结构 ACLS 的能力与非严格质量守恒表述。\\
+Nave 等 2010 & 1--2 & \code{Level Set/GALS-2010-@@-A gradient-augmented...}；标量与导数一致输运。\\
+Ervik 等 2014 & 1--6 & \code{Level Set/2014-}曲率计算\code{-A robust method...}；近邻界面、同体折返与局部距离分支。\\
+Henri 等 2022 & 1--5 & \code{Level Set/2022-Geometrical level set reinitialization...}；closest point 和 kink 检测。\\
+Coquerelle--Glockner 2016 & 1 & \code{Level Set/2016-}高阶\code{-A fourth-order accurate curvature...}；界面曲率与延拓、输运精度的联系。\\
+Cummins 等 2005 & 1--2 & \code{VOF-2005-}曲率计算\code{-Estimating curvature...}；高度函数、重建距离的比较。\\
+Owkes--Desjardins 2014 & 1、4--7 & \code{VOF-A computational framework...}；不重叠扫掠、离散无散及 PLIC 通量。\\
+Ménard 等 2007 & 1 & \code{Level Set/2007-T. Menard-Coupling level setVOFghost...}；CLSVOF 与射流破碎应用。\\
+Sussman 2003 & 1--2 & \code{CLSVOF-2003-@-Mark Sussman-A second order...}；气泡增长/坍塌模型范围，用于路线背景，未直接移植其可压缩处理。\\\bottomrule
+\end{longtable}
+在线核对采用作者/机构全文、期刊原文或机构书目：Sussman--Puckett 2000、Popinet 2009、López-Herrera 等 2011、Raessi--Pitsch 2012，以及上述部分论文。访问日期 2026-09-21。Enright 2002 的粒子方法作为路线背景，沿用上一设计已阅读的本地原文与书目信息。原 B0--B8 的完整算例定义仍见 \code{QUANTUM_Interface_Topology_Benchmark_Design.tex}，本稿不重复其全部参数表。
+
+\clearpage
+\subsection{当前源码能力边界的复核入口}
+\begin{itemize}
+\item \code{include/Modules/Interface/InterfaceState.h}：几何状态与运动接线。
+\item \code{include/Modules/Interface/InterfaceComponentMotion.h}：闭合 XY/RZ 分量；非预期事件仍拒绝。
+\item \code{include/Modules/Interface/InterfaceTemporalPhaseFlux.h}、\code{InterfaceVolumeCorrection.h}：当前步内几何通量和局部修正接口。
+\item \code{include/Modules/Hydrodynamics/HydroFittedInterfaceLoadGeometry.h}：保留的单开链 RZ 拟合载荷依赖。
+\item \code{include/Modules/Electricity/SurfaceChargeTransport.h}：单闭环/开链守恒电荷与材料重映射，尚非任意多滴事件系统。
+\item \code{docs/QUANTUM_Code_Organization_Standard.md}：Core、模块、App 与 IO 的职责边界。
+\end{itemize}
+本稿提出的新状态和算法均为设计规格；没有创建同名新 API，也没有更改用户当前 \code{run.dict} 的步长或终时。
+
+\section{文档重建}
+源文件自含样式、参考文献和矢量流程图，无外部图片或 BibTeX 依赖。使用本机已有 XeLaTeX，在项目根目录运行：
+\begin{lstlisting}
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/docs/build_levelset_method.ps1
+\end{lstlisting}
+PDF 输出为 \code{docs/QUANTUM_LevelSet_Method_Design.pdf}，中间文件在 \code{build/docs/levelset_method}。脚本只编译本文，不安装依赖、不调用 C++ 构建，也不启动 benchmark。本文中的工程阈值是拟议起点，所有方法示意图均非数值结果。
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{section}{参考文献}
+\begin{thebibliography}{99}
+\bibitem{sussman2000} M. Sussman, E. G. Puckett. A Coupled Level Set and Volume-of-Fluid Method for Computing 3D and Axisymmetric Incompressible Two-Phase Flows. \emph{Journal of Computational Physics}, 162 (2000), 301--337. \doi{10.1006/jcph.2000.6537}. \href{https://www.math.ucdavis.edu/~egp/PUBLICATIONS/JOURNAL_ARTICLES/APPEARED/2000/MSS-EGP_2000.pdf}{作者机构全文}。
+\bibitem{menard2007} T. Ménard, S. Tanguy, A. Berlemont. Coupling level set/VOF/ghost fluid methods: Validation and application to 3D simulation of the primary break-up of a liquid jet. \emph{International Journal of Multiphase Flow}, 33 (2007), 510--524. \doi{10.1016/j.ijmultiphaseflow.2006.11.001}.
+\bibitem{nave2010} J.-C. Nave, R. R. Rosales, B. Seibold. A gradient-augmented level set method with an optimally local, coherent advection scheme. \emph{Journal of Computational Physics}, 229 (2010), 3802--3827. \doi{10.1016/j.jcp.2010.01.029}. \href{https://arxiv.org/abs/0905.3409}{作者预印本}。
+\bibitem{enright2002} D. Enright, R. Fedkiw, J. Ferziger, I. Mitchell. A Hybrid Particle Level Set Method for Improved Interface Capturing. \emph{Journal of Computational Physics}, 183 (2002), 83--116. \doi{10.1006/jcph.2002.7166}.
+\bibitem{olsson2005} E. Olsson, G. Kreiss. A conservative level set method for two phase flow. \emph{Journal of Computational Physics}, 210 (2005), 225--246. \doi{10.1016/j.jcp.2005.04.007}.
+\bibitem{desjardins2008} O. Desjardins, V. Moureau, H. Pitsch. An accurate conservative level set/ghost fluid method for simulating turbulent atomization. \emph{Journal of Computational Physics}, 227 (2008), 8395--8416. \doi{10.1016/j.jcp.2008.05.027}.
+\bibitem{chiodi2017} R. Chiodi, O. Desjardins. A reformulation of the conservative level set reinitialization equation for accurate and robust simulation of complex multiphase flows. \emph{Journal of Computational Physics}, 343 (2017), 186--200. \doi{10.1016/j.jcp.2017.04.053}.
+\bibitem{janodet2022} R. Janodet et al. A massively parallel accurate conservative level set algorithm for simulating turbulent atomization on adaptive unstructured grids. \emph{Journal of Computational Physics}, 458 (2022), 111075. \doi{10.1016/j.jcp.2022.111075}.
+\bibitem{cummins2005} S. J. Cummins, M. M. Francois, D. B. Kothe. Estimating curvature from volume fractions. \emph{Computers \& Structures}, 83 (2005), 425--434. \doi{10.1016/j.compstruc.2004.08.017}.
+\bibitem{popinet2009} S. Popinet. An accurate adaptive solver for surface-tension-driven interfacial flows. \emph{Journal of Computational Physics}, 228 (2009), 5838--5866. \doi{10.1016/j.jcp.2009.04.042}. \href{https://gerris.dalembert.upmc.fr/papers/tension.pdf}{作者全文}。
+\bibitem{ervik2014} Å. Ervik, K. Y. Lervåg, S. T. Munkejord. A robust method for calculating interface curvature and normal vectors using an extracted local level set. \emph{Journal of Computational Physics}, 257 (2014), 259--277. \doi{10.1016/j.jcp.2013.09.053}. \href{https://arxiv.org/abs/1405.0829}{作者预印本}。
+\bibitem{henri2022} F. Henri, M. Coquerelle, P. Lubin. Geometrical level set reinitialization using closest point method and kink detection for thin filaments, topology changes and two-phase flows. \emph{Journal of Computational Physics}, 448 (2022), 110704. \doi{10.1016/j.jcp.2021.110704}.
+\bibitem{coquerelle2016} M. Coquerelle, S. Glockner. A fourth-order accurate curvature computation in a level set framework for two-phase flows subjected to surface tension forces. \emph{Journal of Computational Physics}, 305 (2016), 838--876. \doi{10.1016/j.jcp.2015.11.014}.
+\bibitem{owkes2014} M. Owkes, O. Desjardins. A computational framework for conservative, three-dimensional, unsplit, geometric transport with application to the volume-of-fluid (VOF) method. \emph{Journal of Computational Physics}, 270 (2014), 587--612. \doi{10.1016/j.jcp.2014.04.022}.
+\bibitem{raessi2012} M. Raessi, H. Pitsch. Consistent mass and momentum transport for simulating incompressible interfacial flows with large density ratios using the level set method. \emph{Computers \& Fluids}, 63 (2012), 70--81. \doi{10.1016/j.compfluid.2012.04.002}. \href{https://publications.rwth-aachen.de/record/217833}{作者机构书目}。
+\bibitem{lopez2011} J. M. López-Herrera, S. Popinet, M. A. Herrada. A charge-conservative approach for simulating electrohydrodynamic two-phase flows using Volume-Of-Fluid. \emph{Journal of Computational Physics}, 230 (2011), 1939--1955. \doi{10.1016/j.jcp.2010.11.042}. \href{https://gerris.dalembert.upmc.fr/papers/ehd.pdf}{作者全文}。
+\end{thebibliography}
+\end{document}

@@ -1,0 +1,320 @@
+[
+    {
+        "name":  "electrospray",
+        "app":  "Electrospray",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd electrospray"
+    },
+    {
+        "name":  "hermite_gals_rotation_xy",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_rotation_xy"
+    },
+    {
+        "name":  "hermite_gals_rotation_xy_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_rotation_xy_amr"
+    },
+    {
+        "name":  "hermite_gals_rotation_xy_dynamic",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_rotation_xy_dynamic"
+    },
+    {
+        "name":  "hermite_gals_rotation_xy_dynamic_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_rotation_xy_dynamic_amr"
+    },
+    {
+        "name":  "hermite_gals_static_rz",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_static_rz"
+    },
+    {
+        "name":  "hermite_gals_static_rz_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_static_rz_amr"
+    },
+    {
+        "name":  "hermite_gals_static_rz_dynamic",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_static_rz_dynamic"
+    },
+    {
+        "name":  "hermite_gals_static_rz_dynamic_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_static_rz_dynamic_amr"
+    },
+    {
+        "name":  "hermite_gals_static_xy",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_static_xy"
+    },
+    {
+        "name":  "hermite_gals_static_xy_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_static_xy_amr"
+    },
+    {
+        "name":  "hermite_gals_static_xy_dynamic",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_static_xy_dynamic"
+    },
+    {
+        "name":  "hermite_gals_static_xy_dynamic_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_static_xy_dynamic_amr"
+    },
+    {
+        "name":  "hermite_gals_translation_rz",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_translation_rz"
+    },
+    {
+        "name":  "hermite_gals_translation_rz_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_translation_rz_amr"
+    },
+    {
+        "name":  "hermite_gals_translation_rz_dynamic",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_translation_rz_dynamic"
+    },
+    {
+        "name":  "hermite_gals_translation_rz_dynamic_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_translation_rz_dynamic_amr"
+    },
+    {
+        "name":  "hermite_gals_translation_xy",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_translation_xy"
+    },
+    {
+        "name":  "hermite_gals_translation_xy_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_translation_xy_amr"
+    },
+    {
+        "name":  "hermite_gals_translation_xy_dynamic",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_translation_xy_dynamic"
+    },
+    {
+        "name":  "hermite_gals_translation_xy_dynamic_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_translation_xy_dynamic_amr"
+    },
+    {
+        "name":  "hermite_gals_vortex_xy",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_vortex_xy"
+    },
+    {
+        "name":  "hermite_gals_vortex_xy_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_vortex_xy_amr"
+    },
+    {
+        "name":  "hermite_gals_vortex_xy_dynamic",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_vortex_xy_dynamic"
+    },
+    {
+        "name":  "hermite_gals_vortex_xy_dynamic_amr",
+        "app":  "Interface",
+        "status":  "verified_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_vortex_xy_dynamic_amr"
+    },
+    {
+        "name":  "hermite_gals_vortex_long_time/dynamic_amr",
+        "app":  "Interface",
+        "status":  "verified_long_window_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_vortex_long_time/dynamic_amr"
+    },
+    {
+        "name":  "hermite_gals_vortex_long_time/fixed_amr",
+        "app":  "Interface",
+        "status":  "verified_long_window_FirstJet",
+        "command":  "tools\\run_case.cmd hermite_gals_vortex_long_time/fixed_amr"
+    },
+    {
+        "name":  "hydro_column_breakup_near",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_column_breakup_near"
+    },
+    {
+        "name":  "hydro_column_growth",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_column_growth"
+    },
+    {
+        "name":  "hydro_conservative_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_conservative_rz"
+    },
+    {
+        "name":  "hydro_drop_oscillation",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_drop_oscillation"
+    },
+    {
+        "name":  "hydro_hysing_bubble/tc1",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_hysing_bubble/tc1"
+    },
+    {
+        "name":  "hydro_hysing_bubble/tc2",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_hysing_bubble/tc2"
+    },
+    {
+        "name":  "hydro_moment_adaptive_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_adaptive_rz"
+    },
+    {
+        "name":  "hydro_moment_capillary_amr_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_capillary_amr_rz"
+    },
+    {
+        "name":  "hydro_moment_capillary_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_capillary_rz"
+    },
+    {
+        "name":  "hydro_moment_neck_adaptive_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_neck_adaptive_rz"
+    },
+    {
+        "name":  "hydro_moment_neck_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_neck_rz"
+    },
+    {
+        "name":  "hydro_moment_neck_thinning_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_neck_thinning_rz"
+    },
+    {
+        "name":  "hydro_moment_ports_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_ports_rz"
+    },
+    {
+        "name":  "hydro_moment_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_rz"
+    },
+    {
+        "name":  "hydro_moment_supply_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_supply_rz"
+    },
+    {
+        "name":  "hydro_moment_two_drops_rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_two_drops_rz"
+    },
+    {
+        "name":  "hydro_moment_xy",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_moment_xy"
+    },
+    {
+        "name":  "hydro_static_drop/rz",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_static_drop/rz"
+    },
+    {
+        "name":  "hydro_static_drop/xy",
+        "app":  "SingleModule",
+        "status":  "frozen_or_experimental_coupling",
+        "command":  "tools\\run_case.cmd hydro_static_drop/xy"
+    },
+    {
+        "name":  "benchmarks/hermite_gals",
+        "app":  "FirstJetBenchmark",
+        "status":  "explicit_research",
+        "command":  "tools\\run_case.cmd benchmarks/hermite_gals"
+    },
+    {
+        "name":  "benchmarks/hermite_gals_coarsening",
+        "app":  "FirstJetBenchmark",
+        "status":  "explicit_research",
+        "command":  "tools\\run_case.cmd benchmarks/hermite_gals_coarsening"
+    },
+    {
+        "name":  "benchmarks/hermite_gals_curvature",
+        "app":  "FirstJetBenchmark",
+        "status":  "explicit_research",
+        "command":  "tools\\run_case.cmd benchmarks/hermite_gals_curvature"
+    },
+    {
+        "name":  "benchmarks/hermite_gals_regrid",
+        "app":  "FirstJetBenchmark",
+        "status":  "explicit_research",
+        "command":  "tools\\run_case.cmd benchmarks/hermite_gals_regrid"
+    },
+    {
+        "name":  "benchmarks/hermite_gals_smoke",
+        "app":  "FirstJetBenchmark",
+        "status":  "explicit_research",
+        "command":  "tools\\run_case.cmd benchmarks/hermite_gals_smoke"
+    },
+    {
+        "name":  "benchmarks/hermite_gals_space",
+        "app":  "FirstJetBenchmark",
+        "status":  "explicit_research",
+        "command":  "tools\\run_case.cmd benchmarks/hermite_gals_space"
+    },
+    {
+        "name":  "benchmarks/hermite_gals_time",
+        "app":  "FirstJetBenchmark",
+        "status":  "explicit_research",
+        "command":  "tools\\run_case.cmd benchmarks/hermite_gals_time"
+    }
+]

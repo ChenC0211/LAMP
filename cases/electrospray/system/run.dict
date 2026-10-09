@@ -1,0 +1,49 @@
+Run
+{
+    schemaVersion 2
+    app Electrospray
+}
+
+# 保留原代码时间：共 4,000,000 步，不是开发短程。
+# 改短程时只改运行副本，不覆盖本模板；时间尺度见 units.dict。
+Time
+{
+    units code
+    dt 5e-6
+    endTime 20.0
+}
+
+Output
+{
+    prefix electrospray
+    Fields
+    {
+        enabled true
+        format tecplot
+        profile physical
+        writeControl stepInterval
+        writeInterval 10
+        writeInitial true
+        writeFirst true
+        writeFinal true
+    }
+}
+
+Log
+{
+    everySteps 1
+    level summary
+}
+
+Restart
+{
+    model none
+}
+
+Electrospray
+{
+    Coupling
+    {
+        electricUpdate everyStep
+    }
+}

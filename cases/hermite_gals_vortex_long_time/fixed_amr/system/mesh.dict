@@ -1,0 +1,6 @@
+Mesh
+{
+    resolution 16;
+    initialMesh amr;
+    Refinement { min (.25 .25); max (.75 .75); level 3; }
+}

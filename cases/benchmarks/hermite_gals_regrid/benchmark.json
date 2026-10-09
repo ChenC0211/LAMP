@@ -1,0 +1,8 @@
+{
+    "program":  "LAMP_hermite_gals_benchmark.exe",
+    "study":  "regrid",
+    "arguments":  [
+                      "regrid"
+                  ],
+    "description":  "Pure Hermite-GALS regrid study"
+}

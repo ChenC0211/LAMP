@@ -1,0 +1,5 @@
+Interface
+{
+    method hermiteGals;
+    Boundary { type prescribed; phi "(.5+cos(-omega*t)*(x-.5)-sin(-omega*t)*(y-.5)-cx)*(.5+cos(-omega*t)*(x-.5)-sin(-omega*t)*(y-.5)-cx)+(.5+sin(-omega*t)*(x-.5)+cos(-omega*t)*(y-.5)-cy)*(.5+sin(-omega*t)*(x-.5)+cos(-omega*t)*(y-.5)-cy)-radius*radius"; }
+}

@@ -1,0 +1,10 @@
+Domain { min (-0.5, -0.5); max (0.5, 0.5); dimension 2; }
+ParametricInterface
+{
+    name liquid;
+    type analytic;
+    constants { R 0.1; epsilon 0.05; }
+    x "R*(1+epsilon*cos(4*pi*s))*cos(2*pi*s)";
+    y "R*(1+epsilon*cos(4*pi*s))*sin(2*pi*s)";
+    segments 64;
+}

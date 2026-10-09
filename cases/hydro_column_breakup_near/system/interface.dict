@@ -1,0 +1,4 @@
+Interface {
+    transport conservative; advectInterface true; reinitializeEvery 0;
+    neckBreakup { maximumLevel 0; radiusCells 0.4; }
+}

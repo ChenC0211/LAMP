@@ -1,0 +1,104 @@
+# 原喷嘴：液体至少 3 级，运动界面、无滑移壁面、轴线及入口 4 级。
+# 0/1/2/3/4 级的 dr x dz 分别为 0.25x0.4 / 0.125x0.2 /
+# 0.0625x0.1 / 0.03125x0.05 / 0.015625x0.025 um。
+# 开放边界不设专门加密带；远场低速气体允许回到 1 级。
+# Domain in geometry.dict is [0,5] x [0,16] um = the same code box at L0=1 um.
+BackgroundMesh
+{
+    divide (20, 40)
+}
+
+adaptiveMesh true
+
+RuntimeAdaptation
+{
+    enabled true
+    everySteps 1
+    maxSweeps 2
+}
+
+QuadtreeMesh
+{
+    maxCellNum 200000
+    maxInitialIterations 4
+    C_Lipschitz 5.0
+}
+
+GeometryRefinement
+{
+    enabled true
+    refineBoundary
+    {
+        # 当前液面含 tip；距离带随液面移动，不使用初始圆弧替代当前界面。
+        # C_Gamma 乘单元对角线长度；留足载荷及界面传递的保护带。
+        boundaryId 4 C_Gamma 5.0 maxLevel 4
+        boundaryId 3 C_Gamma 2.6 maxLevel 4
+        boundaryId 2 C_Gamma 2.6 maxLevel 4
+    }
+    refinePhase
+    {
+        # 相 ID 来自 geometry.dict；运行时使用当前液面重新判相。
+        phase 2 minLevel 3 maxLevel 4
+        phase 3 minLevel 1 maxLevel 4
+    }
+    refineRegion
+    {
+        entry
+        {
+            name remote_domain_level1
+            shape box
+            xmin 0 um
+            xmax 5 um
+            ymin 0 um
+            ymax 16 um
+            maxLevel 1
+        }
+        entry
+        {
+            name inlet_same_level_buffer
+            shape box
+            xmin 0 um
+            xmax 1.25 um
+            ymin 0 um
+            ymax 0.2 um
+            maxLevel 4
+        }
+        entry
+        {
+            name nozzle_shoulder_wall_buffer
+            shape box
+            xmin 0 um
+            xmax 5 um
+            ymin 2.8 um
+            ymax 3.2 um
+            maxLevel 4
+        }
+        # 轴线与入口保留约 8 个四级单元宽的局部支撑带。
+        entry
+        {
+            name radial_axis_buffer
+            shape box
+            xmin 0 um
+            xmax 0.125 um
+            ymin 0 um
+            ymax 16 um
+            maxLevel 4
+        }
+    }
+}
+
+PhysicsRefinement
+{
+    enabled true
+    indicators (Velocity VelocityGradient)
+    # 采用当前已接受速度场；不按每步最大值归一化放大初始微弱流动。
+    velocityThreshold 0.3 m/s
+    velocityGradientThreshold 1e6 1/s
+    # 比值 > 1 时细化，< 0.75 时允许粗化，中间保持；几何最低层级优先。
+    hysteresis 0.25
+    caps
+    {
+        Velocity maxLevel 4
+        VelocityGradient maxLevel 4
+    }
+}
