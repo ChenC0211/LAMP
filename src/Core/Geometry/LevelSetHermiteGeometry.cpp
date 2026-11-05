@@ -1,7 +1,10 @@
 #include "Core/Geometry/LevelSetHermiteGeometry.h"
+#include "Core/Geometry/ActiveQuarticHermiteCompletion.h"
 #include "Core/Geometry/Detail/ExactFaceTimeRational.h"
+#include "Core/Geometry/Detail/LevelSetHermiteQuarticLeafData.h"
 #include "Core/Geometry/QuarticBernsteinRoots.h"
 #include "Core/Geometry/UnitPolynomialRoots.h"
+#include "Core/Geometry/PreparedUnitPolynomial.h"
 #include "Core/Geometry/Detail/LevelSetHermiteGeometry.h"
 #include "Core/Geometry/Detail/LevelSetHermiteQuarticGridData.h"
 #include "Core/Geometry/LevelSetMappedSegment.h"
@@ -28,12 +31,12 @@
 #include <variant>
 #include <type_traits>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
-static std::array<Detail::ExactExpansion::Expansion,12> expandedUnitPolynomial(const std::vector<UnitPolynomialTerm>& terms)
+static void appendExpandedUnitPolynomial(std::array<Detail::ExactExpansion::Expansion,12>& polynomial,
+    const std::vector<UnitPolynomialTerm>& terms)
 {
     namespace E=Detail::ExactExpansion;E::validateEnvironment();
-    std::array<Detail::ExactExpansion::Expansion,12> polynomial{};
     for (const auto& term:terms) {
         E::Expansion factor;
         long double remainder=term.factor;
@@ -53,17 +56,23 @@ static std::array<Detail::ExactExpansion::Expansion,12> expandedUnitPolynomial(c
             polynomial[i]=E::add(polynomial[i],E::multiply(factor,E::fromDouble(term.coefficients[i])));
         }
     }
-    return polynomial;
 }
-UnitPolynomialRoots isolateUnitPolynomial(const std::vector<UnitPolynomialTerm>& terms)
+static std::array<Detail::ExactExpansion::Expansion,12> expandedUnitPolynomial(const std::vector<UnitPolynomialTerm>& terms)
 {
-    const auto polynomial=expandedUnitPolynomial(terms);
+    std::array<Detail::ExactExpansion::Expansion,12> polynomial{};
+    appendExpandedUnitPolynomial(polynomial,terms);return polynomial;
+}
+static UnitPolynomialRoots isolateExpandedUnitPolynomial(
+    const std::array<Detail::ExactExpansion::Expansion,12>& polynomial)
+{
     const auto isolated=Detail::PolynomialSegmentRoots::isolateEndpointRelative(polynomial);
     UnitPolynomialRoots result;result.identicallyZero=isolated.identicallyZero;
     for (std::size_t i=0;i<isolated.roots.size();++i)
         result.roots.push_back({isolated.roots[i],isolated.enclosures[i].lo,isolated.enclosures[i].hi});
     return result;
 }
+UnitPolynomialRoots isolateUnitPolynomial(const std::vector<UnitPolynomialTerm>& terms)
+{return isolateExpandedUnitPolynomial(expandedUnitPolynomial(terms));}
 long double evaluateUnitPolynomial(const std::vector<UnitPolynomialTerm>& terms,double parameter)
 {
     namespace E=Detail::ExactExpansion;
@@ -75,12 +84,10 @@ long double evaluateUnitPolynomial(const std::vector<UnitPolynomialTerm>& terms,
         throw std::invalid_argument("unit polynomial value is unrepresentable");
     return value;
 }
-std::array<double,2> encloseUnitPolynomial(const std::vector<UnitPolynomialTerm>& terms,double a,double b)
+static std::array<double,2> encloseExpandedUnitPolynomial(
+    const std::array<Detail::ExactExpansion::Expansion,12>& polynomial,double a,double b)
 {
     namespace E=Detail::ExactExpansion;namespace B=Detail::PolynomialSegmentRoots::Detail;
-    if(!std::isfinite(a) || !std::isfinite(b) || a<0 || b>1 || a>b)
-        throw std::invalid_argument("unit polynomial range outside [0,1]");
-    const auto polynomial=expandedUnitPolynomial(terms);
     if(a==b){const auto value=E::enclosure(E::evaluate(polynomial,a));return {value.lo,value.hi};}
     int degree=11;while(degree>0 && E::sign(polynomial[degree])==0)--degree;
     std::array<E::Expansion,12> origin{},width{},power{};
@@ -99,6 +106,65 @@ std::array<double,2> encloseUnitPolynomial(const std::vector<UnitPolynomialTerm>
         lo=std::min(lo,bound.lo);hi=std::max(hi,bound.hi);
     }
     return {lo,hi};
+}
+std::array<double,2> encloseUnitPolynomial(const std::vector<UnitPolynomialTerm>& terms,double a,double b)
+{
+    if(!std::isfinite(a) || !std::isfinite(b) || a<0 || b>1 || a>b)
+        throw std::invalid_argument("unit polynomial range outside [0,1]");
+    return encloseExpandedUnitPolynomial(expandedUnitPolynomial(terms),a,b);
+}
+struct PreparedUnitPolynomial::Data
+{
+    std::array<Detail::ExactExpansion::Expansion,12> polynomial;
+    explicit Data(const std::vector<UnitPolynomialTerm>& terms):polynomial(expandedUnitPolynomial(terms)){}
+    Data(const Data& base,const std::vector<UnitPolynomialTerm>& additional):polynomial(base.polynomial)
+    {appendExpandedUnitPolynomial(polynomial,additional);}
+};
+PreparedUnitPolynomial::PreparedUnitPolynomial(const std::vector<UnitPolynomialTerm>& terms)
+{
+    Detail::ExactExpansion::PreparedUnitPolynomialQueryScope scope;
+    data_=std::make_shared<Data>(terms);
+    scope.validateReturn();
+}
+PreparedUnitPolynomial::PreparedUnitPolynomial(const PreparedUnitPolynomial& base,const std::vector<UnitPolynomialTerm>& additional)
+{
+    if(!base.data_)throw std::invalid_argument("empty prepared unit polynomial base");
+    Detail::ExactExpansion::PreparedUnitPolynomialQueryScope scope;
+    data_=std::make_shared<Data>(*base.data_,additional);
+    scope.validateReturn();
+}
+UnitPolynomialRoots PreparedUnitPolynomial::isolate() const
+{
+    if(!data_)throw std::invalid_argument("empty prepared unit polynomial");
+    Detail::ExactExpansion::PreparedUnitPolynomialQueryScope scope;
+    auto result=isolateExpandedUnitPolynomial(data_->polynomial);
+    scope.validateReturn();return result;
+}
+UnitPolynomialRoots PreparedUnitPolynomial::isolateNativeAbsolute() const
+{
+    if(!data_)throw std::invalid_argument("empty prepared unit polynomial");
+    Detail::ExactExpansion::PreparedUnitPolynomialQueryScope scope;
+    namespace B=Detail::PolynomialSegmentRoots::Detail;
+    // Invert the caller's upward-width gate; equality to 64*epsilon before
+    // rounding upward would otherwise stop one bisection too early.
+    const auto isolated=B::Isolator<12>(data_->polynomial,false,false,nullptr,
+        B::down(64*std::numeric_limits<double>::epsilon())).run();
+    UnitPolynomialRoots result;result.identicallyZero=isolated.identicallyZero;
+    for(std::size_t i=0;i<isolated.roots.size();++i){const auto& bracket=isolated.enclosures[i];
+        const bool endpoint=bracket.lo==bracket.hi&&(bracket.lo==0||bracket.lo==1);
+        B::require(endpoint||B::up(bracket.hi-bracket.lo)<=64*std::numeric_limits<double>::epsilon(),
+            "absolute root enclosure exceeds native resolution");
+        result.roots.push_back({isolated.roots[i],bracket.lo,bracket.hi});}
+    scope.validateReturn();return result;
+}
+std::array<double,2> PreparedUnitPolynomial::enclose(double a,double b) const
+{
+    if(!std::isfinite(a) || !std::isfinite(b) || a<0 || b>1 || a>b)
+        throw std::invalid_argument("unit polynomial range outside [0,1]");
+    if(!data_)throw std::invalid_argument("empty prepared unit polynomial");
+    Detail::ExactExpansion::PreparedUnitPolynomialQueryScope scope;
+    const auto result=encloseExpandedUnitPolynomial(data_->polynomial,a,b);
+    scope.validateReturn();return result;
 }
 namespace {
 // An exact polynomial antiderivative has no quadrature error. Measure the
@@ -443,8 +509,8 @@ namespace LevelSetHermiteGeometry
 {
 namespace
 {
-namespace Engine = Quantum::Geometry::Detail::LevelSetHermiteGeometry;
-namespace Exact = Quantum::Geometry::Detail::ExactExpansion;
+namespace Engine = LAMP::Geometry::Detail::LevelSetHermiteGeometry;
+namespace Exact = LAMP::Geometry::Detail::ExactExpansion;
 
 Frame resultFrame(const Engine::Frame& frame)
 {
@@ -455,25 +521,27 @@ Frame resultFrame(const Engine::Frame& frame)
 }
 }
 
-Quantum::Geometry::CellChartPoint cellChartPoint(const Frame& frame)
+LAMP::Geometry::CellChartPoint cellChartPoint(const Frame& frame)
 {
     if (frame.hasCellLocalPoint == frame.hasCellChartPoint)
         throw std::runtime_error("[LevelSetHermiteGeometry] frame requires exactly one explicit local provenance representation");
-    if (frame.hasCellLocalPoint) return Quantum::Geometry::cellChartFromLocal(frame.cellLocalPoint);
-    Quantum::Geometry::validateCellChart(frame.cellChartPoint);
+    if (frame.hasCellLocalPoint) return LAMP::Geometry::cellChartFromLocal(frame.cellLocalPoint);
+    LAMP::Geometry::validateCellChart(frame.cellChartPoint);
     return frame.cellChartPoint;
 }
 
 struct Snapshot::Impl
 {
-    using NativeScalar = Quantum::Geometry::Detail::LevelSetHermiteScalar::LeafSnapshot;
-    using NativeQuarticScalar = Quantum::Geometry::Detail::LevelSetHermiteScalar::QuarticLeafData;
-    using QuarticScalar = Quantum::Geometry::Detail::LevelSetHermiteScalar::QuarticGridData;
+    using NativeScalar = LAMP::Geometry::Detail::LevelSetHermiteScalar::LeafSnapshot;
+    using NativeQuarticScalar = LAMP::Geometry::Detail::LevelSetHermiteScalar::QuarticLeafData;
+    using NativeC2MacroScalar = LAMP::Geometry::Detail::LevelSetHermiteScalar::C2MacroQuarticLeafData;
+    using QuarticScalar = LAMP::Geometry::Detail::LevelSetHermiteScalar::QuarticGridData;
     using QuarticGeometry = Engine::BasicSnapshot<QuarticScalar>;
     std::unique_ptr<Engine::Snapshot> uniform;
     std::unique_ptr<QuarticGeometry> quartic;
     std::unique_ptr<NativeScalar> native;
     std::unique_ptr<NativeQuarticScalar> nativeQuartic;
+    std::unique_ptr<NativeC2MacroScalar> nativeC2Macro;
     Impl(const QuadtreeMesh& mesh, const VertField<double>& phi, bool radialAxisSymmetry,
         CartesianGridScope scope, Reconstruction reconstruction)
     {
@@ -489,23 +557,33 @@ struct Snapshot::Impl
             throw std::invalid_argument("[LevelSetHermiteGeometry] invalid scalar reconstruction");
         }
     }
-    Impl(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHermitePatch& patch,
+    Impl(const QuadtreeMesh& mesh, const LAMP::Geometry::ActiveHermitePatch& patch,
         bool radialAxisSymmetry, CartesianGridScope scope)
         : uniform(std::make_unique<Engine::Snapshot>(mesh,patch,radialAxisSymmetry,scope)) {}
-    Impl(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHermitePatch& patch, bool radialAxisSymmetry)
+    Impl(const QuadtreeMesh& mesh, const LAMP::Geometry::ActiveHermitePatch& patch, bool radialAxisSymmetry)
         : native(std::make_unique<NativeScalar>(mesh,patch,radialAxisSymmetry)) {}
-    Impl(const QuadtreeMesh& mesh,const Quantum::Geometry::ActiveQuarticHermitePatch& patch,bool radialAxisSymmetry)
+    Impl(const QuadtreeMesh& mesh,const LAMP::Geometry::ActiveQuarticHermitePatch& patch,bool radialAxisSymmetry)
         : nativeQuartic(std::make_unique<NativeQuarticScalar>(mesh,patch,radialAxisSymmetry)) {}
     Impl(const QuadtreeMesh& mesh,const NativeQuarticScalar& source)
         : nativeQuartic(NativeQuarticScalar::refined(mesh,source)) {}
-    Impl(const QuadtreeMesh& mesh,const Quantum::Geometry::ActiveQuarticHermitePatch& patch,
+    Impl(const QuadtreeMesh& mesh,const LAMP::Geometry::ActiveQuarticHermitePatch& patch,
         const std::vector<int>& cells,bool radialAxisSymmetry)
         : nativeQuartic(std::make_unique<NativeQuarticScalar>(mesh,patch,radialAxisSymmetry,&cells)) {}
-    bool usesNative() const { return native!=nullptr || nativeQuartic!=nullptr; }
+    Impl(const NativeQuarticScalar& source,const Snapshot::NativeLeafSubset& payload)
+        : nativeQuartic(std::make_unique<NativeQuarticScalar>(source,payload)) {}
+    Impl(const QuadtreeMesh& mesh,const LAMP::Geometry::ActiveQuarticHermiteCompletion& completion)
+        : nativeC2Macro(std::make_unique<NativeC2MacroScalar>(mesh,completion)) {}
+    bool usesNative() const { return native!=nullptr || nativeQuartic!=nullptr || nativeC2Macro!=nullptr; }
+    void requireLegacyScalar() const
+    {
+        if (nativeC2Macro) throw std::runtime_error(
+            "[LevelSetHermiteGeometry] C2 macro operation is not connected at this implementation stage");
+    }
     // The legacy mapped entry owns 16 corner-jet sensitivities. Quartic
     // curves must use the explicitly typed 25-column integration entry.
     const Engine::Snapshot& cubicGeometry() const
     {
+        requireLegacyScalar();
         if (quartic || nativeQuartic) throw std::runtime_error(
             "[LevelSetHermiteGeometry] EnrichedQuartic requires the typed 25-column mapped integration entry");
         if (!uniform) throw std::runtime_error(
@@ -519,6 +597,7 @@ struct Snapshot::Impl
     }
     const NativeScalar& leaf() const
     {
+        requireLegacyScalar();
         if (nativeQuartic) throw std::runtime_error(
             "[LevelSetHermiteGeometry] legacy 16-column native operation cannot consume quartic data");
         if (!native) throw std::runtime_error("[LevelSetHermiteGeometry] native-cell query requires a native-leaf snapshot");
@@ -526,6 +605,8 @@ struct Snapshot::Impl
     }
     template<class Query> decltype(auto) visitLeaf(Query&& query) const
     {
+        if (nativeC2Macro) return query(*nativeC2Macro);
+        requireLegacyScalar();
         if (nativeQuartic) return query(*nativeQuartic);
         return query(leaf());
     }
@@ -540,10 +621,14 @@ Snapshot::Snapshot(const QuadtreeMesh& mesh, const VertField<double>& phi, bool 
 }
 
 Reconstruction Snapshot::reconstruction() const
-{ const auto& backend=checked(); return backend.quartic || backend.nativeQuartic
-    ? Reconstruction::EnrichedQuartic : Reconstruction::Cubic; }
+{
+    const auto& backend=checked();
+    if (backend.nativeC2Macro) return Reconstruction::C2MacroQuartic;
+    return backend.quartic || backend.nativeQuartic
+        ? Reconstruction::EnrichedQuartic : Reconstruction::Cubic;
+}
 
-Snapshot::Snapshot(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHermitePatch& patch,
+Snapshot::Snapshot(const QuadtreeMesh& mesh, const LAMP::Geometry::ActiveHermitePatch& patch,
     bool radialAxisSymmetry, CartesianGridScope scope)
 {
     Exact::validateEnvironment();
@@ -552,16 +637,40 @@ Snapshot::Snapshot(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHerm
 
 Snapshot::Snapshot(std::unique_ptr<const Impl> impl) : impl_(std::move(impl)) {}
 Snapshot Snapshot::fromNativeLeaves(const QuadtreeMesh& mesh,
-    const Quantum::Geometry::ActiveHermitePatch& patch, bool radialAxisSymmetry)
+    const LAMP::Geometry::ActiveHermitePatch& patch, bool radialAxisSymmetry)
 {
     Exact::validateEnvironment();
     return Snapshot(std::make_unique<Impl>(mesh,patch,radialAxisSymmetry));
 }
 Snapshot Snapshot::fromNativeLeaves(const QuadtreeMesh& mesh,
-    const Quantum::Geometry::ActiveQuarticHermitePatch& patch,bool radialAxisSymmetry)
+    const LAMP::Geometry::ActiveQuarticHermitePatch& patch,bool radialAxisSymmetry)
 {
     Exact::validateEnvironment();
     return Snapshot(std::make_unique<Impl>(mesh,patch,radialAxisSymmetry));
+}
+Snapshot Snapshot::fromUniformC2Completion(const QuadtreeMesh& mesh,
+    const LAMP::Geometry::ActiveQuarticHermiteCompletion& completion)
+{
+    Exact::validateEnvironment();
+    return Snapshot(std::make_unique<Impl>(mesh,completion));
+}
+bool Snapshot::usesC2Macro() const { return checked().nativeC2Macro!=nullptr; }
+std::array<double,49> Snapshot::nativeC2MacroPhysicalDofs(int index) const
+{
+    const auto& backend=checked();
+    if (!backend.nativeC2Macro) throw std::invalid_argument(
+        "[LevelSetHermiteGeometry] physical 49 data require a C2 macro source");
+    return backend.nativeC2Macro->physicalCellDofs(index);
+}
+Snapshot::ScalarJet2 Snapshot::scalarJetAtNativeC2MacroPieceLocal(int index,int piece,Vector2D local) const
+{
+    const auto& backend=checked();
+    if (!backend.nativeC2Macro) throw std::invalid_argument(
+        "[LevelSetHermiteGeometry] piece-local query requires a C2 macro source");
+    Exact::validateEnvironment();
+    const auto sample=backend.nativeC2Macro->evaluatePieceCellChart(
+        index,piece,LAMP::Geometry::cellChartFromLocal(local));
+    return {sample.value,sample.dx,sample.dy,sample.dxx,sample.dxy,sample.dyy};
 }
 Snapshot Snapshot::refineNativeQuartic(const QuadtreeMesh& targetMesh,const Snapshot& source)
 {
@@ -569,22 +678,42 @@ Snapshot Snapshot::refineNativeQuartic(const QuadtreeMesh& targetMesh,const Snap
     if(!data.nativeQuartic)throw std::invalid_argument("[LevelSetHermiteGeometry] exact refinement requires a native Q4 source");
     return Snapshot(std::make_unique<Impl>(targetMesh,*data.nativeQuartic));
 }
+Snapshot Snapshot::fromNativeLeafSubset(const Snapshot& meshSource,const NativeLeafSubset& payload)
+{
+    Exact::validateEnvironment();const auto& source=meshSource.checked();
+    if(!source.nativeQuartic)throw std::invalid_argument("[LevelSetHermiteGeometry] subset support requires native Q4 source");
+    return Snapshot(std::make_unique<Impl>(*source.nativeQuartic,payload));
+}
 bool Snapshot::usesNativeLeaves() const { return checked().usesNative(); }
 Snapshot Snapshot::fromNativeQuarticQueryCells(const QuadtreeMesh& mesh,
-    const Quantum::Geometry::ActiveQuarticHermitePatch& patch,const std::vector<int>& cells,bool radialAxisSymmetry)
+    const LAMP::Geometry::ActiveQuarticHermitePatch& patch,const std::vector<int>& cells,bool radialAxisSymmetry)
 {
     Exact::validateEnvironment();
     return Snapshot(std::make_unique<Impl>(mesh,patch,cells,radialAxisSymmetry));
 }
 std::size_t Snapshot::nativeCellCount() const
-{ return checked().visitLeaf([](const auto& leaf){return leaf.cellCount();}); }
+{
+    const auto& backend=checked();
+    if (backend.nativeC2Macro) return backend.nativeC2Macro->cellCount();
+    return backend.visitLeaf([&](const auto& leaf){return leaf.cellCount();});
+}
 bool Snapshot::nativeCellActive(int index) const
-{ return checked().visitLeaf([&](const auto& leaf){return leaf.cellActive(index);}); }
+{
+    const auto& backend=checked();
+    if (backend.nativeC2Macro) return backend.nativeC2Macro->cellActive(index);
+    return backend.visitLeaf([&](const auto& leaf){return leaf.cellActive(index);});
+}
 std::array<Vector2D,2> Snapshot::nativeCellBounds(int index) const
-{ return checked().visitLeaf([&](const auto& leaf){return leaf.leafBounds(index);}); }
+{
+    const auto& backend=checked();
+    if (backend.nativeC2Macro) return backend.nativeC2Macro->leafBounds(index);
+    return backend.visitLeaf([&](const auto& leaf){return leaf.leafBounds(index);});
+}
 bool Snapshot::nativeZeroSetPartialResolved(int index,int axis,Vector2D lower,Vector2D upper) const
 {
     if(axis<0 || axis>1)throw std::invalid_argument("native zero-set partial requires axis 0 or 1");
+    const auto& backend=checked();
+    if(backend.nativeC2Macro)return backend.nativeC2Macro->resolvedZeroSetPartial(index,axis,lower,upper);
     return checked().visitLeaf([&](const auto& leaf){return leaf.resolvedZeroSetPartial(index,axis,lower,upper);});
 }
 std::array<double,25> Snapshot::nativeQuarticLocalDofs(int index) const
@@ -594,8 +723,8 @@ std::array<double,25> Snapshot::nativeQuarticLocalDofs(int index) const
         "[LevelSetHermiteGeometry] local Q4 DOFs require a native quartic source");
     return backend.nativeQuartic->mappedCellLocalDofs(index);
 }
-Quantum::Geometry::PolynomialAffineCoordinate Snapshot::nativeQuarticAffineEnclosure(int index,
-    const std::array<Quantum::Geometry::PolynomialAffineCoordinate,2>& physical) const
+LAMP::Geometry::PolynomialAffineCoordinate Snapshot::nativeQuarticAffineEnclosure(int index,
+    const std::array<LAMP::Geometry::PolynomialAffineCoordinate,2>& physical) const
 {
     const auto& backend=checked();
     if(!backend.nativeQuartic)throw std::invalid_argument("[LevelSetHermiteGeometry] affine Q4 enclosure requires a native quartic source");
@@ -610,8 +739,8 @@ bool Snapshot::identicalNativeQuarticCell(int index,const Snapshot& other,int ot
 }
 namespace
 {
-using Quantum::Geometry::Detail::FaceTime::FaceTimeRational;
-using Quantum::Geometry::Detail::FaceTime::faceTimeValue;
+using LAMP::Geometry::Detail::FaceTime::FaceTimeRational;
+using LAMP::Geometry::Detail::FaceTime::faceTimeValue;
 }
 long double constantNormalFaceTransferVolume(Vector2D a,Vector2D b,double normalSpeed,
     double begin,double end,bool radial)
@@ -670,7 +799,7 @@ Snapshot::AffineFaceTimeMeasure Snapshot::integrateNativeAffineTranslatedFace(Ve
     require(Exact::sign(f0)!=0 || Exact::sign(fs)!=0 || Exact::sign(ft)!=0,
         "identically zero face-time trace has positive measure");
     using R=FaceTimeRational;
-    const auto moments=Quantum::Geometry::Detail::FaceTime::negativeHalfPlane(f0,fs,ft);
+    const auto moments=LAMP::Geometry::Detail::FaceTime::negativeHalfPlane(f0,fs,ft);
     const auto area=moments.area,moment=moments.first;
     const auto fullWeight=radial?(R(a.x)+R(b.x))/R(2):R(1);
     const auto liquidWeight=radial?R(a.x)*area+(R(b.x)-R(a.x))*moment:area;
@@ -743,13 +872,17 @@ bool Snapshot::identicalNativeQuarticRepresentation(int index,const Snapshot& ot
     return a.nativeQuartic->identicalCellRepresentation(index,*b.nativeQuartic,otherIndex);
 }
 std::vector<int> Snapshot::nativeCellCandidates(Vector2D lower, Vector2D upper) const
-{ return checked().visitLeaf([&](const auto& leaf){return leaf.leafCandidates(lower,upper);}); }
-std::vector<Quantum::Geometry::ActiveHermiteNodalSensitivity> Snapshot::nativeCellSensitivity(
+{
+    const auto& backend=checked();
+    if (backend.nativeC2Macro) return backend.nativeC2Macro->leafCandidates(lower,upper);
+    return backend.visitLeaf([&](const auto& leaf){return leaf.leafCandidates(lower,upper);});
+}
+std::vector<LAMP::Geometry::ActiveHermiteNodalSensitivity> Snapshot::nativeCellSensitivity(
     int index, const std::array<long double,16>& coefficients,
-    Quantum::Geometry::CornerSectorVariation sectors) const
+    LAMP::Geometry::CornerSectorVariation sectors) const
 { return checked().leaf().pullbackCellSensitivity(index, coefficients, sectors); }
-std::vector<Quantum::Geometry::ActiveQuarticHermiteSensitivity> Snapshot::nativeQuarticCellSensitivity(
-    int index,const std::array<long double,25>& coefficients,Quantum::Geometry::CornerSectorVariation sectors) const
+std::vector<LAMP::Geometry::ActiveQuarticHermiteSensitivity> Snapshot::nativeQuarticCellSensitivity(
+    int index,const std::array<long double,25>& coefficients,LAMP::Geometry::CornerSectorVariation sectors) const
 {
     const auto& backend=checked();
     if(!backend.nativeQuartic) throw std::invalid_argument(
@@ -758,45 +891,63 @@ std::vector<Quantum::Geometry::ActiveQuarticHermiteSensitivity> Snapshot::native
 }
 Snapshot::ScalarJet2 Snapshot::scalarJetInNativeCell(int index, Vector2D point) const
 {
-    return checked().visitLeaf([&](const auto& native)->ScalarJet2 {
+    const auto& backend=checked();
+    const auto query=[&](const auto& native)->ScalarJet2 {
         Exact::validateEnvironment();
         auto sample = native.evaluateCell(index,point);
         sample.value = native.valueInCell(index,point);
         return {sample.value,sample.dx,sample.dy,sample.dxx,sample.dxy,sample.dyy};
-    });
+    };
+    if (backend.nativeC2Macro) return query(*backend.nativeC2Macro);
+    if(backend.nativeQuartic){
+        Exact::NativeQuarticQueryScope scope;
+        const auto result=query(*backend.nativeQuartic);
+        scope.validateReturn();return result;
+    }
+    return backend.visitLeaf(query);
 }
 Snapshot::ScalarJet2 Snapshot::scalarJetAtNativeCellChart(int index,
-    const Quantum::Geometry::CellChartPoint& point) const
+    const LAMP::Geometry::CellChartPoint& point) const
 {
-    const auto sample=checked().visitLeaf([&](const auto& native){return native.evaluateCellChart(index,point);});
-    return {sample.value,sample.dx,sample.dy,sample.dxx,sample.dxy,sample.dyy};
+    const auto& backend=checked();
+    Exact::validateEnvironment();
+    const auto query=[&](const auto& native)->ScalarJet2 {
+        const auto sample=native.evaluateCellChart(index,point);
+        return {sample.value,sample.dx,sample.dy,sample.dxx,sample.dxy,sample.dyy};
+    };
+    if (backend.nativeC2Macro) return query(*backend.nativeC2Macro);
+    return backend.visitLeaf(query);
 }
-Frame Snapshot::jetAtNativeCellChart(int index,const Quantum::Geometry::CellChartPoint& point) const
+Frame Snapshot::jetAtNativeCellChart(int index,const LAMP::Geometry::CellChartPoint& point) const
 {
-    return checked().visitLeaf([&](const auto& native) {
+    const auto& backend=checked();
+    Exact::validateEnvironment();
+    const auto query=[&](const auto& native)->Frame {
         const auto sample=native.evaluateCellChart(index,point);
         const long double gradient=std::hypot(static_cast<long double>(sample.dx),static_cast<long double>(sample.dy));
         const auto bounds=native.leafBounds(index);
-        Engine::Detail::require(Quantum::Geometry::Detail::HermiteDifferential::usableGradient(
+        Engine::Detail::require(LAMP::Geometry::Detail::HermiteDifferential::usableGradient(
             sample,gradient,native.derivativeResolutionScale(index),bounds[1]-bounds[0]),
             "unresolved native cell-chart interface gradient");
-        auto result=Quantum::Geometry::Detail::HermiteDifferential::frame<Frame>(
+        auto result=LAMP::Geometry::Detail::HermiteDifferential::frame<Frame>(
             native.chartDisplayPoint(index,point),sample,gradient,Engine::Detail::checked);
         result.nativeCellIndex=index; result.cellChartPoint=point; result.hasCellChartPoint=true;
         return result;
-    });
+    };
+    if (backend.nativeC2Macro) return query(*backend.nativeC2Macro);
+    return backend.visitLeaf(query);
 }
 double Snapshot::curvatureTangentialDerivativeAtNativeCellChart(int index,
-    const Quantum::Geometry::CellChartPoint& point) const
+    const LAMP::Geometry::CellChartPoint& point) const
 {
     return checked().visitLeaf([&](const auto& native) {
         const auto sample=native.evaluateCellChart(index,point);
         const long double gradient=std::hypot(static_cast<long double>(sample.dx),static_cast<long double>(sample.dy));
         const auto bounds=native.leafBounds(index);
-        Engine::Detail::require(Quantum::Geometry::Detail::HermiteDifferential::usableGradient(
+        Engine::Detail::require(LAMP::Geometry::Detail::HermiteDifferential::usableGradient(
             sample,gradient,native.derivativeResolutionScale(index),bounds[1]-bounds[0]),
             "unresolved native cell-chart curvature derivative");
-        return Quantum::Geometry::Detail::HermiteDifferential::curvatureDerivative(
+        return LAMP::Geometry::Detail::HermiteDifferential::curvatureDerivative(
             sample,native.thirdDerivativesCellChart(index,point),gradient,Engine::Detail::checked);
     });
 }
@@ -814,21 +965,46 @@ const Snapshot::Impl& Snapshot::checked() const
 int Snapshot::nx() const { return checked().visitGeometry([&](const auto& geometry) { return geometry.nx(); }); }
 int Snapshot::ny() const { return checked().visitGeometry([&](const auto& geometry) { return geometry.ny(); }); }
 bool Snapshot::radialAxisSymmetry() const
-{ const auto& impl = checked(); return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.radialAxisSymmetry();}) : impl.visitGeometry([&](const auto& geometry) { return geometry.radialAxisSymmetry(); }); }
+{
+    const auto& impl=checked();
+    if (impl.nativeC2Macro) return false;
+    return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.radialAxisSymmetry();})
+        : impl.visitGeometry([&](const auto& geometry){return geometry.radialAxisSymmetry();});
+}
 bool Snapshot::restrictedDomain() const
 { const auto& impl = checked(); return impl.usesNative() ? true : impl.visitGeometry([&](const auto& geometry) { return geometry.restrictedDomain(); }); }
 bool Snapshot::hasCornerSectors() const
-{ const auto& impl = checked(); return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.hasCornerSectors();}) : impl.visitGeometry([&](const auto& geometry) { return geometry.hasCornerSectors(); }); }
+{
+    const auto& impl=checked();
+    if (impl.nativeC2Macro) return false;
+    return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.hasCornerSectors();})
+        : impl.visitGeometry([&](const auto& geometry){return geometry.hasCornerSectors();});
+}
 bool Snapshot::cellActive(int i, int j) const { return checked().visitGeometry([&](const auto& geometry) { return geometry.cellActive(i, j); }); }
 Vector2D Snapshot::minCoord() const
-{ const auto& impl = checked(); return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.minCoord();}) : impl.visitGeometry([&](const auto& geometry) { return geometry.minCoord(); }); }
+{
+    const auto& impl=checked();
+    if (impl.nativeC2Macro) return impl.nativeC2Macro->minCoord();
+    return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.minCoord();})
+        : impl.visitGeometry([&](const auto& geometry){return geometry.minCoord();});
+}
 Vector2D Snapshot::maxCoord() const
-{ const auto& impl = checked(); return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.maxCoord();}) : impl.visitGeometry([&](const auto& geometry) { return geometry.maxCoord(); }); }
+{
+    const auto& impl=checked();
+    if (impl.nativeC2Macro) return impl.nativeC2Macro->maxCoord();
+    return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.maxCoord();})
+        : impl.visitGeometry([&](const auto& geometry){return geometry.maxCoord();});
+}
 Vector2D Snapshot::cellSize() const { return checked().visitGeometry([&](const auto& geometry) { return geometry.cellSize(); }); }
 std::size_t Snapshot::candidateCellCount() const { return checked().visitGeometry([&](const auto& geometry) { return geometry.candidateCellCount(); }); }
 std::size_t Snapshot::seedCount() const { return checked().visitGeometry([&](const auto& geometry) { return geometry.seedCount(); }); }
 std::size_t Snapshot::vertexCount() const
-{ const auto& impl = checked(); return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.vertexCount();}) : impl.visitGeometry([&](const auto& geometry) { return geometry.vertexCount(); }); }
+{
+    const auto& impl=checked();
+    if (impl.nativeC2Macro) return impl.nativeC2Macro->vertexCount();
+    return impl.usesNative() ? impl.visitLeaf([](const auto& leaf){return leaf.vertexCount();})
+        : impl.visitGeometry([&](const auto& geometry){return geometry.vertexCount();});
+}
 
 std::array<int, 2> Snapshot::zeroVertexGradientSignsInCell(int i, int j, Vector2D point) const
 {
@@ -857,7 +1033,7 @@ Frame Snapshot::jetAtCellLocal(int i, int j, Vector2D local) const
     });
 }
 
-Frame Snapshot::jetAtCellChart(int i, int j, const Quantum::Geometry::CellChartPoint& point) const
+Frame Snapshot::jetAtCellChart(int i, int j, const LAMP::Geometry::CellChartPoint& point) const
 {
     return checked().visitGeometry([&](const auto& geometry) -> Frame
     {
@@ -866,10 +1042,10 @@ Frame Snapshot::jetAtCellChart(int i, int j, const Quantum::Geometry::CellChartP
     });
 }
 
-std::vector<Quantum::Geometry::CellChartPoint> Snapshot::intersectCellSection(int i, int j,
-    bool coordinateIsX, Quantum::Geometry::CellChartCoordinate fixedCoordinate) const
+std::vector<LAMP::Geometry::CellChartPoint> Snapshot::intersectCellSection(int i, int j,
+    bool coordinateIsX, LAMP::Geometry::CellChartCoordinate fixedCoordinate) const
 {
-    return checked().visitGeometry([&](const auto& geometry) -> std::vector<Quantum::Geometry::CellChartPoint>
+    return checked().visitGeometry([&](const auto& geometry) -> std::vector<LAMP::Geometry::CellChartPoint>
     {
         Exact::validateEnvironment();
         return geometry.intersectCellSection(i, j, coordinateIsX, fixedCoordinate);
@@ -887,7 +1063,7 @@ Snapshot::ScalarJet2 Snapshot::scalarJetAtCellLocal(int i, int j, Vector2D local
 }
 
 Snapshot::ScalarJet2 Snapshot::scalarJetAtCellChart(int i, int j,
-    const Quantum::Geometry::CellChartPoint& point) const
+    const LAMP::Geometry::CellChartPoint& point) const
 {
     return checked().visitGeometry([&](const auto& geometry) -> Snapshot::ScalarJet2
     {
@@ -898,7 +1074,7 @@ Snapshot::ScalarJet2 Snapshot::scalarJetAtCellChart(int i, int j,
 }
 
 double Snapshot::curvatureTangentialDerivativeAtCellChart(int i, int j,
-    const Quantum::Geometry::CellChartPoint& point) const
+    const LAMP::Geometry::CellChartPoint& point) const
 {
     return checked().visitGeometry([&](const auto& geometry) -> double
     {
@@ -907,19 +1083,19 @@ double Snapshot::curvatureTangentialDerivativeAtCellChart(int i, int j,
     });
 }
 
-std::vector<Quantum::Geometry::ActiveQuarticHermiteSensitivity> Snapshot::nativeQuarticDifferentialSensitivity(
-    int index,const Quantum::Geometry::CellChartPoint& point,const std::array<long double,6>& weights) const
+std::vector<LAMP::Geometry::ActiveQuarticHermiteSensitivity> Snapshot::nativeQuarticDifferentialSensitivity(
+    int index,const LAMP::Geometry::CellChartPoint& point,const std::array<long double,6>& weights) const
 {
     Exact::validateEnvironment();
-    Quantum::Geometry::validateCellChart(point);
+    LAMP::Geometry::validateCellChart(point);
     const auto& data=checked();
     if (!data.nativeQuartic) throw std::invalid_argument("Q4 differential sensitivity requires native quartic data");
     const auto& scalar=*data.nativeQuartic;
     const auto box=scalar.leafBounds(index);
     const long double hx=static_cast<long double>(box[1].x)-box[0].x,hy=static_cast<long double>(box[1].y)-box[0].y;
-    const auto basis=[](Quantum::Geometry::CellChartCoordinate chart) {
+    const auto basis=[](LAMP::Geometry::CellChartCoordinate chart) {
         const auto one=Exact::fromDouble(1),offset=Exact::fromDouble(chart.offset);
-        const auto values=Quantum::Geometry::Detail::LevelSetHermiteScalar::QuarticCell::rationalBasisJet(
+        const auto values=LAMP::Geometry::Detail::LevelSetHermiteScalar::QuarticCell::rationalBasisJet(
             chart.fromUpper?Exact::subtract(one,offset):offset,one,true);
         std::array<std::array<long double,5>,3> result{};
         for (int k=0;k<5;++k) {
@@ -937,22 +1113,86 @@ std::vector<Quantum::Geometry::ActiveQuarticHermiteSensitivity> Snapshot::native
             (weights[0]*bx[0][x]*by[0][y]+weights[1]*bx[1][x]*by[0][y]/hx
                 +weights[2]*bx[0][x]*by[1][y]/hy+weights[3]*bx[2][x]*by[0][y]/(hx*hx)
                 +weights[4]*bx[1][x]*by[1][y]/(hx*hy)+weights[5]*bx[0][x]*by[2][y]/(hy*hy));
-    return scalar.pullbackCellSensitivity(index,coefficients,Quantum::Geometry::CornerSectorVariation::RequireAbsent);
+    return scalar.pullbackCellSensitivity(index,coefficients,LAMP::Geometry::CornerSectorVariation::RequireAbsent);
+}
+std::vector<LAMP::Geometry::ActiveQuarticHermiteSensitivity> Snapshot::nativeC2MacroDifferentialSensitivity(
+    int index,const LAMP::Geometry::CellChartPoint& point,const std::array<long double,6>& weights) const
+{
+    Exact::validateEnvironment();
+    LAMP::Geometry::validateCellChart(point);
+    const auto& data=checked();
+    if(!data.nativeC2Macro)throw std::invalid_argument(
+        "C2 macro differential sensitivity requires a completed four-piece source");
+    return data.nativeC2Macro->differentialSensitivity(index,point,weights);
+}
+std::array<double,2> Snapshot::nativeC2MacroScalarBounds(int index,Vector2D lower,Vector2D upper,unsigned dx,unsigned dy) const
+{
+    Exact::validateEnvironment();const auto& data=checked();
+    if(!data.nativeC2Macro)throw std::invalid_argument("C2 macro scalar bounds require a completed four-piece source");
+    const auto bounds=data.nativeC2Macro->scalarBounds(index,lower,upper,dx,dy);
+    return {bounds.lo,bounds.hi};
 }
 Snapshot::ScalarJet2 Snapshot::scalarJetNative(Vector2D point) const
 {
-    return checked().visitLeaf([&](const auto& native)->ScalarJet2 {
+    const auto& backend=checked();
+    const auto query=[&](const auto& native)->ScalarJet2 {
         Exact::validateEnvironment();
         const int cell=native.selectedCell(point);
         const auto sample=native.evaluateCell(cell,point);
         return {native.valueInCell(cell,point),sample.dx,sample.dy,sample.dxx,sample.dxy,sample.dyy};
-    });
+    };
+    if (backend.nativeC2Macro) return query(*backend.nativeC2Macro);
+    if(backend.nativeQuartic){
+        Exact::NativeQuarticQueryScope scope;
+        const auto result=query(*backend.nativeQuartic);
+        scope.validateReturn();return result;
+    }
+    return backend.visitLeaf(query);
+}
+
+Snapshot::TransportScalarValue Snapshot::numericalScalarValueNative(Vector2D point,
+    double valueBudget) const
+{
+    if(!((std::isfinite(valueBudget)&&valueBudget>0)||valueBudget==std::numeric_limits<double>::infinity()))
+        throw std::invalid_argument("[LevelSetHermiteGeometry] invalid numerical transport point budget");
+    const auto& backend=checked();
+    if(!backend.nativeQuartic)throw std::invalid_argument(
+        "[LevelSetHermiteGeometry] numerical transport point requires native Q4");
+    Exact::NativeQuarticQueryScope scope;
+    const auto& native=*backend.nativeQuartic;
+    const auto result=native.numericalValueInCell(native.selectedCell(point),point,valueBudget);
+    scope.validateReturn();return result;
+}
+
+Snapshot::TransportScalarJet2 Snapshot::numericalScalarJetNative(Vector2D point,
+    double valueBudget,double gradientBudget) const
+{
+    const auto budget=[](double b){return (std::isfinite(b)&&b>0)||b==std::numeric_limits<double>::infinity();};
+    if(!budget(valueBudget)||!budget(gradientBudget))throw std::invalid_argument(
+        "[LevelSetHermiteGeometry] invalid numerical transport point budget");
+    const auto& backend=checked();
+    if(!backend.nativeQuartic)throw std::invalid_argument(
+        "[LevelSetHermiteGeometry] numerical transport point requires native Q4");
+    Exact::NativeQuarticQueryScope scope;
+    const auto& native=*backend.nativeQuartic;
+    const auto result=native.numericalJetInCell(native.selectedCell(point),point,valueBudget,gradientBudget);
+    scope.validateReturn();return result;
 }
 
 double Snapshot::value(Vector2D point) const
 {
     const auto& impl = checked();
+    if(impl.nativeQuartic){
+        Exact::NativeQuarticQueryScope scope;
+        const auto& leaf=*impl.nativeQuartic;
+        const double result=leaf.valueInCell(leaf.selectedCell(point),point);
+        scope.validateReturn();return result;
+    }
     Exact::validateEnvironment();
+    if (impl.nativeC2Macro) {
+        const auto& leaf=*impl.nativeC2Macro;
+        return leaf.valueInCell(leaf.selectedCell(point),point);
+    }
     if (impl.usesNative())
         return impl.visitLeaf([&](const auto& leaf){return leaf.valueInCell(leaf.selectedCell(point),point);});
     return impl.visitGeometry([&](const auto& geometry) { return geometry.value(point); });
@@ -1163,7 +1403,7 @@ bool Snapshot::segmentInsideActiveDomain(Vector2D a, Vector2D b) const
 {
     Exact::validateEnvironment();
     if (!checked().usesNative()) return checked().visitGeometry([&](const auto& geometry) { return geometry.segmentInsideActiveDomain(a, b); });
-    namespace Mapped = Quantum::Geometry::Detail::MappedHermiteSegment;
+    namespace Mapped = LAMP::Geometry::Detail::MappedHermiteSegment;
     return checked().visitLeaf([&](const auto& source) {
         const auto lo = source.minCoord(), hi = source.maxCoord();
         for (auto p : {a, b})
@@ -1262,33 +1502,132 @@ double Snapshot::negativeFraction(Vector2D a, Vector2D b) const
 }
 }
 
+namespace LAMP::Geometry::Detail
+{
+namespace
+{
+namespace MappedHermiteSegment
+{
+struct CardinalQuarticSource
+{
+    std::shared_ptr<const ::LevelSetMappedSegment::QuarticCardinalData> data;
+    std::array<Expansion,9> coefficients;
+    Vector2D minCoord() const {return {std::min(data->begin.x,data->end.x),std::min(data->begin.y,data->end.y)};}
+    Vector2D maxCoord() const {return {std::max(data->begin.x,data->end.x),std::max(data->begin.y,data->end.y)};}
+};
+// A genuine 1D layout: one owned row and its exact cardinal polynomial.
+// Native metadata records its actual row owner, not a fabricated 2D cell.
+struct CardinalQuarticLayout
+{
+    using Source=CardinalQuarticSource;
+    using Polynomial=std::array<Expansion,9>;
+    std::shared_ptr<const ::LevelSetMappedSegment::QuarticCardinalData> source;
+    Polynomial coefficients,inputPolynomial;
+    Vector2D a,b;
+    int inputSign=0;
+    explicit CardinalQuarticLayout(const Source& value):source(value.data),coefficients(value.coefficients) {}
+    double tangent(Vector2D p) const {return source->normalAxis==0?p.y:p.x;}
+    CellAddress owner() const {return {-1,-1,source->nativeCellIndex};}
+    Ratio rowParameter(const Ratio& t) const
+    {
+        const auto first=ratio(difference(tangent(a),tangent(source->begin)),difference(tangent(source->end),tangent(source->begin)));
+        const auto width=ratio(difference(tangent(b),tangent(a)),difference(tangent(source->end),tangent(source->begin)));
+        return add(first,ratio(Exact::multiply(width.numerator,t.numerator),Exact::multiply(width.denominator,t.denominator)));
+    }
+    Polynomial restricted(const Ratio& begin,const Ratio& end) const
+    {
+        const auto first=rowParameter(begin),width=subtract(rowParameter(end),first);
+        const auto denominator=Exact::multiply(first.denominator,width.denominator);
+        const auto origin=Exact::multiply(first.numerator,width.denominator);
+        const auto delta=Exact::multiply(width.numerator,first.denominator);
+        // Positive D^4 clearing of P((origin+delta*s)/D), never a rounded
+        // coefficient conversion. Every root/refinement chart uses this map.
+        Polynomial result{};result[0]=coefficients[4];Expansion power=number(1);
+        int degree=0;
+        for(int k=3;k>=0;--k){Polynomial next{};
+            for(int j=0;j<=degree;++j){next[j]=Exact::add(next[j],Exact::multiply(result[j],origin));
+                next[j+1]=Exact::add(next[j+1],Exact::multiply(result[j],delta));}
+            power=Exact::multiply(power,denominator);
+            next[0]=Exact::add(next[0],Exact::multiply(coefficients[k],power));result=std::move(next);++degree;
+        }
+        return result;
+    }
+    static int bernsteinSign(const Polynomial& p)
+    {
+        // Twelve times the degree-four Bernstein coefficients. Exact common
+        // positive scaling avoids nonbinary division and certifies this 1D
+        // restriction only; it is never a native whole-cell certificate.
+        constexpr int weights[5][5]={{12,0,0,0,0},{12,3,0,0,0},{12,6,2,0,0},{12,9,6,3,0},{12,12,12,12,12}};
+        int sign=0;
+        for(int i=0;i<5;++i){Expansion value;
+            for(int j=0;j<=i;++j)if(weights[i][j])value=Exact::add(value,Exact::multiply(p[j],number(weights[i][j])));
+            const int current=Exact::sign(value);if(current==0 || (sign!=0&&sign!=current))return 0;sign=current;}
+        return sign;
+    }
+    std::vector<Ratio> cuts(Vector2D first,Vector2D last)
+    {a=first;b=last;inputPolynomial=restricted(constant(0),constant(1));inputSign=bernsteinSign(inputPolynomial);return {constant(0),constant(1)};}
+    std::vector<CellAddress> incidentCellsAtInputPoint(Vector2D p) const
+    {
+        const auto lower=std::min(tangent(a),tangent(b)),upper=std::max(tangent(a),tangent(b));
+        if(tangent(p)<lower || tangent(p)>upper)return {};
+        return {owner()};
+    }
+    std::vector<CellAddress> incidentCells(const Ratio& t) const
+    {require(compare(t,constant(0))>=0&&compare(t,constant(1))<=0,"cardinal trace parameter outside its actual row");return {owner()};}
+    int strictSign(const CellAddress&) const {return inputSign;}
+    int pieceSign(const CellAddress& cell,const Ratio& first,const Ratio& last) const
+    {return inputSign?inputSign:bernsteinSign(polynomial(cell,first,last));}
+    Polynomial polynomial(const CellAddress& cell,const Ratio& first,const Ratio& last) const
+    {
+        require(cell==owner(),"cardinal trace has a foreign native row owner");
+        if(compare(first,constant(0))==0&&compare(last,constant(1))==0)return inputPolynomial;
+        return restricted(first,last);
+    }
+    bool sameTrace(const Polynomial& p,const Polynomial& q,int pivot) const
+    {
+        for(std::size_t k=0;k<p.size();++k)if(Exact::sign(Exact::subtract(Exact::multiply(p[k],q[pivot]),Exact::multiply(q[k],p[pivot])))!=0)return false;
+        return true;
+    }
+};
+using CardinalQuarticQuery=BasicQuery<CardinalQuarticLayout>;
+}
+}
+}
+
 // Keep the mapped query beside the opaque snapshot in this strict-FP TU:
 // its implementation-only expansion/engine types must not cross a TU ABI.
 struct LevelSetMappedSegment::Impl
 {
     static const NativeQuarticTrace::Impl& retainedTrace(const NativeQuarticTrace& trace);
-    using UniformQuery = Quantum::Geometry::Detail::MappedHermiteSegment::Query;
-    using NativeQuery = Quantum::Geometry::Detail::MappedHermiteSegment::NativeQuery;
-    using QuarticQuery = Quantum::Geometry::Detail::MappedHermiteSegment::QuarticQuery;
-    using NativeQuarticQuery = Quantum::Geometry::Detail::MappedHermiteSegment::NativeQuarticQuery;
+    using UniformQuery = LAMP::Geometry::Detail::MappedHermiteSegment::Query;
+    using NativeQuery = LAMP::Geometry::Detail::MappedHermiteSegment::NativeQuery;
+    using QuarticQuery = LAMP::Geometry::Detail::MappedHermiteSegment::QuarticQuery;
+    using NativeQuarticQuery = LAMP::Geometry::Detail::MappedHermiteSegment::NativeQuarticQuery;
+    using NativeC2MacroQuery = LAMP::Geometry::Detail::MappedHermiteSegment::NativeC2MacroQuery;
     std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> source;
-    std::variant<UniformQuery,NativeQuery,QuarticQuery,NativeQuarticQuery> query;
+    std::variant<UniformQuery,NativeQuery,QuarticQuery,NativeQuarticQuery,NativeC2MacroQuery> query;
     Impl(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> retained,
-        const Quantum::Geometry::Detail::LevelSetHermiteGeometry::Snapshot& geometry,
+        const LAMP::Geometry::Detail::LevelSetHermiteGeometry::Snapshot& geometry,
         Vector2D begin, Vector2D end)
         : source(std::move(retained)), query(std::in_place_type<UniformQuery>,geometry,begin,end) {}
     Impl(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> retained,
-        const Quantum::Geometry::Detail::LevelSetHermiteScalar::LeafSnapshot& scalar,
+        const LAMP::Geometry::Detail::LevelSetHermiteScalar::LeafSnapshot& scalar,
         Vector2D begin, Vector2D end)
         : source(std::move(retained)), query(std::in_place_type<NativeQuery>,scalar,begin,end) {}
     Impl(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> retained,
-        const Quantum::Geometry::Detail::MappedHermiteSegment::QuarticGeometry& geometry,
+        const LAMP::Geometry::Detail::MappedHermiteSegment::QuarticGeometry& geometry,
         Vector2D begin, Vector2D end)
         : source(std::move(retained)), query(std::in_place_type<QuarticQuery>,geometry,begin,end) {}
     Impl(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> retained,
-        const Quantum::Geometry::Detail::LevelSetHermiteScalar::QuarticLeafData& scalar,
+        const LAMP::Geometry::Detail::LevelSetHermiteScalar::QuarticLeafData& scalar,
         Vector2D begin,Vector2D end)
         : source(std::move(retained)),query(std::in_place_type<NativeQuarticQuery>,scalar,begin,end) {}
+    Impl(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> retained,
+        const LAMP::Geometry::Detail::LevelSetHermiteScalar::C2MacroQuarticLeafData& scalar,
+        Vector2D begin,Vector2D end)
+        : source(std::move(retained)),query(std::in_place_type<NativeC2MacroQuery>,scalar,begin,end) {}
+    Impl(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> retained,NativeC2MacroQuery nativeQuery)
+        : source(std::move(retained)),query(std::in_place_type<NativeC2MacroQuery>,std::move(nativeQuery)) {}
     Impl(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> retained,NativeQuarticQuery nativeQuery)
         : source(std::move(retained)),query(std::in_place_type<NativeQuarticQuery>,std::move(nativeQuery)) {}
     const UniformQuery& uniformQuery() const
@@ -1303,9 +1642,10 @@ LevelSetMappedSegment::LevelSetMappedSegment(
     std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> source, Vector2D begin, Vector2D end)
 {
     if (!source) throw std::invalid_argument("[LevelSetMappedSegment] null retained source");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     const auto& backend = source->checked();
-    if (backend.native) impl_ = std::make_unique<Impl>(std::move(source),*backend.native,begin,end);
+    if (backend.nativeC2Macro) impl_ = std::make_unique<Impl>(std::move(source),*backend.nativeC2Macro,begin,end);
+    else if (backend.native) impl_ = std::make_unique<Impl>(std::move(source),*backend.native,begin,end);
     else if (backend.nativeQuartic) impl_ = std::make_unique<Impl>(std::move(source),*backend.nativeQuartic,begin,end);
     else if (backend.quartic) impl_ = std::make_unique<Impl>(std::move(source),*backend.quartic,begin,end);
     else impl_ = std::make_unique<Impl>(std::move(source),backend.cubicGeometry(),begin,end);
@@ -1317,7 +1657,7 @@ LevelSetMappedSegment& LevelSetMappedSegment::operator=(LevelSetMappedSegment&&)
 const LevelSetMappedSegment::Impl& LevelSetMappedSegment::checked() const
 {
     if (!impl_) throw std::runtime_error("[LevelSetMappedSegment] query on a moved-from segment");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     return *impl_;
 }
 bool LevelSetMappedSegment::usesSource(const LevelSetHermiteGeometry::Snapshot& source) const
@@ -1330,7 +1670,7 @@ const std::vector<LevelSetMappedSegment::Root>& LevelSetMappedSegment::roots() c
 { return std::visit([](const auto& query) -> const auto& { return query.rootInfo; },checked().query); }
 bool LevelSetMappedSegment::rootAtInputEndpoint(std::size_t rootIndex, bool atEnd) const
 {
-    namespace Mapped = Quantum::Geometry::Detail::MappedHermiteSegment;
+    namespace Mapped = LAMP::Geometry::Detail::MappedHermiteSegment;
     return std::visit([&](const auto& query) {
         Mapped::require(rootIndex < query.rootInfo.size(), "root endpoint query index is out of range");
         const bool reverse = std::make_pair(query.inputEnd.x,query.inputEnd.y)
@@ -1342,22 +1682,31 @@ bool LevelSetMappedSegment::rootAtInputEndpoint(std::size_t rootIndex, bool atEn
 std::size_t LevelSetMappedSegment::gridPieceCount() const { return std::visit([](const auto& query) { return query.gridPieces; },checked().query); }
 bool LevelSetMappedSegment::sameNativeQuarticTraceZeros(const LevelSetMappedSegment& other) const
 {
+    if(const auto* a=std::get_if<Impl::NativeC2MacroQuery>(&checked().query)){
+        const auto* b=std::get_if<Impl::NativeC2MacroQuery>(&other.checked().query);
+        if(!b||begin().x!=other.begin().x||begin().y!=other.begin().y||end().x!=other.end().x||end().y!=other.end().y)
+            throw std::invalid_argument("macro trace comparison requires the same oriented segment");
+        return a->proportionalTrace(*b);
+    }
     const auto* a=std::get_if<Impl::NativeQuarticQuery>(&checked().query);
     const auto* b=std::get_if<Impl::NativeQuarticQuery>(&other.checked().query);
     if (!a || !b || begin().x!=other.begin().x || begin().y!=other.begin().y
         || end().x!=other.end().x || end().y!=other.end().y)
         throw std::invalid_argument("native quartic trace comparison requires the same oriented segment");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     return a->proportionalTrace(*b);
 }
 LevelSetMappedSegment::QuarticValueVariation LevelSetMappedSegment::nativeQuarticValueVariation(
-    bool fromEnd,long double offset,Quantum::Geometry::CornerSectorVariation sectors) const
+    bool fromEnd,long double offset,LAMP::Geometry::CornerSectorVariation sectors) const
 {
     const auto& retained=checked();
+    if(const auto* macro=std::get_if<Impl::NativeC2MacroQuery>(&retained.query))
+        return LAMP::Geometry::Detail::MappedHermiteSegment::valueVariation(
+            *macro,*retained.source->checked().nativeC2Macro,fromEnd,offset,sectors);
     const auto* query=std::get_if<Impl::NativeQuarticQuery>(&retained.query);
     if (!query) throw std::invalid_argument("trace value variation requires native quartic data");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
-    return Quantum::Geometry::Detail::MappedHermiteSegment::valueVariation(
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
+    return LAMP::Geometry::Detail::MappedHermiteSegment::valueVariation(
         *query,*retained.source->checked().nativeQuartic,fromEnd,offset,sectors);
 }
 bool LevelSetMappedSegment::sameNativeCubicTraceZeros(const LevelSetMappedSegment& other) const
@@ -1367,17 +1716,17 @@ bool LevelSetMappedSegment::sameNativeCubicTraceZeros(const LevelSetMappedSegmen
     if (!a || !b || begin().x!=other.begin().x || begin().y!=other.begin().y
         || end().x!=other.end().x || end().y!=other.end().y)
         throw std::invalid_argument("native cubic trace comparison requires the same oriented segment");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     return a->proportionalTrace(*b);
 }
 LevelSetMappedSegment::CubicValueVariation LevelSetMappedSegment::nativeCubicValueVariation(
-    bool fromEnd,long double offset,Quantum::Geometry::CornerSectorVariation sectors) const
+    bool fromEnd,long double offset,LAMP::Geometry::CornerSectorVariation sectors) const
 {
     const auto& retained=checked();
     const auto* query=std::get_if<Impl::NativeQuery>(&retained.query);
     if (!query) throw std::invalid_argument("trace value variation requires native cubic data");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
-    return Quantum::Geometry::Detail::MappedHermiteSegment::valueVariation(
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
+    return LAMP::Geometry::Detail::MappedHermiteSegment::valueVariation(
         *query,retained.source->checked().leaf(),fromEnd,offset,sectors);
 }
 LevelSetMappedSegment LevelSetMappedSegment::refined(std::size_t rootIndex) const
@@ -1389,9 +1738,10 @@ LevelSetMappedSegment LevelSetMappedSegment::refined(std::size_t rootIndex) cons
 
 struct LevelSetMappedSegment::NativeQuarticTrace::Impl
 {
-    using Query=LevelSetMappedSegment::Impl::NativeQuarticQuery;
-    using Scalar=Quantum::Geometry::Detail::LevelSetHermiteScalar::QuarticLeafData;
-    using Ratio=Quantum::Geometry::Detail::MappedHermiteSegment::Ratio;
+    template<class Scalar> struct Data {
+    using Layout=LAMP::Geometry::Detail::MappedHermiteSegment::BasicNativeCellLayout<Scalar>;
+    using Query=LAMP::Geometry::Detail::MappedHermiteSegment::BasicQuery<Layout>;
+    using Ratio=LAMP::Geometry::Detail::MappedHermiteSegment::Ratio;
     struct SideWork {std::size_t zero;int side,order,native;Query query;};
     struct Binding {int work;std::size_t root;Ratio parameter;};
     std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> source;
@@ -1403,12 +1753,12 @@ struct LevelSetMappedSegment::NativeQuarticTrace::Impl
     std::vector<Binding> bindings;
     std::unique_ptr<LevelSetMappedSegment> legacy;
 
-    Impl(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> retained,const Scalar& scalar,
+    Data(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> retained,const Scalar& scalar,
         Vector2D a,Vector2D b,int normalAxis)
         : source(std::move(retained)),value(scalar,a,b,
-            Quantum::Geometry::Detail::MappedHermiteSegment::NativeQuarticCellLayout(scalar),true),axis(normalAxis)
+            Layout(scalar),true),axis(normalAxis)
     {
-        namespace M=Quantum::Geometry::Detail::MappedHermiteSegment;
+        namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
         const bool reverse=reversed();
         const Vector2D first=reverse?b:a,last=reverse?a:b;
         const double line=axis==0?a.x:a.y;
@@ -1425,7 +1775,7 @@ struct LevelSetMappedSegment::NativeQuarticTrace::Impl
                 if(count==0)continue;
                 int order=1;
                 for(;order<=4;++order){
-                    M::NativeQuarticCellLayout layout(scalar,owner,zero.chart,axis,order);
+                    Layout layout(scalar,owner,zero.chart,axis,order);
                     layout.cuts(first,last);
                     const auto p=layout.polynomial(owner,M::constant(0),M::constant(1));
                     if(std::any_of(p.begin(),p.end(),[](const auto& c){return M::Exact::sign(c)!=0;})){
@@ -1437,20 +1787,20 @@ struct LevelSetMappedSegment::NativeQuarticTrace::Impl
         }
         finish();
     }
-    Impl(const Impl& other)
+    Data(const Data& other)
         : source(other.source),value(other.value),axis(other.axis),sides(other.sides) {}
     bool reversed() const{return std::make_pair(value.inputEnd.x,value.inputEnd.y)
         <std::make_pair(value.inputBegin.x,value.inputBegin.y);}
-    static Ratio compose(const Quantum::Geometry::Detail::MappedHermiteSegment::Chart& c,const Ratio& t)
+    static Ratio compose(const LAMP::Geometry::Detail::MappedHermiteSegment::Chart& c,const Ratio& t)
     {
-        namespace M=Quantum::Geometry::Detail::MappedHermiteSegment;
+        namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
         const auto w=M::subtract(c.end,c.begin);
         return M::add(c.begin,M::ratio(M::Exact::multiply(w.numerator,t.numerator),
             M::Exact::multiply(w.denominator,t.denominator)));
     }
     Range interval(const Ratio& a,const Ratio& b,bool negative) const
     {
-        namespace M=Quantum::Geometry::Detail::MappedHermiteSegment;
+        namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
         M::require(M::compare(a,b)<0,"native trace range has collapsed");
         const bool fromEnd=M::compare(M::add(a,b),M::constant(1))>0;
         const auto o=M::approximate(fromEnd?M::subtract(M::constant(1),b):a),w=M::approximate(M::subtract(b,a));
@@ -1485,6 +1835,16 @@ struct LevelSetMappedSegment::NativeQuarticTrace::Impl
         if(coincident.empty())legacy=std::unique_ptr<LevelSetMappedSegment>(new LevelSetMappedSegment(
             std::make_unique<LevelSetMappedSegment::Impl>(source,value)));
     }
+    };
+    using QuarticData=Data<LAMP::Geometry::Detail::LevelSetHermiteScalar::QuarticLeafData>;
+    using MacroData=Data<LAMP::Geometry::Detail::LevelSetHermiteScalar::C2MacroQuarticLeafData>;
+    std::variant<QuarticData,MacroData> data;
+    template<class Scalar> Impl(std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> source,
+        const Scalar& scalar,Vector2D a,Vector2D b,int axis)
+        :data(std::in_place_type<Data<Scalar>>,std::move(source),scalar,a,b,axis) {}
+    const QuarticData& quartic() const {return std::get<QuarticData>(data);}
+    const MacroData& macro() const {return std::get<MacroData>(data);}
+    template<class Scalar> const Data<Scalar>& typed() const {return std::get<Data<Scalar>>(data);}
 };
 const LevelSetMappedSegment::NativeQuarticTrace::Impl& LevelSetMappedSegment::Impl::retainedTrace(
     const NativeQuarticTrace& trace) { return trace.checked(); }
@@ -1492,10 +1852,12 @@ LevelSetMappedSegment::NativeQuarticTrace LevelSetMappedSegment::nativeQuarticTr
     std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> source,Vector2D a,Vector2D b,int axis)
 {
     if(!source)throw std::invalid_argument("[NativeQuarticTrace] null retained source");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     if((axis!=0 && axis!=1) || (axis==0?(a.x!=b.x || a.y==b.y):(a.y!=b.y || a.x==b.x)))
         throw std::invalid_argument("[NativeQuarticTrace] normal axis requires a perpendicular nonzero axis-aligned segment");
-    const auto& scalar=source->checked().nativeQuartic;
+    const auto& backend=source->checked();
+    if(backend.nativeC2Macro)return NativeQuarticTrace(std::make_unique<NativeQuarticTrace::Impl>(std::move(source),*backend.nativeC2Macro,a,b,axis));
+    const auto& scalar=backend.nativeQuartic;
     if(!scalar)throw std::invalid_argument("[NativeQuarticTrace] native Q4 source required");
     return NativeQuarticTrace(std::make_unique<NativeQuarticTrace::Impl>(std::move(source),*scalar,a,b,axis));
 }
@@ -1506,62 +1868,233 @@ LevelSetMappedSegment::NativeQuarticTrace& LevelSetMappedSegment::NativeQuarticT
 const LevelSetMappedSegment::NativeQuarticTrace::Impl& LevelSetMappedSegment::NativeQuarticTrace::checked() const
 {
     if(!impl_)throw std::runtime_error("[NativeQuarticTrace] query on a moved-from trace");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();return *impl_;
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();return *impl_;
 }
-bool LevelSetMappedSegment::NativeQuarticTrace::usesSource(const LevelSetHermiteGeometry::Snapshot& source) const{return checked().source.get()==&source;}
-Vector2D LevelSetMappedSegment::NativeQuarticTrace::begin() const{return checked().value.inputBegin;}
-Vector2D LevelSetMappedSegment::NativeQuarticTrace::end() const{return checked().value.inputEnd;}
-int LevelSetMappedSegment::NativeQuarticTrace::normalAxis() const{return checked().axis;}
-std::size_t LevelSetMappedSegment::NativeQuarticTrace::gridPieceCount() const{return checked().value.gridPieces;}
-const std::vector<LevelSetMappedSegment::Range>& LevelSetMappedSegment::NativeQuarticTrace::ordinaryRanges() const{return checked().value.ranges;}
-const std::vector<LevelSetMappedSegment::NativeQuarticTrace::CoincidentRange>& LevelSetMappedSegment::NativeQuarticTrace::coincidentRanges() const{return checked().coincident;}
-const std::vector<LevelSetMappedSegment::NativeQuarticTrace::Event>& LevelSetMappedSegment::NativeQuarticTrace::events() const{return checked().events;}
+bool LevelSetMappedSegment::NativeQuarticTrace::usesSource(const LevelSetHermiteGeometry::Snapshot& source) const
+{return std::visit([&](const auto& q){return q.source.get()==&source;},checked().data);}
+Vector2D LevelSetMappedSegment::NativeQuarticTrace::begin() const{return std::visit([](const auto& q){return q.value.inputBegin;},checked().data);}
+Vector2D LevelSetMappedSegment::NativeQuarticTrace::end() const{return std::visit([](const auto& q){return q.value.inputEnd;},checked().data);}
+int LevelSetMappedSegment::NativeQuarticTrace::normalAxis() const{return std::visit([](const auto& q){return q.axis;},checked().data);}
+std::size_t LevelSetMappedSegment::NativeQuarticTrace::gridPieceCount() const{return std::visit([](const auto& q){return q.value.gridPieces;},checked().data);}
+const std::vector<LevelSetMappedSegment::Range>& LevelSetMappedSegment::NativeQuarticTrace::ordinaryRanges() const
+{return std::visit([](const auto& q)->const auto&{return q.value.ranges;},checked().data);}
+const std::vector<LevelSetMappedSegment::NativeQuarticTrace::CoincidentRange>& LevelSetMappedSegment::NativeQuarticTrace::coincidentRanges() const
+{return std::visit([](const auto& q)->const auto&{return q.coincident;},checked().data);}
+const std::vector<LevelSetMappedSegment::NativeQuarticTrace::Event>& LevelSetMappedSegment::NativeQuarticTrace::events() const
+{return std::visit([](const auto& q)->const auto&{return q.events;},checked().data);}
 bool LevelSetMappedSegment::NativeQuarticTrace::rootAtInputEndpoint(std::size_t index,bool atEnd) const
 {
-    namespace M=Quantum::Geometry::Detail::MappedHermiteSegment;const auto& q=checked();
-    M::require(index<q.bindings.size(),"native trace event index is out of range");
-    return M::compare(q.bindings[index].parameter,M::constant(atEnd!=q.reversed()?1:0))==0;
+    namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
+    return std::visit([&](const auto& q){M::require(index<q.bindings.size(),"native trace event index is out of range");
+        return M::compare(q.bindings[index].parameter,M::constant(atEnd!=q.reversed()?1:0))==0;},checked().data);
 }
 LevelSetMappedSegment::NativeQuarticTrace LevelSetMappedSegment::NativeQuarticTrace::refined(std::size_t index) const
 {
-    namespace M=Quantum::Geometry::Detail::MappedHermiteSegment;const auto& q=checked();
-    M::require(index<q.bindings.size(),"native trace event refinement index is out of range");
-    auto candidate=std::make_unique<Impl>(q);const auto binding=q.bindings[index];
-    if(binding.work<0)candidate->value.refineRoot(binding.root);
-    else candidate->sides[binding.work].query.refineRoot(binding.root);
-    candidate->finish();return NativeQuarticTrace(std::move(candidate));
+    namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;const auto& original=checked();
+    auto candidate=std::make_unique<Impl>(original);
+    std::visit([&](auto& q){
+        using Data=std::decay_t<decltype(q)>;
+        const auto& prior=std::get<Data>(original.data);
+        M::require(index<prior.bindings.size(),"native trace event refinement index is out of range");
+        const auto binding=prior.bindings[index];if(binding.work<0)q.value.refineRoot(binding.root);
+        else q.sides[binding.work].query.refineRoot(binding.root);q.finish();},candidate->data);
+    return NativeQuarticTrace(std::move(candidate));
 }
 const LevelSetMappedSegment& LevelSetMappedSegment::NativeQuarticTrace::ordinary() const
 {
-    const auto& q=checked();if(!q.legacy)throw std::runtime_error("[NativeQuarticTrace] coincident trace has no legacy phase view");
-    return *q.legacy;
+    return std::visit([](const auto& q)->const LevelSetMappedSegment&{
+        if(!q.legacy)throw std::runtime_error("[NativeQuarticTrace] coincident trace has no legacy phase view");return *q.legacy;},checked().data);
 }
 
+struct LevelSetMappedSegment::CardinalQuarticTrace::Impl
+{
+    using Query=LAMP::Geometry::Detail::MappedHermiteSegment::CardinalQuarticQuery;
+    std::shared_ptr<const QuarticCardinalData> source;
+    Query value;
+    std::vector<Event> events;
+    std::vector<CoincidentRange> coincident;
+    Impl(std::shared_ptr<const QuarticCardinalData> retained,
+        const LAMP::Geometry::Detail::MappedHermiteSegment::CardinalQuarticSource& data,Vector2D a,Vector2D b)
+        :source(std::move(retained)),value(data,a,b) {finish();}
+    void finish(){events.clear();for(const auto& root:value.rootInfo)events.push_back({root,0,0,0});}
+    bool reversed() const{return std::make_pair(value.inputEnd.x,value.inputEnd.y)<std::make_pair(value.inputBegin.x,value.inputBegin.y);}
+};
+struct LevelSetMappedSegment::PreparedCardinalQuarticRow::Data
+{
+    using Source=LAMP::Geometry::Detail::MappedHermiteSegment::CardinalQuarticSource;
+    explicit Data(std::shared_ptr<const QuarticCardinalData> retained):source(std::move(retained)){}
+    std::shared_ptr<const QuarticCardinalData> source;
+    mutable std::once_flag ready;
+    mutable std::optional<Source> prepared;
+    mutable bool identicallyZero=false;
+    const Source& exactSource() const
+    {
+        std::call_once(ready,[this] {
+            namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
+            M::Exact::validateEnvironment();
+            const int axis=source->normalAxis;
+            const auto tangent=[axis](Vector2D p){return axis==0?p.y:p.x;};
+            const auto width=M::difference(tangent(source->end),tangent(source->begin));
+            const auto p0=M::number(source->values[0]),p1=M::Exact::multiply(width,M::number(source->tangentDerivatives[0]));
+            const auto A=M::Exact::subtract(M::Exact::subtract(M::number(source->values[1]),p0),p1);
+            const auto B=M::Exact::subtract(M::Exact::multiply(width,M::number(source->tangentDerivatives[1])),p1);
+            const auto C=M::Exact::subtract(M::Exact::subtract(M::number(source->midpointValue),p0),M::Exact::multiply(M::number(.5),p1));
+            Source data;data.data=source;data.coefficients[0]=p0;data.coefficients[1]=p1;
+            data.coefficients[2]=M::Exact::add(M::Exact::add(M::Exact::multiply(M::number(-5),A),B),M::Exact::multiply(M::number(16),C));
+            data.coefficients[3]=M::Exact::subtract(M::Exact::subtract(M::Exact::multiply(M::number(14),A),M::Exact::multiply(M::number(3),B)),M::Exact::multiply(M::number(32),C));
+            data.coefficients[4]=M::Exact::add(M::Exact::add(M::Exact::multiply(M::number(-8),A),M::Exact::multiply(M::number(2),B)),M::Exact::multiply(M::number(16),C));
+            const bool zero=std::all_of(data.coefficients.begin(),data.coefficients.end(),[](const auto& p){return M::Exact::sign(p)==0;});
+            M::Exact::validateEnvironment();
+            prepared.emplace(std::move(data));
+            identicallyZero=zero;
+        });
+        return *prepared;
+    }
+};
+LevelSetMappedSegment::PreparedCardinalQuarticRow::PreparedCardinalQuarticRow(std::shared_ptr<const Data> data)
+    :data_(std::move(data)){}
+const LevelSetMappedSegment::PreparedCardinalQuarticRow::Data&
+LevelSetMappedSegment::PreparedCardinalQuarticRow::checked() const
+{
+    if(!data_)throw std::runtime_error("[PreparedCardinalQuarticRow] query on a moved-from row");
+    return *data_;
+}
+LevelSetMappedSegment::PreparedCardinalQuarticRow LevelSetMappedSegment::prepareCardinalQuarticRow(
+    std::shared_ptr<const QuarticCardinalData> source)
+{
+    namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
+    M::Exact::validateEnvironment();
+    M::require(bool(source),"null retained cardinal trace data");
+    // Only retain the actual owner here. Its first consumed subrow performs
+    // the original source/anchor gates before any exact coefficient work.
+    PreparedCardinalQuarticRow result(std::make_shared<const PreparedCardinalQuarticRow::Data>(std::move(source)));
+    M::Exact::validateEnvironment();return result;
+}
+std::optional<LevelSetMappedSegment::CardinalQuarticTrace> LevelSetMappedSegment::cardinalQuarticTrace(
+    const PreparedCardinalQuarticRow& row,Vector2D inputBegin,Vector2D inputEnd)
+{
+    namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
+    M::Exact::validateEnvironment();
+    const auto& retained=row.checked();const auto& source=retained.source;
+    M::require(bool(source),"null retained cardinal trace data");
+    const auto finite=[](Vector2D p){return std::isfinite(p.x)&&std::isfinite(p.y);};
+    const int axis=source->normalAxis;
+    M::require((axis==0||axis==1)&&source->nativeCellIndex>=0,"invalid cardinal normal axis/native row owner");
+    M::require(finite(source->begin)&&finite(source->end)&&finite(inputBegin)&&finite(inputEnd),"nonfinite cardinal trace anchors");
+    const auto normal=[axis](Vector2D p){return axis==0?p.x:p.y;};
+    const auto tangent=[axis](Vector2D p){return axis==0?p.y:p.x;};
+    M::require(normal(source->begin)==normal(source->end)&&tangent(source->begin)!=tangent(source->end),"cardinal data requires a complete nonzero axis-aligned row");
+    M::require(normal(inputBegin)==normal(source->begin)&&normal(inputEnd)==normal(source->begin)
+        &&tangent(inputBegin)!=tangent(inputEnd),"cardinal input must be a nonzero collinear subrow");
+    const double lower=std::min(tangent(source->begin),tangent(source->end)),upper=std::max(tangent(source->begin),tangent(source->end));
+    M::require(tangent(inputBegin)>=lower&&tangent(inputBegin)<=upper&&tangent(inputEnd)>=lower&&tangent(inputEnd)<=upper,"cardinal input exceeds its actual complete row");
+    for(double v:source->values)M::require(std::isfinite(v),"nonfinite cardinal endpoint value");
+    for(double v:source->tangentDerivatives)M::require(std::isfinite(v),"nonfinite cardinal tangent derivative");
+    M::require(std::isfinite(source->midpointValue),"nonfinite cardinal midpoint value");
+    const auto& data=retained.exactSource();
+    if(retained.identicallyZero){M::Exact::validateEnvironment();return std::nullopt;}
+    CardinalQuarticTrace result(std::make_unique<CardinalQuarticTrace::Impl>(source,data,inputBegin,inputEnd));
+    M::Exact::validateEnvironment();return std::optional<CardinalQuarticTrace>(std::move(result));
+}
+
+std::optional<LevelSetMappedSegment::CardinalQuarticTrace> LevelSetMappedSegment::cardinalQuarticTrace(
+    std::shared_ptr<const QuarticCardinalData> source,Vector2D inputBegin,Vector2D inputEnd)
+{
+    namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
+    M::Exact::validateEnvironment();
+    M::require(bool(source),"null retained cardinal trace data");
+    const auto finite=[](Vector2D p){return std::isfinite(p.x)&&std::isfinite(p.y);};
+    const int axis=source->normalAxis;
+    M::require((axis==0||axis==1)&&source->nativeCellIndex>=0,"invalid cardinal normal axis/native row owner");
+    M::require(finite(source->begin)&&finite(source->end)&&finite(inputBegin)&&finite(inputEnd),"nonfinite cardinal trace anchors");
+    const auto normal=[axis](Vector2D p){return axis==0?p.x:p.y;};
+    const auto tangent=[axis](Vector2D p){return axis==0?p.y:p.x;};
+    M::require(normal(source->begin)==normal(source->end)&&tangent(source->begin)!=tangent(source->end),"cardinal data requires a complete nonzero axis-aligned row");
+    M::require(normal(inputBegin)==normal(source->begin)&&normal(inputEnd)==normal(source->begin)
+        &&tangent(inputBegin)!=tangent(inputEnd),"cardinal input must be a nonzero collinear subrow");
+    const double lower=std::min(tangent(source->begin),tangent(source->end)),upper=std::max(tangent(source->begin),tangent(source->end));
+    M::require(tangent(inputBegin)>=lower&&tangent(inputBegin)<=upper&&tangent(inputEnd)>=lower&&tangent(inputEnd)<=upper,"cardinal input exceeds its actual complete row");
+    for(double v:source->values)M::require(std::isfinite(v),"nonfinite cardinal endpoint value");
+    for(double v:source->tangentDerivatives)M::require(std::isfinite(v),"nonfinite cardinal tangent derivative");
+    M::require(std::isfinite(source->midpointValue),"nonfinite cardinal midpoint value");
+    const auto width=M::difference(tangent(source->end),tangent(source->begin));
+    const auto p0=M::number(source->values[0]),p1=M::Exact::multiply(width,M::number(source->tangentDerivatives[0]));
+    const auto A=M::Exact::subtract(M::Exact::subtract(M::number(source->values[1]),p0),p1);
+    const auto B=M::Exact::subtract(M::Exact::multiply(width,M::number(source->tangentDerivatives[1])),p1);
+    const auto C=M::Exact::subtract(M::Exact::subtract(M::number(source->midpointValue),p0),M::Exact::multiply(M::number(.5),p1));
+    M::CardinalQuarticSource data;data.data=source;data.coefficients[0]=p0;data.coefficients[1]=p1;
+    data.coefficients[2]=M::Exact::add(M::Exact::add(M::Exact::multiply(M::number(-5),A),B),M::Exact::multiply(M::number(16),C));
+    data.coefficients[3]=M::Exact::subtract(M::Exact::subtract(M::Exact::multiply(M::number(14),A),M::Exact::multiply(M::number(3),B)),M::Exact::multiply(M::number(32),C));
+    data.coefficients[4]=M::Exact::add(M::Exact::add(M::Exact::multiply(M::number(-8),A),M::Exact::multiply(M::number(2),B)),M::Exact::multiply(M::number(16),C));
+    if(std::all_of(data.coefficients.begin(),data.coefficients.end(),[](const auto& p){return M::Exact::sign(p)==0;})){
+        M::Exact::validateEnvironment();return std::nullopt;
+    }
+    CardinalQuarticTrace result(std::make_unique<CardinalQuarticTrace::Impl>(std::move(source),data,inputBegin,inputEnd));
+    M::Exact::validateEnvironment();return std::optional<CardinalQuarticTrace>(std::move(result));
+}
+LevelSetMappedSegment::CardinalQuarticTrace::CardinalQuarticTrace(std::unique_ptr<const Impl> impl):impl_(std::move(impl)){}
+LevelSetMappedSegment::CardinalQuarticTrace::~CardinalQuarticTrace()=default;
+LevelSetMappedSegment::CardinalQuarticTrace::CardinalQuarticTrace(CardinalQuarticTrace&&) noexcept=default;
+LevelSetMappedSegment::CardinalQuarticTrace& LevelSetMappedSegment::CardinalQuarticTrace::operator=(CardinalQuarticTrace&&) noexcept=default;
+const LevelSetMappedSegment::CardinalQuarticTrace::Impl& LevelSetMappedSegment::CardinalQuarticTrace::checked() const
+{
+    if(!impl_)throw std::runtime_error("[CardinalQuarticTrace] query on a moved-from trace");
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();return *impl_;
+}
+bool LevelSetMappedSegment::CardinalQuarticTrace::usesSource(const QuarticCardinalData& source) const{return checked().source.get()==&source;}
+Vector2D LevelSetMappedSegment::CardinalQuarticTrace::begin() const{return checked().value.inputBegin;}
+Vector2D LevelSetMappedSegment::CardinalQuarticTrace::end() const{return checked().value.inputEnd;}
+int LevelSetMappedSegment::CardinalQuarticTrace::normalAxis() const{return checked().source->normalAxis;}
+std::size_t LevelSetMappedSegment::CardinalQuarticTrace::gridPieceCount() const{return checked().value.gridPieces;}
+const std::vector<LevelSetMappedSegment::Range>& LevelSetMappedSegment::CardinalQuarticTrace::ordinaryRanges() const{return checked().value.ranges;}
+const std::vector<LevelSetMappedSegment::CardinalQuarticTrace::CoincidentRange>& LevelSetMappedSegment::CardinalQuarticTrace::coincidentRanges() const{return checked().coincident;}
+const std::vector<LevelSetMappedSegment::CardinalQuarticTrace::Event>& LevelSetMappedSegment::CardinalQuarticTrace::events() const{return checked().events;}
+bool LevelSetMappedSegment::CardinalQuarticTrace::rootAtInputEndpoint(std::size_t index,bool atEnd) const
+{
+    namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;const auto& q=checked();
+    M::require(index<q.value.rootInfo.size(),"cardinal trace event index is out of range");
+    const auto& root=q.value.roots[q.reversed()?q.value.roots.size()-1-index:index];
+    return M::compare(root.parameter,M::constant(atEnd!=q.reversed()?1:0))==0;
+}
+LevelSetMappedSegment::CardinalQuarticTrace LevelSetMappedSegment::CardinalQuarticTrace::refined(std::size_t index) const
+{
+    namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;const auto& q=checked();
+    M::require(index<q.value.rootInfo.size(),"cardinal trace event refinement index is out of range");
+    auto candidate=std::make_unique<Impl>(q);candidate->value.refineRoot(index);candidate->finish();return CardinalQuarticTrace(std::move(candidate));
+}
+const LevelSetMappedSegment::CardinalQuarticTrace& LevelSetMappedSegment::CardinalQuarticTrace::ordinary() const{checked();return *this;}
+const std::vector<LevelSetMappedSegment::Range>& LevelSetMappedSegment::CardinalQuarticTrace::ranges() const{return ordinaryRanges();}
+const std::vector<LevelSetMappedSegment::Root>& LevelSetMappedSegment::CardinalQuarticTrace::roots() const{return checked().value.rootInfo;}
+
+
 std::vector<LevelSetMappedSegment::NegativePhaseVariation> LevelSetMappedSegment::
-    nativeNegativePhaseVariation(Quantum::Geometry::CornerSectorVariation sectors) const
+    nativeNegativePhaseVariation(LAMP::Geometry::CornerSectorVariation sectors) const
 {
     const auto &retained = checked();
     const auto *query = std::get_if<Impl::NativeQuery>(&retained.query);
     if (!query)
         throw std::runtime_error("[LevelSetMappedSegment] legacy phase variation requires cubic native data; no 25-to-16 conversion");
-    return Quantum::Geometry::Detail::MappedHermiteSegment::negativePhaseVariation(
+    return LAMP::Geometry::Detail::MappedHermiteSegment::negativePhaseVariation(
         *query, retained.source->checked().leaf(), sectors);
 }
 
 std::vector<LevelSetMappedSegment::QuarticNegativePhaseVariation> LevelSetMappedSegment::
-    nativeQuarticNegativePhaseVariation(Quantum::Geometry::CornerSectorVariation sectors) const
+    nativeQuarticNegativePhaseVariation(LAMP::Geometry::CornerSectorVariation sectors) const
 {
     const auto &retained = checked();
+    if(const auto* macro=std::get_if<Impl::NativeC2MacroQuery>(&retained.query))
+        return LAMP::Geometry::Detail::MappedHermiteSegment::negativePhaseVariation(
+            *macro,*retained.source->checked().nativeC2Macro,sectors);
     const auto *query = std::get_if<Impl::NativeQuarticQuery>(&retained.query);
     if (!query)
         throw std::runtime_error("[LevelSetMappedSegment] quartic phase variation requires native quartic data");
-    return Quantum::Geometry::Detail::MappedHermiteSegment::negativePhaseVariation(
+    return LAMP::Geometry::Detail::MappedHermiteSegment::negativePhaseVariation(
         *query, *retained.source->checked().nativeQuartic, sectors);
 }
 
 struct LevelSetInterfacePanels::NativeGraphChain::SamplingData
 {
-    using Sample=Quantum::Geometry::Detail::MappedHermiteInterface::GraphSample;
+    using Sample=LAMP::Geometry::Detail::MappedHermiteInterface::GraphSample;
     std::vector<std::function<Sample(double,double,double)>> graphs;
     // Query-only results on this immutable source/chain. No field, velocity,
     // charge or mesh pointer, and no error/partially computed result is kept.
@@ -1574,9 +2107,9 @@ struct LevelSetInterfacePanels::NativeGraphChain::SamplingData
 LevelSetInterfacePanels::LocalProjection LevelSetInterfacePanels::NativeGraphChain::projectedFrame(
     Vector2D query) const
 {
-    namespace Q=Quantum::Geometry::Detail::InterfaceQuadrature;
+    namespace Q=LAMP::Geometry::Detail::InterfaceQuadrature;
     Q::require(source_ && !graphs_.empty(),"native load projection requires an owned retained curve");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     Q::require(static_cast<bool>(sampling_),"native graph lost its prepared sampling geometry");
     std::array<std::uint64_t,2> key;
     std::memcpy(&key[0],&query.x,sizeof(double));
@@ -1602,9 +2135,9 @@ LevelSetInterfacePanels::LocalProjection LevelSetInterfacePanels::NativeGraphCha
 std::vector<LevelSetInterfacePanels::LocalProjection>
 LevelSetInterfacePanels::NativeGraphChain::loadProjectionCandidates(Vector2D query) const
 {
-    namespace Q=Quantum::Geometry::Detail::InterfaceQuadrature;
+    namespace Q=LAMP::Geometry::Detail::InterfaceQuadrature;
     Q::require(source_ && !graphs_.empty(),"native load projection requires an owned retained curve");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     Q::require(static_cast<bool>(sampling_),"native graph lost its prepared sampling geometry");
     std::array<std::uint64_t,2> key;
     std::memcpy(&key[0],&query.x,sizeof(double));
@@ -1649,7 +2182,7 @@ LevelSetInterfacePanels::NativeComponents LevelSetInterfacePanels::discoverNativ
     const QuadtreeMesh& mesh,std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> source,
     bool axisymmetric,const std::vector<Vector2D>& boundaryContacts,const std::vector<SymmetryPlane>& symmetryPlanes)
 {
-    if(!source || !source->checked().nativeQuartic)
+    if(!source || (!source->checked().nativeQuartic && !source->checked().nativeC2Macro))
         throw std::invalid_argument("[LevelSetInterfacePanels] native trace components require an owned native Q4 snapshot");
     return discoverNativeComponentsImpl(mesh,std::move(source),axisymmetric,boundaryContacts,false,symmetryPlanes,true);
 }
@@ -1660,7 +2193,7 @@ LevelSetInterfacePanels::NativeComponents LevelSetInterfacePanels::discoverNativ
 {
     if(!source) throw std::invalid_argument("[LevelSetInterfacePanels] null native interface source");
     auto all=source->checked().visitLeaf([&](const auto& scalar) {
-        return Quantum::Geometry::Detail::NativeInterfaceChain::discoverAll(mesh,scalar,axisymmetric,boundaryContacts,legacy,symmetryPlanes,nativeTrace);
+        return LAMP::Geometry::Detail::NativeInterfaceChain::discoverAll(mesh,scalar,axisymmetric,boundaryContacts,legacy,symmetryPlanes,nativeTrace);
     });
     NativeComponents collection;
     collection.negativeRegions = std::move(all.negativeRegions);
@@ -1687,7 +2220,7 @@ LevelSetInterfacePanels::NativeComponents LevelSetInterfacePanels::discoverNativ
         sampling->graphs.reserve(result.graphs_.size());
         result.source_->checked().visitLeaf([&](const auto& scalar) {
             using Scalar=std::decay_t<decltype(scalar)>;
-            using Integrator=Quantum::Geometry::Detail::MappedHermiteInterface::NativeIntegratorFor<Scalar>;
+            using Integrator=LAMP::Geometry::Detail::MappedHermiteInterface::NativeIntegratorFor<Scalar>;
             // The alias owns the opaque snapshot, not a borrowed visitor argument.
             // The prepared object owns its Graph/Cuts and has no chain-vector borrow.
             const std::shared_ptr<const Scalar> retained(result.source_,&scalar);
@@ -1710,14 +2243,14 @@ LevelSetHermiteGeometry::Frame LevelSetInterfacePanels::NativeGraphChain::frameA
 {
     // Reuse only exact fixed fractions on this retained immutable source.
     // Discovery remains lazy; all other fractions retain the original query.
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     if(source_ && graphIndex>=0 && static_cast<std::size_t>(graphIndex)<graphs_.size() &&
         fixedProjectionFrames_.size()==graphs_.size())
     {
         const auto& frames=fixedProjectionFrames_[graphIndex];
         if(fraction==0) return frames[0];
         if(fraction==1) return frames[1];
-        const auto& nodes=Quantum::Geometry::Detail::InterfaceQuadrature::gaussX;
+        const auto& nodes=LAMP::Geometry::Detail::InterfaceQuadrature::gaussX;
         for(std::size_t k=0;k<nodes.size();++k)
             if(fraction==(1.0+nodes[k])/2.0) return frames[k+2];
     }
@@ -1727,7 +2260,7 @@ LevelSetHermiteGeometry::Frame LevelSetInterfacePanels::NativeGraphChain::frameA
 LevelSetHermiteGeometry::Frame LevelSetInterfacePanels::NativeGraphChain::frameAtInterval(
     int graphIndex,double begin,double end,double fraction) const
 {
-    namespace Q=Quantum::Geometry::Detail::InterfaceQuadrature;
+    namespace Q=LAMP::Geometry::Detail::InterfaceQuadrature;
     Q::require(source_ && graphIndex>=0 && static_cast<std::size_t>(graphIndex)<graphs_.size(),
         "native frame requires an owned source and valid graph index");
     const auto& graph=graphs_[graphIndex];
@@ -1739,21 +2272,21 @@ LevelSetHermiteGeometry::Frame LevelSetInterfacePanels::NativeGraphChain::frameA
         256.0*std::numeric_limits<double>::epsilon(),"chosen native graph has an unresolved or reversed tangent");
     const bool endpoint=(begin==0 && fraction==0) || (end==1 && fraction==1);
     if(!endpoint) {
-        if(!graph.nativeSide)Q::require(Quantum::Geometry::cellChartInterior(sampled.chart),
+        if(!graph.nativeSide)Q::require(LAMP::Geometry::cellChartInterior(sampled.chart),
             "native graph sample is not strictly inside its local cell");
         else {
             const auto& side=*graph.nativeSide;const auto tangent=graph.coordinateIsX?sampled.chart.x:sampled.chart.y;
             const auto normal=graph.coordinateIsX?sampled.chart.y:sampled.chart.x;
-            Q::require(side.usesSource(*source_) && Quantum::Geometry::compareCellChartCoordinate(
-                normal,{side.side()<2?0.:1.,false})==0 && Quantum::Geometry::compareCellChartCoordinate(tangent,{0,false})>0
-                && Quantum::Geometry::compareCellChartCoordinate(tangent,{1,false})<0,
+            Q::require(side.usesSource(*source_) && LAMP::Geometry::compareCellChartCoordinate(
+                normal,{side.side()<2?0.:1.,false})==0 && LAMP::Geometry::compareCellChartCoordinate(tangent,{0,false})>0
+                && LAMP::Geometry::compareCellChartCoordinate(tangent,{1,false})<0,
                 "native side sample left its certified support/tangent interior");
         }
     }
     if(axisymmetric_)
     {
         const auto bounds=source_->nativeCellBounds(graph.nativeCellIndex);
-        const bool atAxis=bounds[0].x==0 && Quantum::Geometry::compareCellChartCoordinate(
+        const bool atAxis=bounds[0].x==0 && LAMP::Geometry::compareCellChartCoordinate(
             sampled.chart.x,{0,false})==0;
         if(atAxis && endpoint)
             Q::require(source_->radialAxisSymmetry() && frame.normal.x==0,"native axis endpoint is not symmetric");
@@ -1769,7 +2302,7 @@ std::vector<LevelSetInterfacePanels::ArcSample> LevelSetInterfacePanels::NativeG
 std::vector<LevelSetInterfacePanels::ArcSample> LevelSetInterfacePanels::NativeGraphChain::quadrature(
     int graphIndex,double begin,double end) const
 {
-    namespace Q=Quantum::Geometry::Detail::InterfaceQuadrature;
+    namespace Q=LAMP::Geometry::Detail::InterfaceQuadrature;
     Q::require(source_ && graphIndex>=0 && static_cast<std::size_t>(graphIndex)<graphs_.size(),
         "native quadrature requires an owned source and valid graph index");
     Q::require(std::isfinite(begin) && std::isfinite(end) && begin>=0 && end<=1 && begin<=end,
@@ -1798,7 +2331,7 @@ std::vector<LevelSetInterfacePanels::ArcSample> LevelSetInterfacePanels::NativeG
 
 double LevelSetInterfacePanels::NativeGraphChain::physicalCoordinateSpan(int graphIndex) const
 {
-    namespace Q=Quantum::Geometry::Detail::InterfaceQuadrature;
+    namespace Q=LAMP::Geometry::Detail::InterfaceQuadrature;
     Q::require(source_ && graphIndex>=0 && static_cast<std::size_t>(graphIndex)<graphs_.size(),
         "native span requires an owned source and valid graph index");
     Q::require(sampling_ && sampling_->graphs.size()==graphs_.size(),"native graph lost its prepared sampling geometry");
@@ -1807,13 +2340,13 @@ double LevelSetInterfacePanels::NativeGraphChain::physicalCoordinateSpan(int gra
 }
 
 double LevelSetInterfacePanels::NativeGraphChain::graphFraction(
-    int graphIndex,const Quantum::Geometry::CellChartPoint& point) const
+    int graphIndex,const LAMP::Geometry::CellChartPoint& point) const
 {
-    namespace Q=Quantum::Geometry::Detail::InterfaceQuadrature;
+    namespace Q=LAMP::Geometry::Detail::InterfaceQuadrature;
     Q::require(source_ && graphIndex>=0 && static_cast<std::size_t>(graphIndex)<graphs_.size(),
         "native coordinate requires an owned source and valid graph index");
     return source_->checked().visitLeaf([&](const auto& scalar) {
-        return Quantum::Geometry::Detail::MappedHermiteInterface::NativeIntegratorFor<
+        return LAMP::Geometry::Detail::MappedHermiteInterface::NativeIntegratorFor<
             std::decay_t<decltype(scalar)>>::graphFraction(scalar,graphs_[graphIndex],point);
     });
 }
@@ -1824,12 +2357,12 @@ LevelSetMappedInterface::Result LevelSetMappedInterface::integrate(
     const std::vector<Region>& regions, bool axisymmetric)
 {
     if(graph.nativeSide)throw std::invalid_argument("legacy sensitivity does not admit native side-attached support");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     const auto& backend = source.checked();
-    if (backend.quartic || backend.nativeQuartic)
+    if (backend.quartic || backend.nativeQuartic || backend.nativeC2Macro)
         throw std::invalid_argument("[LevelSetMappedInterface] EnrichedQuartic requires integrateQuartic and 25 data columns");
-    std::vector<const Quantum::Geometry::Detail::MappedHermiteSegment::Query*> retainedCuts;
-    std::vector<const Quantum::Geometry::Detail::MappedHermiteSegment::NativeQuery*> nativeCuts;
+    std::vector<const LAMP::Geometry::Detail::MappedHermiteSegment::Query*> retainedCuts;
+    std::vector<const LAMP::Geometry::Detail::MappedHermiteSegment::NativeQuery*> nativeCuts;
     retainedCuts.reserve(faceCuts.size());
     if (backend.native) nativeCuts.reserve(faceCuts.size());
     for (const auto* cut : faceCuts)
@@ -1848,7 +2381,7 @@ LevelSetMappedInterface::Result LevelSetMappedInterface::integrate(
     }
     if (backend.native)
     {
-        auto result = Quantum::Geometry::Detail::MappedHermiteInterface::NativeIntegrator(
+        auto result = LAMP::Geometry::Detail::MappedHermiteInterface::NativeIntegrator(
             *backend.native, graph, nativeCuts, regions, axisymmetric).run();
         for (auto& arc : result.arcs)
         {
@@ -1858,7 +2391,7 @@ LevelSetMappedInterface::Result LevelSetMappedInterface::integrate(
         }
         return result;
     }
-    return Quantum::Geometry::Detail::MappedHermiteInterface::Integrator(
+    return LAMP::Geometry::Detail::MappedHermiteInterface::Integrator(
         backend.cubicGeometry(), graph, retainedCuts, regions, axisymmetric).run();
 }
 
@@ -1874,6 +2407,7 @@ LevelSetHermiteGeometry::Snapshot::nativeQuarticCenterInterval(int index,double 
 int LevelSetHermiteGeometry::Snapshot::nativeQuarticBoxSign(int index,Vector2D lower,Vector2D upper) const
 {
     const auto& data=checked();
+    if(data.nativeC2Macro)return data.nativeC2Macro->boxSign(index,lower,upper);
     if(!data.nativeQuartic)throw std::invalid_argument("Q4 box sign requires a native quartic scalar");
     return data.nativeQuartic->boxSign(index,lower,upper);
 }
@@ -1891,21 +2425,24 @@ LevelSetMappedInterface::GraphMoments LevelSetMappedInterface::nativeMoments(
 {
     if(graph.nativeSide && !graph.nativeSide->usesSource(source))
         throw std::invalid_argument("native side moments use a different snapshot");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     const auto& backend=source.checked();
-    if (graph.nativeCellIndex<0 || (!backend.native && !backend.nativeQuartic))
+    if (graph.nativeCellIndex<0 || (!backend.native && !backend.nativeQuartic && !backend.nativeC2Macro))
         throw std::invalid_argument("nativeMoments requires an original native cubic/Q4 graph");
-    if (backend.native) return Quantum::Geometry::Detail::MappedHermiteInterface::NativeIntegrator::graphMoments(
+    if (backend.nativeC2Macro) return LAMP::Geometry::Detail::MappedHermiteInterface::NativeIntegratorFor<
+        LAMP::Geometry::Detail::LevelSetHermiteScalar::C2MacroQuarticLeafData>::graphMoments(
+        *backend.nativeC2Macro,graph,axisymmetric);
+    if (backend.native) return LAMP::Geometry::Detail::MappedHermiteInterface::NativeIntegrator::graphMoments(
         *backend.native,graph,axisymmetric);
-    return Quantum::Geometry::Detail::MappedHermiteInterface::NativeQuarticIntegrator::graphMoments(
+    return LAMP::Geometry::Detail::MappedHermiteInterface::NativeQuarticIntegrator::graphMoments(
         *backend.nativeQuartic,graph,axisymmetric);
 }
 
 int LevelSetInterfacePanels::NativeGraphChain::graphAt(
-    int nativeCellIndex,const Quantum::Geometry::CellChartPoint& point) const
+    int nativeCellIndex,const LAMP::Geometry::CellChartPoint& point) const
 {
-    namespace Q=Quantum::Geometry::Detail::InterfaceQuadrature;
-    namespace C=Quantum::Geometry;
+    namespace Q=LAMP::Geometry::Detail::InterfaceQuadrature;
+    namespace C=LAMP::Geometry;
     C::validateCellChart(point);
     Q::require(source_ && nativeCellIndex>=0 && static_cast<std::size_t>(nativeCellIndex)<cellGraphs_.size(),
         "native graph lookup requires an owned source and valid leaf index");
@@ -1952,18 +2489,23 @@ LevelSetMappedInterface::QuarticResult LevelSetMappedInterface::integrateQuartic
     const std::vector<Region>& regions, bool axisymmetric, Vector2D greenOrigin)
 {
     if(graph.nativeSide)throw std::invalid_argument("legacy quartic sensitivity does not admit native side-attached support");
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     const auto& backend=source.checked();
-    if (!backend.quartic && !backend.nativeQuartic)
+    if (!backend.quartic && !backend.nativeQuartic && !backend.nativeC2Macro)
         throw std::invalid_argument("[LevelSetMappedInterface] integrateQuartic requires an EnrichedQuartic snapshot");
     const auto integrate=[&](const auto& scalar)
     {
-        namespace M=Quantum::Geometry::Detail::MappedHermiteSegment;
-        namespace I=Quantum::Geometry::Detail::MappedHermiteInterface;
+        namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
+        namespace I=LAMP::Geometry::Detail::MappedHermiteInterface;
         constexpr bool native=std::is_same_v<std::decay_t<decltype(scalar)>,
-            Quantum::Geometry::Detail::LevelSetHermiteScalar::QuarticLeafData>;
-        using Query=std::conditional_t<native,M::NativeQuarticQuery,M::QuarticQuery>;
-        using Integrator=std::conditional_t<native,I::NativeQuarticIntegrator,I::QuarticIntegrator>;
+            LAMP::Geometry::Detail::LevelSetHermiteScalar::QuarticLeafData>;
+        constexpr bool macro=std::is_same_v<std::decay_t<decltype(scalar)>,
+            LAMP::Geometry::Detail::LevelSetHermiteScalar::C2MacroQuarticLeafData>;
+        using Query=std::conditional_t<macro,M::NativeC2MacroQuery,
+            std::conditional_t<native,M::NativeQuarticQuery,M::QuarticQuery>>;
+        using Integrator=std::conditional_t<macro,I::NativeIntegratorFor<
+            LAMP::Geometry::Detail::LevelSetHermiteScalar::C2MacroQuarticLeafData>,
+            std::conditional_t<native,I::NativeQuarticIntegrator,I::QuarticIntegrator>>;
         std::vector<const Query*> cuts;
         cuts.reserve(faceCuts.size());
         for (const auto* cut:faceCuts)
@@ -1978,6 +2520,7 @@ LevelSetMappedInterface::QuarticResult LevelSetMappedInterface::integrateQuartic
         }
         return Integrator(scalar,graph,cuts,regions,axisymmetric,greenOrigin).run();
     };
+    if(backend.nativeC2Macro) return integrate(*backend.nativeC2Macro);
     if(backend.nativeQuartic) return integrate(*backend.nativeQuartic);
     return integrate(*backend.quartic);
 }
@@ -1987,8 +2530,12 @@ LevelSetMappedInterface::NativeRegionMoments LevelSetMappedInterface::integrateN
     const std::vector<const LevelSetMappedSegment::NativeQuarticTrace*>& faceCuts,
     const std::vector<Region>& regions,bool radial,Vector2D greenOrigin)
 {
-    namespace M=Quantum::Geometry::Detail::MappedHermiteSegment;
-    namespace I=Quantum::Geometry::Detail::MappedHermiteInterface;
+    if(source.usesC2Macro()) {
+        NativeMomentTarget target;target.regions=regions;target.greenOrigin=greenOrigin;
+        return integrateNativeQuarticRegionMomentsBatch(source,cell,graphs,faceCuts,{target},radial).front();
+    }
+    namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
+    namespace I=LAMP::Geometry::Detail::MappedHermiteInterface;
     constexpr long double pi=3.1415926535897932384626433832795L;
     M::Exact::validateEnvironment();
     const auto& scalar=source.checked().nativeQuartic;
@@ -1999,7 +2546,7 @@ LevelSetMappedInterface::NativeRegionMoments LevelSetMappedInterface::integrateN
     std::vector<const M::NativeQuarticQuery*> cuts;
     for(const auto* cut:faceCuts) {
         M::require(cut!=nullptr,"null native region trace");
-        const auto& q=LevelSetMappedSegment::Impl::retainedTrace(*cut);
+        const auto& q=LevelSetMappedSegment::Impl::retainedTrace(*cut).quartic();
         M::require(q.source.get()==&source,"native region trace uses a different snapshot");
         cuts.push_back(&q.value);
     }
@@ -2044,7 +2591,7 @@ LevelSetMappedInterface::NativeRegionMoments LevelSetMappedInterface::integrateN
             M::require(id==faceCuts.size(),"duplicate actual native region trace");id=s;
         }
         M::require(id<faceCuts.size(),"native rectangle side is missing its actual complete trace");
-        const auto& q=LevelSetMappedSegment::Impl::retainedTrace(*faceCuts[id]);
+        const auto& q=LevelSetMappedSegment::Impl::retainedTrace(*faceCuts[id]).quartic();
         const bool horizontal=a.y==b.y;const int axis=horizontal?1:0;
         M::require(q.axis==axis,"native region trace has the wrong normal axis");
         const auto& box=rectangles[k];
@@ -2112,7 +2659,7 @@ LevelSetMappedInterface::NativeRegionMoments LevelSetMappedInterface::integrateN
         } catch(const RootResolutionError& failure) {
             auto requests=failure.requests;
             for(auto& request:requests) {
-                const auto& q=LevelSetMappedSegment::Impl::retainedTrace(*faceCuts.at(request.segmentIndex));
+                const auto& q=LevelSetMappedSegment::Impl::retainedTrace(*faceCuts.at(request.segmentIndex)).quartic();
                 // Value events precede side events and use public input order.
                 M::require(request.rootIndex<q.value.roots.size(),"foreign region value-root resolution request");
             }
@@ -2125,3 +2672,267 @@ LevelSetMappedInterface::NativeRegionMoments LevelSetMappedInterface::integrateN
     }
     return result;
 }
+
+template<bool Selected>
+std::vector<std::conditional_t<Selected,LevelSetMappedInterface::NativeSelectedRegionMoments,
+    LevelSetMappedInterface::NativeRegionMoments>> LevelSetMappedInterface::nativeQuarticRegionMomentsBatchImpl(
+    const LevelSetHermiteGeometry::Snapshot& source,int cell,const std::vector<Graph>& graphs,
+    const std::vector<const LevelSetMappedSegment::NativeQuarticTrace*>& faceCuts,
+    const std::vector<NativeMomentTarget>& targets,bool radial,std::vector<GraphMoments>* nativeGraphMoments,
+    const std::vector<std::vector<int>>* selectedRegionIds,NativeMomentWorkProfile* work)
+{
+    namespace M=LAMP::Geometry::Detail::MappedHermiteSegment;
+    namespace I=LAMP::Geometry::Detail::MappedHermiteInterface;
+    I::NativeWorkTimer totalTimer(work,&NativeMomentWorkProfile::total,nullptr,true);
+    I::NativeWorkTimer fixedTimer(work,&NativeMomentWorkProfile::fixedAndSetup);
+    constexpr long double pi=3.1415926535897932384626433832795L;
+    M::Exact::validateEnvironment();
+    const auto integrate=[&](const auto& actualScalar) {
+    using Scalar=std::decay_t<decltype(actualScalar)>;
+    using Query=std::conditional_t<std::is_same_v<Scalar,
+        LAMP::Geometry::Detail::LevelSetHermiteScalar::C2MacroQuarticLeafData>,M::NativeC2MacroQuery,M::NativeQuarticQuery>;
+    using Integrator=I::NativeIntegratorFor<Scalar>;
+    const auto* scalar=&actualScalar;
+    const auto bounds=scalar->leafBounds(cell); // active source cell only
+    M::require(!targets.empty(),"native region moment batch requires actual targets");
+    std::vector<const Query*> cuts;
+    for(const auto* cut:faceCuts) {
+        M::require(cut!=nullptr,"null native region trace");
+        const auto& q=LevelSetMappedSegment::Impl::retainedTrace(*cut).template typed<Scalar>();
+        M::require(q.source.get()==&source,"native region trace uses a different snapshot");
+        cuts.push_back(&q.value);
+    }
+    using ResultType=std::conditional_t<Selected,NativeSelectedRegionMoments,NativeRegionMoments>;
+    std::vector<ResultType> results(targets.size());
+    std::vector<std::map<int,std::size_t>> ownerMaps(targets.size());
+    std::vector<std::map<int,std::size_t>> selectedMaps;
+    if constexpr(Selected) {
+        M::require(selectedRegionIds && selectedRegionIds->size()==targets.size() && !nativeGraphMoments,
+            "selected native batch has a different channel inventory");
+        selectedMaps.resize(targets.size());
+    }
+    for(std::size_t targetIndex=0;targetIndex<targets.size();++targetIndex) {
+        const auto& regions=targets[targetIndex].regions;
+        const auto greenOrigin=targets[targetIndex].greenOrigin;
+        M::require(!regions.empty(),"native batch target requires actual rectangles");
+        M::require(std::isfinite(greenOrigin.x) && std::isfinite(greenOrigin.y),"nonfinite batch target Green origin");
+    const auto equal=[](Vector2D a,Vector2D b){return a.x==b.x && a.y==b.y;};
+    struct Rectangle {Vector2D lo,hi;};std::vector<Rectangle> rectangles;
+    std::vector<double> xs{bounds[0].x,bounds[1].x},ys{bounds[0].y,bounds[1].y};
+    auto& result=results[targetIndex];auto& owners=ownerMaps[targetIndex];
+    if constexpr(Selected) {
+        const auto& ids=(*selectedRegionIds)[targetIndex];
+        M::require(!ids.empty(),"selected native target requires actual selected regions");
+        std::set<int> unique;
+        for(int id:ids)M::require(id>=0 && unique.insert(id).second,"duplicate or negative selected native region id");
+    }
+    for(const auto& r:regions) {
+        M::require(r.regionId>=0,"negative native region id");
+        Vector2D lo=r.vertices[0],hi=lo;int orientation=0;
+        for(int e=0;e<4;++e) {
+            const auto a=r.vertices[e],b=r.vertices[(e+1)%4];
+            M::require(std::isfinite(a.x) && std::isfinite(a.y) && (!radial || a.x>=0),"invalid native region vertex");
+            M::require((a.x==b.x)!=(a.y==b.y),"native region moments require nonzero axis-aligned rectangle sides");
+            const int turn=I::orientation(a,b,I::point(r.vertices[(e+2)%4]));
+            M::require(turn!=0 && (orientation==0 || orientation==turn),"native rectangle is not strictly convex/cyclic");orientation=turn;
+            lo.x=std::min(lo.x,a.x);lo.y=std::min(lo.y,a.y);hi.x=std::max(hi.x,a.x);hi.y=std::max(hi.y,a.y);
+        }
+        M::require(lo.x>=bounds[0].x && lo.y>=bounds[0].y && hi.x<=bounds[1].x && hi.y<=bounds[1].y,
+            "native region rectangle left its actual cell");
+        for(const auto& v:r.vertices)M::require((v.x==lo.x || v.x==hi.x) && (v.y==lo.y || v.y==hi.y),"invalid rectangle corners");
+        rectangles.push_back({lo,hi});xs.push_back(lo.x);xs.push_back(hi.x);ys.push_back(lo.y);ys.push_back(hi.y);
+        if constexpr(Selected) {
+            const auto inserted=owners.emplace(r.regionId,result.fixedRegions.size());
+            if(inserted.second){FixedRegionMoments moments;moments.regionId=r.regionId;result.fixedRegions.push_back(moments);}
+            const auto cap=(static_cast<long double>(hi.x)-lo.x)
+                *(static_cast<long double>(hi.y)-lo.y)*(radial?pi*(static_cast<long double>(hi.x)+lo.x):1.L);
+            result.fixedRegions[inserted.first->second].capacity+=cap;
+            const auto& ids=(*selectedRegionIds)[targetIndex];
+            if(std::find(ids.begin(),ids.end(),r.regionId)!=ids.end()) {
+                auto& selected=selectedMaps[targetIndex];
+                const auto selectedInsert=selected.emplace(r.regionId,result.selectedRegions.size());
+                if(selectedInsert.second){RegionMoments moments;moments.regionId=r.regionId;result.selectedRegions.push_back(moments);}
+                result.selectedRegions[selectedInsert.first->second].capacity+=cap;
+            }
+        } else {
+        const auto inserted=owners.emplace(r.regionId,result.regions.size());
+        if(inserted.second){RegionMoments moments;moments.regionId=r.regionId;result.regions.push_back(moments);}
+        result.regions[inserted.first->second].capacity+=(static_cast<long double>(hi.x)-lo.x)
+            *(static_cast<long double>(hi.y)-lo.y)*(radial?pi*(static_cast<long double>(hi.x)+lo.x):1.L);
+        }
+    }
+    if constexpr(Selected)for(int id:(*selectedRegionIds)[targetIndex])
+        M::require(owners.find(id)!=owners.end(),"selected native region id is absent from the complete partition");
+    for(auto* v:{&xs,&ys}){std::sort(v->begin(),v->end());v->erase(std::unique(v->begin(),v->end()),v->end());}
+    for(std::size_t y=1;y<ys.size();++y)for(std::size_t x=1;x<xs.size();++x) {
+        int covers=0;for(const auto& box:rectangles)if(box.lo.x<=xs[x-1] && box.hi.x>=xs[x]
+            && box.lo.y<=ys[y-1] && box.hi.y>=ys[y])++covers;
+        M::require(covers==1,"native region partition has a gap or positive-area overlap");
+    }
+    // Fixed sides use retained ordinary/normal phases in canonical input
+    // coordinates. Positive length is converted only after exact clipping.
+    for(std::size_t k=0;k<regions.size();++k)for(int e=0;e<4;++e) {
+        auto a=regions[k].vertices[e],b=regions[k].vertices[(e+1)%4];
+        if(std::make_pair(b.x,b.y)<std::make_pair(a.x,a.y))std::swap(a,b);
+        std::size_t id=faceCuts.size();
+        for(std::size_t s=0;s<cuts.size();++s)if((equal(a,cuts[s]->inputBegin) && equal(b,cuts[s]->inputEnd))
+            || (equal(b,cuts[s]->inputBegin) && equal(a,cuts[s]->inputEnd))) {
+            M::require(id==faceCuts.size(),"duplicate actual native region trace");id=s;
+        }
+        M::require(id<faceCuts.size(),"native rectangle side is missing its actual complete trace");
+        const auto& q=LevelSetMappedSegment::Impl::retainedTrace(*faceCuts[id]).template typed<Scalar>();
+        const bool horizontal=a.y==b.y;const int axis=horizontal?1:0;
+        M::require(q.axis==axis,"native region trace has the wrong normal axis");
+        const auto& box=rectangles[k];
+        const int outward=horizontal?(a.y==box.hi.y?1:-1):(a.x==box.hi.x?1:-1);
+        const int inside=-outward;
+        const auto delta=M::ratio(M::difference(horizontal?b.x:b.y,horizontal?a.x:a.y),M::number(1));
+        const auto anchor=M::constant(horizontal?a.x:a.y);
+        std::array<long double,2> weights{{0,0}},zeroWeights{{0,0}};
+        const auto add=[&](const M::Ratio& begin,const M::Ratio& end,bool negative,bool zero) {
+            const auto width=I::product(delta,I::difference(end,begin));
+            long double measure=M::approximate(width);
+            if(horizontal && radial) {
+                const auto mean=I::sum(anchor,I::product(delta,I::product(I::sum(begin,end),M::constant(.5))));
+                measure*=2*pi*M::approximate(mean);
+            }
+            M::require(std::isfinite(measure) && measure>=0,"invalid native region phase side measure");
+            weights[negative?0:1]+=measure;if(zero)zeroWeights[negative?0:1]+=measure;
+        };
+        for(const auto& phase:q.value.phases)add(phase.begin,phase.end,phase.negative,false);
+        for(std::size_t z=0;z<q.value.zeroTraces.size();++z) {
+            const auto work=std::find_if(q.sides.begin(),q.sides.end(),[&](const auto& s){return s.zero==z && s.side==inside;});
+            M::require(work!=q.sides.end(),"native region clip lacks its actual inside normal trace");
+            M::require(work->native==cell,"native region inside zero trace belongs to a different cell");
+            const auto& chart=q.value.zeroTraces[z].chart;
+            for(const auto& phase:work->query.phases)add(q.compose(chart,phase.begin),q.compose(chart,phase.end),
+                phase.negative!=(inside<0 && work->order%2==1),true);
+        }
+        const auto coordinate=M::constant(horizontal?a.y:a.x),origin=M::constant(horizontal?greenOrigin.y:greenOrigin.x);
+        const auto shifted=I::difference(coordinate,origin);
+        const long double potential=outward*M::approximate(horizontal || !radial?shifted:
+            I::product(shifted,I::sum(coordinate,origin)))*(horizontal || !radial?1.L:pi);
+        int incidences=0;bool sameOwner=true;
+        for(const auto& other:regions)for(int f=0;f<4;++f) {
+            const auto c=other.vertices[f],d=other.vertices[(f+1)%4];
+            if((equal(a,c)&&equal(b,d)) || (equal(a,d)&&equal(b,c))) {
+                ++incidences;sameOwner=sameOwner && other.regionId==regions[k].regionId;
+            }
+        }
+        M::require(incidences==1 || incidences==2,"native fixed side has invalid incidence");
+        // A seam inside the SAME union is not a fixed boundary of that
+        // region. Its zero curve remains a single free interface instead.
+        if(incidences==2 && sameOwner)continue;
+        if constexpr(Selected) {
+            auto& fixed=result.fixedRegions[owners.at(regions[k].regionId)];
+            if(horizontal)fixed.fixedAxialLiquid+=potential*weights[0];
+            else fixed.fixedRadialLiquid+=potential*weights[0];
+            const auto selected=selectedMaps[targetIndex].find(regions[k].regionId);
+            if(selected!=selectedMaps[targetIndex].end()) {
+                auto& r=result.selectedRegions[selected->second];
+                if(horizontal)r.axialGas+=potential*weights[1];else r.radialGas+=potential*weights[1];
+            }
+        } else {
+        auto& r=result.regions[owners.at(regions[k].regionId)];
+        if(horizontal){r.fixedAxialLiquid+=potential*weights[0];r.axialGas+=potential*weights[1];}
+        else {r.fixedRadialLiquid+=potential*weights[0];r.radialGas+=potential*weights[1];}
+        }
+        if(incidences==1) {
+            if(horizontal)result.exteriorFixedAxialLiquid+=potential*weights[0];
+            else result.exteriorFixedRadialLiquid+=potential*weights[0];
+        } else {
+            if(horizontal)result.coincidentAxialLiquid+=potential*zeroWeights[0];
+            else result.coincidentRadialLiquid+=potential*zeroWeights[0];
+        }
+    }
+    }
+    fixedTimer.stop();
+    std::vector<GraphMoments> globalMoments;
+    if(nativeGraphMoments)globalMoments.reserve(graphs.size());
+    for(const auto& graph:graphs) {
+        M::require(graph.nativeCellIndex==cell && graph.cellI==-1 && graph.cellJ==-1,
+            "native batch graph belongs to a different cell");
+        try {
+            GraphMoments global;
+            const auto integrated=Integrator::regionGeometryBatch(*scalar,graph,cuts,targets,radial,
+                nativeGraphMoments?&global:nullptr,Selected?selectedRegionIds:nullptr,Selected || nativeGraphMoments!=nullptr,work);
+            M::require(integrated.size()==results.size(),"different native batch target count");
+            for(std::size_t t=0;t<results.size();++t) {
+                auto& result=results[t];const auto& measured=integrated[t];
+                result.coincidentArcs+=measured.coincidentArcs;result.localRootRefinements+=measured.localRootRefinements;
+                result.sourceRootIncidences+=measured.integral.sourceRootIncidences;
+                for(const auto& arc:measured.integral.arcs) {
+                    if constexpr(Selected) {
+                        const auto found=selectedMaps[t].find(arc.regionId);
+                        M::require(found!=selectedMaps[t].end(),"selected native free arc has an unselected owner");
+                        auto& r=result.selectedRegions[found->second];
+                        r.freeAxialLiquid+=arc.axialMoment;r.freeRadialLiquid+=arc.radialMoment;
+                        r.errorEstimate+=arc.momentErrorEstimate;++r.freeArcs;
+                    } else {
+                    auto& r=result.regions[ownerMaps[t].at(arc.regionId)];
+                    r.freeAxialLiquid+=arc.axialMoment;r.freeRadialLiquid+=arc.radialMoment;
+                    r.errorEstimate+=arc.momentErrorEstimate;++r.freeArcs;
+                    }
+                }
+            }
+            if(nativeGraphMoments)globalMoments.push_back(global);
+        } catch(const RootResolutionError& failure) {
+            auto requests=failure.requests;
+            for(auto& request:requests) {
+                const auto& q=LevelSetMappedSegment::Impl::retainedTrace(*faceCuts.at(request.segmentIndex)).template typed<Scalar>();
+                M::require(request.rootIndex<q.value.roots.size(),"foreign batch value-root resolution request");
+            }
+            throw RootResolutionError(failure.what(),std::move(requests));
+        }
+    }
+    I::NativeWorkTimer finalTimer(work,&NativeMomentWorkProfile::fixedAndSetup);
+    if constexpr(Selected) {
+        for(std::size_t t=0;t<results.size();++t) {
+            auto& result=results[t];
+            for(auto& r:result.selectedRegions) {
+                const auto& fixed=result.fixedRegions[ownerMaps[t].at(r.regionId)];
+                r.fixedAxialLiquid=fixed.fixedAxialLiquid;r.fixedRadialLiquid=fixed.fixedRadialLiquid;
+                r.axialLiquid=r.fixedAxialLiquid+r.freeAxialLiquid;r.radialLiquid=r.fixedRadialLiquid+r.freeRadialLiquid;
+                r.axialGas-=r.freeAxialLiquid;r.radialGas-=r.freeRadialLiquid;
+            }
+        }
+    } else {
+    for(auto& result:results)for(auto& r:result.regions) {
+        r.axialLiquid=r.fixedAxialLiquid+r.freeAxialLiquid;r.radialLiquid=r.fixedRadialLiquid+r.freeRadialLiquid;
+        r.axialGas-=r.freeAxialLiquid;r.radialGas-=r.freeRadialLiquid;
+    }
+    }
+    if(nativeGraphMoments)*nativeGraphMoments=std::move(globalMoments);
+    return results;
+    };
+    const auto& backend=source.checked();
+    if(backend.nativeC2Macro)return integrate(*backend.nativeC2Macro);
+    M::require(backend.nativeQuartic!=nullptr,"native region moments require a native Q4 or C2 snapshot");
+    return integrate(*backend.nativeQuartic);
+}
+
+std::vector<LevelSetMappedInterface::NativeRegionMoments> LevelSetMappedInterface::integrateNativeQuarticRegionMomentsBatch(
+    const LevelSetHermiteGeometry::Snapshot& source,int cell,const std::vector<Graph>& graphs,
+    const std::vector<const LevelSetMappedSegment::NativeQuarticTrace*>& faceCuts,
+    const std::vector<NativeMomentTarget>& targets,bool radial,std::vector<GraphMoments>* nativeGraphMoments,
+    NativeMomentWorkProfile* work)
+{
+    return nativeQuarticRegionMomentsBatchImpl<false>(source,cell,graphs,faceCuts,targets,radial,nativeGraphMoments,nullptr,work);
+}
+std::vector<LevelSetMappedInterface::NativeSelectedRegionMoments>
+LevelSetMappedInterface::integrateNativeQuarticSelectedRegionMomentsBatch(
+    const LevelSetHermiteGeometry::Snapshot& source,int cell,const std::vector<Graph>& graphs,
+    const std::vector<const LevelSetMappedSegment::NativeQuarticTrace*>& faceCuts,
+    const std::vector<NativeSelectedMomentTarget>& targets,bool radial,NativeMomentWorkProfile* work)
+{
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
+    std::vector<NativeMomentTarget> complete;
+    std::vector<std::vector<int>> selected;
+    complete.reserve(targets.size());selected.reserve(targets.size());
+    for(const auto& target:targets) {
+        complete.push_back({target.regions,target.greenOrigin});
+        selected.push_back(target.selectedRegionIds);
+    }
+    return nativeQuarticRegionMomentsBatchImpl<true>(source,cell,graphs,faceCuts,complete,radial,nullptr,&selected,work);
+}
+

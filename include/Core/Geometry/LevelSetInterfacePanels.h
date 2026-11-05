@@ -65,7 +65,7 @@ public:
     struct NativeProjectionQuery
     {
         int cellIndex = -1; // Actual unchanged leaf identity of the old anchor.
-        Quantum::Geometry::CellChartPoint cellChartPoint;
+        LAMP::Geometry::CellChartPoint cellChartPoint;
         Vector2D displacement; // Added to the retained chart, not a rounded global inverse.
     };
     // Native topology stage of the same interface construction. This owns
@@ -112,14 +112,14 @@ public:
         // retain the exact affine interval until terminal chart evaluation.
         std::vector<ArcSample> quadrature(int graphIndex,double firstFraction,double lastFraction) const;
         double physicalCoordinateSpan(int graphIndex) const;
-        double graphFraction(int graphIndex,const Quantum::Geometry::CellChartPoint& point) const;
+        double graphFraction(int graphIndex,const LAMP::Geometry::CellChartPoint& point) const;
         // Find the retained interval inside an actual leaf, including leaves
         // partitioned into several native graphs. Uses exact chart bounds and
         // endpoint identities, never a rounded physical-coordinate inverse.
         // Adjacent shared endpoints use the first graph in chain order; all
         // other multiple incidences reject. Consumers still validate the full
         // source Frame/jet, rather than treating this lookup as a projection.
-        int graphAt(int nativeCellIndex,const Quantum::Geometry::CellChartPoint& point) const;
+        int graphAt(int nativeCellIndex,const LAMP::Geometry::CellChartPoint& point) const;
         const std::shared_ptr<const LevelSetHermiteGeometry::Snapshot>& source() const { return source_; }
         const std::vector<Vector2D>& boundaryContacts() const { return boundaryContacts_; }
         const std::vector<SymmetryPlane>& symmetryPlanes() const { return symmetryPlanes_; }
@@ -292,7 +292,7 @@ public:
         double gradientMagnitude = 0.0; // SAME raw cell jet, never assumed to be one.
         // Native quadrature carries this chart instead of a potentially
         // collapsed localGraphCoordinate (which is NaN for that path).
-        Quantum::Geometry::CellChartCoordinate localGraphChart;
+        LAMP::Geometry::CellChartCoordinate localGraphChart;
         bool hasLocalGraphChart=false;
     };
     struct LocalProjectionQuery

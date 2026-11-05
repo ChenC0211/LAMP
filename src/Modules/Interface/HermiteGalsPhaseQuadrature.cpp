@@ -6,13 +6,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
@@ -27,6 +28,8 @@ constexpr std::array<double,4> iy{{-.86113631159405257522,-.33998104358485626480
 constexpr std::array<double,4> iw{{.34785484513745385737,.65214515486254614263,
     .65214515486254614263,.34785484513745385737}};
 using Moments=std::array<long double,90>; // 2 phases * 3 inverse-r weights * 15 P4 monomials.
+void require(bool ok,const char* reason)
+{if(!ok)throw std::invalid_argument(std::string("[Interface/HermiteGalsPhaseQuadrature] ")+reason);}
 void require(bool ok,const std::string& reason)
 {if(!ok)throw std::invalid_argument("[Interface/HermiteGalsPhaseQuadrature] "+reason);}
 struct Rule
@@ -86,8 +89,8 @@ private:
         const Vector2D p{x,static_cast<double>(y)};
         require(p.x>=bounds_[0].x && p.x<=bounds_[1].x && p.y>=bounds_[0].y && p.y<=bounds_[1].y,
             "quadrature point outside its native cell");
-        require(scalar_.nativeQuarticBoxSign(source_.cell,p,p)==(liquid?-1:1),
-            "unresolved phase point at cell="+std::to_string(source_.cell));
+        if(scalar_.nativeQuarticBoxSign(source_.cell,p,p)!=(liquid?-1:1))
+            require(false,"unresolved phase point at cell="+std::to_string(source_.cell));
         const double physical=static_cast<double>(weight*(radial_?CartesianMeasure::radialWeight(x):1.L));
         require(std::isfinite(physical) && physical>0,"nonpositive/unrepresentable phase weight");
         require(result.points.size()<config_.maximumPoints,"phase point work limit");
@@ -109,7 +112,8 @@ private:
     }
     void slice(Rule& result,double x,long double outerWeight)
     {
-        require(++queries_<=config_.maximumSliceQueriesPerCell,"slice work limit at cell="+std::to_string(source_.cell));
+        if(++queries_>config_.maximumSliceQueriesPerCell)
+            require(false,"slice work limit at cell="+std::to_string(source_.cell));
         const auto interval=[&](bool liquid,bool fromEnd,long double offset,long double length) {
             const long double height=static_cast<long double>(bounds_[1].y)-bounds_[0].y;
             for(std::size_t i=0;i<iy.size();++i) {
@@ -191,43 +195,73 @@ HermiteGalsPhaseQuadrature HermiteGalsPhaseQuadrature::build(const QuadtreeMesh&
             seeds[curve.graphs()[g].nativeCellIndex].push_back(std::min(first.point.x,last.point.x));
         }
     }
-    for(const auto& source:data->publication.volumes().cells()) {
-        const auto bounds=scalar->nativeCellBounds(source.cell);
-        std::vector<double> cuts{bounds[0].x,bounds[1].x};
-        for(double x:seeds[source.cell])if(x>bounds[0].x && x<bounds[1].x)cuts.push_back(x);
-        std::sort(cuts.begin(),cuts.end());cuts.erase(std::unique(cuts.begin(),cuts.end()),cuts.end());
-        const long double targetLiquid=source.certifiedPhase<0?source.capacity:source.certifiedPhase>0?0:source.rawLiquid;
-        const long double targetGas=source.capacity-targetLiquid;
-        CellRule integrator(*scalar,scalar,source,config,data->publication.domain().axisymmetric());
-        Rule rule;bool accepted=false;long double lastVolumeError=0,lastMomentError=0;
-        for(int retry=0;retry<5 && !accepted;++retry) {
-            rule=Rule{};
-            if(source.certifiedPhase!=0)rule=integrator.rectangle();
-            else for(std::size_t i=1;i<cuts.size();++i) {
-                const long double portion=(static_cast<long double>(cuts[i])-cuts[i-1])/(bounds[1].x-bounds[0].x);
-                try {append(rule,integrator.adaptive(cuts[i-1],cuts[i],config.relativeMomentTolerance*source.capacity*portion/
-                    (4*std::pow(10.L,retry)),0,retry));}
-                catch(const std::exception& e) {
-                    std::ostringstream message;message.precision(17);message<<e.what()<<" retry="<<retry
-                        <<" previous volume difference="<<lastVolumeError<<" previous moment estimate="<<lastMomentError;
-                    require(false,message.str());
+    const auto& sources=data->publication.volumes().cells();
+    struct CellResult
+    {
+        Rule rule;
+        HermiteGalsPhaseQuadratureCell receipt;
+        std::size_t queries=0;
+        std::exception_ptr failure;
+    };
+    std::vector<CellResult> cellResults(sources.size());
+    const auto cellCount=static_cast<std::ptrdiff_t>(sources.size());
+    // Immutable native-Q4 queries use per-leaf once/mutex caches and local
+    // root scratch. Within one cell all subdivisions and sums retain their
+    // original order; no moment/volume tolerance or physical point changes.
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic,1) if(cellCount>=16)
+#endif
+    for(std::ptrdiff_t item=0;item<cellCount;++item) {
+        const auto index=static_cast<std::size_t>(item);
+        auto& target=cellResults[index];
+        try {
+            const auto& source=sources[index];
+            const auto bounds=scalar->nativeCellBounds(source.cell);
+            std::vector<double> cuts{bounds[0].x,bounds[1].x};
+            for(double x:seeds[source.cell])if(x>bounds[0].x && x<bounds[1].x)cuts.push_back(x);
+            std::sort(cuts.begin(),cuts.end());cuts.erase(std::unique(cuts.begin(),cuts.end()),cuts.end());
+            const long double targetLiquid=source.certifiedPhase<0?source.capacity:source.certifiedPhase>0?0:source.rawLiquid;
+            const long double targetGas=source.capacity-targetLiquid;
+            CellRule integrator(*scalar,scalar,source,config,data->publication.domain().axisymmetric());
+            Rule rule;bool accepted=false;long double lastVolumeError=0,lastMomentError=0;
+            for(int retry=0;retry<5 && !accepted;++retry) {
+                rule=Rule{};
+                if(source.certifiedPhase!=0)rule=integrator.rectangle();
+                else for(std::size_t i=1;i<cuts.size();++i) {
+                    const long double portion=(static_cast<long double>(cuts[i])-cuts[i-1])/(bounds[1].x-bounds[0].x);
+                    try {append(rule,integrator.adaptive(cuts[i-1],cuts[i],config.relativeMomentTolerance*source.capacity*portion/
+                        (4*std::pow(10.L,retry)),0,retry));}
+                    catch(const std::exception& e) {
+                        std::ostringstream message;message.precision(17);message<<e.what()<<" retry="<<retry
+                            <<" previous volume difference="<<lastVolumeError<<" previous moment estimate="<<lastMomentError;
+                        require(false,message.str());
+                    }
                 }
+                const long double volumeError=std::max(std::abs(rule.moments[0]-targetLiquid),std::abs(rule.moments[45]-targetGas))/source.capacity;
+                lastVolumeError=volumeError;lastMomentError=rule.error/source.capacity;
+                accepted=std::isfinite(volumeError) && volumeError<=config.relativeVolumeTolerance &&
+                    rule.error<=config.relativeMomentTolerance*source.capacity &&
+                    (targetLiquid==0?rule.moments[0]==0:rule.moments[0]>0) && (targetGas==0?rule.moments[45]==0:rule.moments[45]>0);
+                if(accepted)
+                    target.receipt={source.cell,rule.moments[0],rule.moments[45],volumeError,rule.error/source.capacity};
             }
-            const long double volumeError=std::max(std::abs(rule.moments[0]-targetLiquid),std::abs(rule.moments[45]-targetGas))/source.capacity;
-            lastVolumeError=volumeError;lastMomentError=rule.error/source.capacity;
-            accepted=std::isfinite(volumeError) && volumeError<=config.relativeVolumeTolerance &&
-                rule.error<=config.relativeMomentTolerance*source.capacity &&
-                (targetLiquid==0?rule.moments[0]==0:rule.moments[0]>0) && (targetGas==0?rule.moments[45]==0:rule.moments[45]>0);
-            if(accepted) {
-                data->cells.push_back({source.cell,rule.moments[0],rule.moments[45],volumeError,rule.error/source.capacity});
-                data->report.maxRelativeVolumeDifference=std::max(data->report.maxRelativeVolumeDifference,volumeError);
-                data->report.maxRelativeMomentEstimate=std::max(data->report.maxRelativeMomentEstimate,rule.error/source.capacity);
-            }
-        }
-        require(accepted,"phase volume/moment agreement failed at cell="+std::to_string(source.cell));
+            require(accepted,"phase volume/moment agreement failed at cell="+std::to_string(source.cell));
+            target.rule=std::move(rule);target.queries=integrator.queries();
+        } catch(...) {target.failure=std::current_exception();}
+    }
+    // Preserve the original source order, global maximumPoints check and first
+    // failure. Parallel workers neither append output nor accumulate reports.
+    for(auto& target:cellResults) {
+        if(target.failure)std::rethrow_exception(target.failure);
+        data->cells.push_back(target.receipt);
+        data->report.maxRelativeVolumeDifference=std::max(data->report.maxRelativeVolumeDifference,
+            target.receipt.relativeVolumeDifference);
+        data->report.maxRelativeMomentEstimate=std::max(data->report.maxRelativeMomentEstimate,
+            target.receipt.relativeMomentEstimate);
+        auto& rule=target.rule;
         require(rule.points.size()<=config.maximumPoints-data->points.size(),"total phase point work limit");
         data->points.insert(data->points.end(),rule.points.begin(),rule.points.end());
-        data->report.sliceQueries+=integrator.queries();
+        data->report.sliceQueries+=target.queries;
     }
     data->report.points=data->points.size();return HermiteGalsPhaseQuadrature(std::move(data));
 }

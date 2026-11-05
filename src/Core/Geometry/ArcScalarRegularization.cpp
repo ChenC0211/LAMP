@@ -4,7 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace Quantum::Geometry::ArcScalarRegularization
+namespace LAMP::Geometry::ArcScalarRegularization
 {
 namespace {
 Result solve(const std::vector<double>& lengths,const std::vector<double>& values,double h,

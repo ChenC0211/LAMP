@@ -11,8 +11,9 @@
 #include <memory>
 #include <iomanip>
 #include <sstream>
+#include <type_traits>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -82,6 +83,55 @@ template<class Query> inline bool onEdge(Vector2D p, const EdgeData<Query> &edge
     return I::orientation(edge.begin, edge.end, I::point(p)) == 0 && p.x >= edge.begin.x &&
            p.x <= edge.end.x && p.y >= edge.begin.y && p.y <= edge.end.y;
 }
+// A terminal polynomial layout may still describe a piecewise native
+// scalar. Its common signed partial is a regularity certificate, never
+// permission to integrate all native pieces as one polynomial.
+template<class Scalar,class=void> struct RequiresPieceCharts:std::false_type {};
+template<class Scalar> struct RequiresPieceCharts<Scalar,
+    std::void_t<decltype(Scalar::requiresPieceCharts)>>
+    :std::integral_constant<bool,Scalar::requiresPieceCharts> {};
+inline void validateMacroCharts(
+    const std::vector<LevelSetHermiteScalar::QuarticCell::RegularChartBox>& boxes,int cell)
+{
+    if(boxes.empty())throw InterfaceGeometryResolution(InterfaceGeometryResolution::Reason::CriticalCell,
+        cell,"C2 macro lacks a certified complete piece-chart partition");
+    // Validate complete tensor coverage even when every piece is pure and
+    // therefore no graph construction follows to perform its own check.
+    require(same(boxes.front().lower,{0,0}),"invalid macro partition origin");
+    std::vector<double> xCuts{0},yCuts{0};
+    for(const auto& box:boxes){
+        if(box.lower.y!=0)break;
+        require(box.lower.x==xCuts.back() && box.upper.x>box.lower.x,"nonconforming macro chart columns");
+        xCuts.push_back(box.upper.x);
+    }
+    const std::size_t nx=xCuts.size()-1;
+    require(nx>=2 && xCuts.back()==1 && boxes.size()%nx==0,"incomplete macro chart columns");
+    const std::size_t ny=boxes.size()/nx;
+    for(std::size_t y=0;y<ny;++y){
+        const auto& first=boxes[y*nx];
+        require(first.lower.y==yCuts.back() && first.upper.y>first.lower.y,"nonconforming macro chart rows");
+        yCuts.push_back(first.upper.y);
+        for(std::size_t x=0;x<nx;++x){
+            const auto& box=boxes[y*nx+x];
+            require(same(box.lower,{xCuts[x],yCuts[y]}) && same(box.upper,{xCuts[x+1],yCuts[y+1]}),
+                "macro charts are not a complete conforming tensor product");
+        }
+    }
+    require(ny>=2 && yCuts.back()==1,"incomplete macro chart rows");
+    bool xHalf=false,yHalf=false;
+    for(const auto& box:boxes){
+        require(box.lower.x>=0 && box.lower.y>=0 && box.upper.x<=1 && box.upper.y<=1
+            && box.lower.x<box.upper.x && box.lower.y<box.upper.y,"invalid macro chart extent");
+        require(!(box.lower.x<.5 && box.upper.x>.5)
+            && !(box.lower.y<.5 && box.upper.y>.5),"macro chart crosses an actual half-piece seam");
+        require(box.phase==-1 || box.phase==0 || box.phase==1,"invalid macro chart phase certificate");
+        require(box.phase!=0 || box.partial[0]!=0 || box.partial[1]!=0,
+            "macro zero-containing chart lacks a strict Cartesian partial");
+        xHalf=xHalf || box.lower.x==.5 || box.upper.x==.5;
+        yHalf=yHalf || box.lower.y==.5 || box.upper.y==.5;
+    }
+    require(xHalf && yHalf,"macro chart partition lost a native half-piece seam");
+}
 template<class Scalar> inline bool resolvedPartial(const Scalar& source,int cell,bool legacy,int axis=-1)
 {
     if (source.resolvedCartesianPartial(cell,axis)) return true;
@@ -118,7 +168,8 @@ template<class Scalar> inline void applyNativeIncidences(const Scalar& source,co
     local=std::move(retained);
 }
 
-// Partition geometry inside ONE native cubic/Q4 cell. Internal chart edges have
+// Partition geometry inside ONE native scalar cell. Macro boxes must also
+// retain every real half-piece seam. Internal chart edges have
 // one root inventory shared by their two chart owners; actual cell boundaries
 // retain the existing mesh-edge node identities. Only zero arcs are emitted:
 // these internal edges never enter phase-volume or physical-flux ledgers.
@@ -297,6 +348,8 @@ template<class Scalar> inline Discovery discoverAll(const QuadtreeMesh &mesh, co
                        const std::vector<LevelSetInterfacePanels::SymmetryPlane>& symmetryPlanes={},bool nativeTrace=false)
 {
     validateCartesianLeafMesh(mesh);
+    if constexpr(RequiresPieceCharts<Scalar>::value)
+        require(!legacy && !axisymmetric,"C2 macro discovery requires complete nonlegacy XY geometry");
     require(!nativeTrace || (!legacy && Scalar::dofCount==25),"native trace discovery requires complete Q4 topology");
     require(source.cellCount() == static_cast<std::size_t>(mesh.cellIndexNum()) &&
                 source.vertexCount() == static_cast<std::size_t>(mesh.vertIndexNum()),
@@ -358,14 +411,34 @@ template<class Scalar> inline Discovery discoverAll(const QuadtreeMesh &mesh, co
             // do not require chart subdivision. Preserve this certificate
             // before partitioning: a regular straight zero can coincide
             // with an artificial dyadic edge.
-            if (!legacy && !resolvedPartial(source,c,false))
+            if constexpr(RequiresPieceCharts<Scalar>::value){
+                // Even a full-native signed partial cannot erase a real
+                // polynomial knot. Graphs and their quadrature stay on one
+                // actual terminal piece; no whole-cell polynomial fallback.
+                chartBoxes[c]=source.regularChartPartition(c);
+                validateMacroCharts(chartBoxes[c],c);
+                const int phase=chartBoxes[c].front().phase;
+                if(phase!=0 && std::all_of(chartBoxes[c].begin(),chartBoxes[c].end(),
+                    [phase](const ChartBox& box){return box.phase==phase;})){
+                    // Complete outward piece bounds certify the original
+                    // native cell, including internal seams. Share this
+                    // phase with edge queries and the negative-region ledger.
+                    signs[c]=cellPhase[c]=phase;
+                }
+            }else if (!legacy && !resolvedPartial(source,c,false))
                 chartBoxes[c]=source.regularChartPartition(c);
             if (chartBoxes[c].empty() && !resolvedPartial(source,c,legacy)) {
             std::ostringstream detail;
             detail<<std::setprecision(17)<<"cell lacks a regular Cartesian chart (hidden loop or critical zero)"
                 <<"; cell="<<c<<", bounds=("<<bounds[0].x<<','<<bounds[0].y<<")-("
                 <<bounds[1].x<<','<<bounds[1].y<<')';
-            if constexpr (Scalar::dofCount==25) {
+            if constexpr (RequiresPieceCharts<Scalar>::value) {
+                // Actual completed physical data; a macro has no whole-native
+                // 25-column polynomial. Failure diagnostics cannot invent one.
+                detail<<", completed_macro_physical_49_data=[";
+                for(double value:source.physicalCellDofs(c))detail<<value<<',';
+                detail<<']';
+            } else if constexpr (Scalar::dofCount==25) {
                 // Failure-only local data for numerical diagnosis. At AMR
                 // constraints these are rounded display data, not an exact
                 // replacement scalar or permission to accept the cell.
@@ -420,11 +493,16 @@ template<class Scalar> inline Discovery discoverAll(const QuadtreeMesh &mesh, co
             const auto coordinate=[&](Vector2D p){return plane.normalAxis==0?p.x:p.y;};
             if (edge.cells.size()!=1 || coordinate(edge.begin)!=plane.coordinate || coordinate(edge.end)!=plane.coordinate) continue;
             found=true;
-            const auto normal=source.restrictPhysical(edge.cells.front(),edge.begin,edge.end,
-                plane.normalAxis==0?1:0,plane.normalAxis==1?1:0);
-            for (const auto& coefficient:normal.numerator)
-                require(ExactExpansion::sign(coefficient)==0,
+            if constexpr(RequiresPieceCharts<Scalar>::value) {
+                require(source.normalTraceIdenticallyZero(edge.cells.front(),edge.begin,edge.end,plane.normalAxis),
                     "symmetry section requires identically zero scalar normal derivative");
+            } else {
+                const auto normal=source.restrictPhysical(edge.cells.front(),edge.begin,edge.end,
+                    plane.normalAxis==0?1:0,plane.normalAxis==1?1:0);
+                for (const auto& coefficient:normal.numerator)
+                    require(ExactExpansion::sign(coefficient)==0,
+                        "symmetry section requires identically zero scalar normal derivative");
+            }
         }
         require(found,"symmetry plane has no active boundary trace");
     }
@@ -460,10 +538,20 @@ template<class Scalar> inline Discovery discoverAll(const QuadtreeMesh &mesh, co
                 require(position==lo || position==hi,"zero edge is not an actual incident leaf side");
                 if(!source.resolvedZeroSetPartial(c,normal))throw InterfaceGeometryResolution(
                     InterfaceGeometryResolution::Reason::CriticalCell,c,"native zero side lacks a complete signed normal zero-set certificate");
-                const auto p=source.restrictPhysical(c,edge.begin,edge.end,normal==0,normal==1).numerator;
-                const auto roots=PolynomialSegmentRoots::isolateEndpointRelative(p);
-                require(!roots.identicallyZero && roots.roots.empty(),"native zero side lacks a strict first normal derivative");
-                const int derivative=ExactExpansion::sign(p[0]);
+                int derivative=0;
+                if constexpr(RequiresPieceCharts<Scalar>::value) {
+                    // The complete zero-set certificate above proves this
+                    // continuous normal derivative is nonzero on the WHOLE
+                    // actual side. Its exact endpoint sign therefore fixes
+                    // both pieces without inventing a whole-face polynomial.
+                    const auto p=source.restrictPhysical(c,edge.begin,edge.begin,normal==0,normal==1).numerator;
+                    derivative=ExactExpansion::sign(p[0]);
+                } else {
+                    const auto p=source.restrictPhysical(c,edge.begin,edge.end,normal==0,normal==1).numerator;
+                    const auto roots=PolynomialSegmentRoots::isolateEndpointRelative(p);
+                    require(!roots.identicallyZero && roots.roots.empty(),"native zero side lacks a strict first normal derivative");
+                    derivative=ExactExpansion::sign(p[0]);
+                }
                 require(derivative!=0 && (edge.normalSign==0 || edge.normalSign==derivative),"native zero side has inconsistent incident normals");
                 edge.normalSign=derivative;
                 const int inward=position==lo?1:-1,phase=inward*derivative;
@@ -574,6 +662,8 @@ template<class Scalar> inline Discovery discoverAll(const QuadtreeMesh &mesh, co
         if (!source.cellActive(c))
             continue;
         if(sidePhase[c]!=0){cellPhase[c]=sidePhase[c];signs[c]=sidePhase[c];continue;}
+        if constexpr(RequiresPieceCharts<Scalar>::value)
+            if(signs[c]!=0){cellPhase[c]=signs[c];continue;}
         std::vector<int> local;
         for (int side = 0; side < 4; ++side)
         {
@@ -1043,4 +1133,4 @@ template<class Scalar> inline Discovery discoverAll(const QuadtreeMesh &mesh, co
 }
 } // namespace NativeInterfaceChain
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

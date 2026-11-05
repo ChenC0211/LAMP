@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace Quantum::Discrete
+namespace LAMP::Discrete
 {
 struct BoundedCirculationArc
 {

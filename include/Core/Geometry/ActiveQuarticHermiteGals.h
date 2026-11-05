@@ -30,7 +30,7 @@ struct Report
 };
 struct Candidate
 {
-    Quantum::Geometry::ActiveQuarticHermitePatch patch;
+    LAMP::Geometry::ActiveQuarticHermitePatch patch;
     std::unique_ptr<LevelSetHermiteGeometry::Snapshot> geometry;
     // Owns the callbacks/domain, not objects borrowed by callback captures.
     // Exactly the numerical map used for this candidate's first-jet pullback.
@@ -61,7 +61,7 @@ struct Candidate
 // sectors or mixed-level AMR are enabled by this initial uniform entry.
 // Boundary hits reject explicitly; old inputs are never modified.
 Candidate predictUniform(const QuadtreeMesh& mesh,
-    const Quantum::Geometry::ActiveQuarticHermitePatch& previous,double dt,
+    const LAMP::Geometry::ActiveQuarticHermitePatch& previous,double dt,
     const LevelSetBoundaryTrace::DifferentiableVelocity& current,
     const LevelSetBoundaryTrace::DifferentiableVelocity& old,const Options& options={});
 }

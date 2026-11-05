@@ -15,7 +15,7 @@ namespace LevelSetPhaseFraction
 {
 inline void require(bool condition, const char* reason)
 {
-    if (!condition) throw std::runtime_error(std::string("[HydroBalancedForce] ") + reason);
+    if (!condition) throw std::runtime_error(std::string("[LevelSetPhaseFraction] ") + reason);
 }
 
 namespace Detail

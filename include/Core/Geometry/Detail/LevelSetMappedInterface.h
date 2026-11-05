@@ -12,8 +12,10 @@
 #include <numeric>
 #include <type_traits>
 #include <optional>
+#include <memory>
+#include <chrono>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -25,6 +27,42 @@ using Ratio = M::Ratio;
 using Expansion = Exact::Expansion;
 using Point = std::array<Ratio,2>;
 using Public = ::LevelSetMappedInterface;
+// Query-local passive clock. Null profiles never read the clock. Nested
+// restrictions are subtracted from root engine/refinement spans; the total
+// scope assigns the unclassified remainder after all child scopes commit.
+class NativeWorkTimer
+{
+    using Profile=Public::NativeMomentWorkProfile;
+    using Field=double Profile::*;
+    Profile* profile_;Field field_,excluded_;bool total_;
+    double before_=0;
+    std::chrono::steady_clock::time_point started_{};
+    static double classified(const Profile& p) {
+        return p.restrictionConstruction+p.initialRootCacheLookup+p.initialRootCacheRemember
+            +p.initialRootIsolation+p.rootMappingRefinement+p.fixedAndSetup;
+    }
+public:
+    NativeWorkTimer(Profile* profile,Field field,Field excluded=nullptr,bool total=false)
+        :profile_(profile),field_(field),excluded_(excluded),total_(total)
+    {
+        if(profile_) {
+            before_=total_?classified(*profile_):excluded_?profile_->*excluded_:0.;
+            started_=std::chrono::steady_clock::now();
+        }
+    }
+    void stop() {
+        if(!profile_)return;
+        const double elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-started_).count();
+        if(total_) {
+            profile_->total+=elapsed;
+            profile_->remainingIntegration+=elapsed-(classified(*profile_)-before_);
+        } else profile_->*field_+=elapsed-(excluded_?profile_->*excluded_-before_:0.);
+        profile_=nullptr;
+    }
+    ~NativeWorkTimer(){stop();}
+    NativeWorkTimer(const NativeWorkTimer&)=delete;
+    NativeWorkTimer& operator=(const NativeWorkTimer&)=delete;
+};
 
 using EdgeIdentity=std::pair<int,int>; // Canonical side and complete-root ordinal.
 struct LocalRootResolutionError : std::runtime_error
@@ -116,6 +154,14 @@ inline int orientation(Vector2D a, Vector2D b, const Point& p)
     return Exact::sign(difference(product(M::ratio(M::difference(b.x,a.x),M::number(1.0)),y),
         product(M::ratio(M::difference(b.y,a.y),M::number(1.0)),x)).numerator);
 }
+// Query-private coefficients for the SAME transverse Q4. The stamp is in
+// the original cell chart; any mapping or exact root refinement invalidates
+// the packet rather than reusing values from the previous representative.
+struct FilteredGeometryPacket
+{
+    std::array<Exact::Interval,5> controls{};
+    double parameter=0.;
+};
 struct Root
 {
     Ratio parameter, lower, upper;
@@ -127,7 +173,126 @@ struct Root
     // means outside the requested segment, not a zero-length phase interval.
     int phaseBefore=0,phaseAfter=0;
     bool deflated=false;
+    std::optional<FilteredGeometryPacket> geometryPacket;
 };
+// Geometry-only numerical certificate for one ordinary transverse root.
+// Its interval encloses the root of the SAME Q4, not a fitted or rounded
+// surrogate. Lack of a certificate explicitly selects the exact reference.
+struct FilteredTransverseRoot
+{
+    double parameter=0.,lower=0.,upper=0.;
+    int derivativeSign=0;
+};
+inline Exact::Interval filteredIntervalDivide(Exact::Interval n,Exact::Interval d)
+{
+    using A=LevelSetHermiteScalar::Detail::Outward;
+    if(!A::finite(n)||!A::finite(d)||(d.lo<=0.&&d.hi>=0.))return A::whole();
+    if(A::zero(n))return {};
+    const std::array<double,4> values{{n.lo/d.lo,n.lo/d.hi,n.hi/d.lo,n.hi/d.hi}};
+    for(double value:values)if(!std::isfinite(value))return A::whole();
+    return {A::down(*std::min_element(values.begin(),values.end())),
+        A::up(*std::max_element(values.begin(),values.end()))};
+}
+inline bool filteredTransverseRoot(const std::array<Exact::Interval,5>& controls,
+    double lower,double upper,FilteredTransverseRoot& output)
+{
+    using A=LevelSetHermiteScalar::Detail::Outward;
+    using Interval=Exact::Interval;
+    Exact::validateEnvironment();
+    require(std::isfinite(lower)&&std::isfinite(upper)&&lower>=0.&&upper<=1.&&lower<upper,
+        "invalid filtered transverse chart interval");
+    for(const auto control:controls)if(!A::finite(control))return false;
+    const auto evaluate=[&](double t) {
+        auto work=controls;
+        if(t==0.)return work.front();
+        if(t==1.)return work.back();
+        const auto argument=A::point(t),complement=A::add(A::point(1.),A::negate(argument));
+        for(int degree=4;degree>0;--degree)for(int k=0;k<degree;++k)
+            work[k]=A::add(A::multiply(complement,work[k]),A::multiply(argument,work[k+1]));
+        return work[0];
+    };
+    const auto sign=[](Interval value) {return value.lo>0.?1:value.hi<0.?-1:0;};
+    Interval derivative{std::numeric_limits<double>::infinity(),-std::numeric_limits<double>::infinity()};
+    for(int k=0;k<4;++k) {
+        const auto slope=A::multiply(A::point(4.),A::add(controls[k+1],A::negate(controls[k])));
+        if(!A::finite(slope))return false;
+        derivative.lo=std::min(derivative.lo,slope.lo);
+        derivative.hi=std::max(derivative.hi,slope.hi);
+    }
+    // Bernstein convex hull certifies a nonzero derivative throughout the
+    // entire transverse interval. Sampling equal signs is never a no-root
+    // proof, and the graph's orientation flag is not a numerical slope bound.
+    const int direction=sign(derivative);
+    if(direction==0)return false;
+    const auto first=evaluate(lower),last=evaluate(upper);
+    if(!A::finite(first)||!A::finite(last)||sign(first)!=-direction||sign(last)!=direction)return false;
+    // Strict endpoint signs plus strict monotonicity prove one interior root.
+    // The mean-value theorem contracts its retained bracket using only
+    // outward arithmetic; a residual estimate never authorizes acceptance.
+    for(int iteration=0;iteration<24;++iteration) {
+        const double middle=.5*lower+.5*upper;
+        if(!(middle>lower&&middle<upper))return false;
+        const double width=upper-lower;
+        const double distance=std::min({middle,1.-middle,std::abs(middle-.5)});
+        if(lower>0.&&upper<1.&&!(lower<=.5&&upper>=.5)
+            &&distance>0.&&width<=1e-13*distance) {
+            output={middle,lower,upper,direction};
+            Exact::validateEnvironment();
+            return true;
+        }
+        const auto value=evaluate(middle);
+        const auto contracted=A::add(A::point(middle),A::negate(filteredIntervalDivide(value,derivative)));
+        if(!A::finite(contracted))return false;
+        const double nextLower=std::max(lower,contracted.lo),nextUpper=std::min(upper,contracted.hi);
+        // A contradictory or stagnating filter is unqualified. The original
+        // exact path diagnoses difficult input; no approximate root is used.
+        if(!(nextLower<nextUpper)||nextUpper-nextLower>=width)return false;
+        lower=nextLower;upper=nextUpper;
+    }
+    return false;
+}
+// Point estimates and their outward error bounds, in scalar units and
+// dimensionless native-cell derivative units. Root-enclosure width and GL8
+// quadrature error are separate and are never added to these point bounds.
+struct FilteredTransverseJet
+{
+    long double value=0.,valueError=0.,derivative=0.,derivativeError=0.;
+};
+inline bool filteredTransverseGeometryJet(const std::array<Exact::Interval,5>& controls,
+    double parameter,int derivativeSign,FilteredTransverseJet& output)
+{
+    using A=LevelSetHermiteScalar::Detail::Outward;
+    Exact::validateEnvironment();
+    if(!std::isfinite(parameter)||parameter<0.||parameter>1.
+        ||(derivativeSign!=1&&derivativeSign!=-1))return false;
+    auto work=controls;
+    for(const auto control:work)if(!A::finite(control))return false;
+    const auto argument=A::point(parameter),complement=A::add(A::point(1.),A::negate(argument));
+    // After three de Casteljau levels, both the quartic value and its
+    // derivative use the same last two values: P'=4*(work[1]-work[0]).
+    // The outward operations enclose the actual source coefficients and q;
+    // no fitted polynomial or rounded scalar DOF enters this evaluation.
+    for(int degree=4;degree>1;--degree)for(int k=0;k<degree;++k)
+        work[k]=A::add(A::multiply(complement,work[k]),A::multiply(argument,work[k+1]));
+    const auto derivative=A::multiply(A::point(4.),A::add(work[1],A::negate(work[0])));
+    const auto value=A::add(A::multiply(complement,work[0]),A::multiply(argument,work[1]));
+    if(!A::finite(value)||!A::finite(derivative)
+        ||(derivativeSign>0?derivative.lo<=0.:derivative.hi>=0.))return false;
+    const auto estimate=[](Exact::Interval bound,long double& center,long double& error) {
+        center=.5L*bound.lo+.5L*bound.hi;
+        const long double radius=std::max(center-static_cast<long double>(bound.lo),
+            static_cast<long double>(bound.hi)-center);
+        error=radius==0.?0.:A::up(static_cast<double>(radius));
+        return std::isfinite(center)&&std::isfinite(error)&&error>=0.;
+    };
+    FilteredTransverseJet sample;
+    if(!estimate(value,sample.value,sample.valueError)
+        ||!estimate(derivative,sample.derivative,sample.derivativeError)
+        ||!(std::abs(sample.derivative)>sample.derivativeError))return false;
+    Exact::validateEnvironment();
+    output=sample;
+    return true;
+}
 struct Cut
 {
     Point local;
@@ -189,8 +354,10 @@ template<std::size_t Count> struct CellJet
     // the source derivative scales: legacy nominal hx,hy on uniform grids,
     // actual leaf widths on native grids. Those scale its input derivatives.
     long double value=0.0L, dx=0.0L, dy=0.0L;
-    // Floating diagnostics, NOT exact residuals or interval bounds. The
-    // root inventory supplies the transverse derivative's topology sign.
+    // Numerical diagnostic estimates. The original jet has a floating
+    // cancellation screen; a filtered geometry packet supplies a same-Q4
+    // point error bound. Topology is supplied by the certified root, never
+    // inferred from these diagnostic estimates.
     long double dxRoundoff=0.0L,dyRoundoff=0.0L;
     std::array<long double,Count> columns{};
 };
@@ -235,6 +402,12 @@ struct GraphSample
 template<class CellLayout> class CellIntegrator
 {
     static constexpr std::size_t dofCount=CellLayout::dofCount;
+    // Exact certificates apply to each retained native Q4 polynomial,
+    // including a named piece of the completed C2 source. Cache/filtered
+    // acceleration and complete native-side supports have separate scopes.
+    static constexpr bool nativeQuarticCertificates=
+        std::is_same_v<CellLayout,NativeQuarticCurveCell>
+        || std::is_same_v<CellLayout,NativeC2MacroCurveCell>;
     static_assert(dofCount==16 || dofCount==25,"unsupported mapped cell data layout");
     using Jet = CellJet<dofCount>;
     using Basis = std::conditional_t<dofCount==16,MappedHermiteInterface::Basis,QuarticBasis>;
@@ -242,11 +415,20 @@ template<class CellLayout> class CellIntegrator
     using Result = Public::IntegrationResult<Arc>;
     bool axisymmetric_ = true;
     bool geometryMeasure_ = false;
+    bool guardedTransverseNewton_ = false;
+    Public::NativeMomentWorkProfile* work_ = nullptr;
     struct CoincidentSupport { Point begin,end; int normalAxis; };
     const std::vector<CoincidentSupport>* coincidentSupports_=nullptr;
     std::size_t coincidentArcs_=0,localRootRefinements_=0;
     mutable std::size_t transverseRootRefinements_=0;
     Vector2D greenOrigin_{0,0};
+    struct BatchOwnership {
+        struct Rectangle {Point lower,upper;std::vector<int> owners;};
+        std::vector<Rectangle> rectangles;
+    };
+    // Optional, query-local certificate: every channel has this exact same
+    // ordered axis-aligned partition. No rounded coordinates or root state.
+    const BatchOwnership* batchOwnership_=nullptr;
     struct GeometryOnly {};
     CellIntegrator(const typename CellLayout::Source& source, const Public::Graph& graph,
         const std::vector<const typename CellLayout::Query*>& cuts, const std::vector<Public::Region>& regions,
@@ -352,7 +534,7 @@ public:
         CellIntegrator integrator(source,graph,cuts,regions,axisymmetric,greenOrigin);
         integrator.geometryMeasure_=true;
         std::vector<CoincidentSupport> supports;
-        if constexpr(std::is_same_v<CellLayout,NativeQuarticCurveCell>) {
+        if constexpr(nativeQuarticCertificates) {
             const int normal=1-integrator.chosen_;
             for(const auto* query:cuts) for(const auto& zero:query->zeroTraces) {
                 const bool incident=std::find(zero.cells.begin(),zero.cells.end(),integrator.layout_.address())!=zero.cells.end();
@@ -377,6 +559,136 @@ public:
         auto result=integrator.run();
         return {std::move(result),integrator.coincidentArcs_,integrator.localRootRefinements_+integrator.transverseRootRefinements_};
     }
+    // A batch shares graph topology and every sampled root/physical jet.
+    // Target integrators below supply only original ownership and direct
+    // Green gauges; their graph integrations are never run separately.
+    static std::vector<RegionGeometryResult> regionGeometryBatch(
+        const typename CellLayout::Source& source,const Public::Graph& graph,
+        const std::vector<const typename CellLayout::Query*>& cuts,
+        const std::vector<Public::NativeMomentTarget>& targets,bool axisymmetric,
+        Public::GraphMoments* nativeGraphMoments=nullptr,
+        const std::vector<std::vector<int>>* selectedRegionIds=nullptr,
+        bool guardedTransverseNewton=false,Public::NativeMomentWorkProfile* work=nullptr)
+    {
+        require(!targets.empty(),"empty native region moment batch");
+        require(!selectedRegionIds || (!nativeGraphMoments && selectedRegionIds->size()==targets.size()),
+            "selected native batch has a different channel inventory");
+        require(!graph.nativeSide,"side-attached batch requires the explicit trace-volume consumer");
+        require(graph.controlledIntegration,"batch region moments require a controlled complete graph");
+        CellIntegrator shared(source,graph,cuts,targets.front().regions,axisymmetric,targets.front().greenOrigin);
+        shared.geometryMeasure_=true;
+        shared.work_=work;
+        if constexpr(std::is_same_v<CellLayout,NativeQuarticCurveCell>)
+            shared.guardedTransverseNewton_=guardedTransverseNewton && (selectedRegionIds || nativeGraphMoments);
+        std::vector<std::unique_ptr<CellIntegrator>> owned;
+        std::vector<CellIntegrator*> channels;
+        owned.reserve(targets.size()-1+(nativeGraphMoments?1:0));
+        channels.reserve(targets.size()+(nativeGraphMoments?1:0));
+        // shared already owns target 0's actual constructor validation,
+        // geometry measure and Green origin; retain the original channel order.
+        channels.push_back(&shared);
+        for(std::size_t t=1;t<targets.size();++t) {
+            const auto& target=targets[t];
+            owned.push_back(std::unique_ptr<CellIntegrator>(new CellIntegrator(
+                source,graph,cuts,target.regions,axisymmetric,target.greenOrigin)));
+            owned.back()->geometryMeasure_=true;channels.push_back(owned.back().get());
+        }
+        BatchOwnership ownership;
+        const auto& partition=targets.front().regions;
+        bool common=true;
+        for(const auto& target:targets) {
+            if(target.regions.size()!=partition.size()){common=false;break;}
+            for(std::size_t r=0;r<partition.size() && common;++r)for(int v=0;v<4;++v)
+                if(target.regions[r].vertices[v].x!=partition[r].vertices[v].x
+                    || target.regions[r].vertices[v].y!=partition[r].vertices[v].y){common=false;break;}
+        }
+        if(common)for(std::size_t r=0;r<partition.size();++r) {
+            Vector2D lo=partition[r].vertices[0],hi=lo;
+            for(const auto& v:partition[r].vertices) {
+                lo.x=std::min(lo.x,v.x);lo.y=std::min(lo.y,v.y);
+                hi.x=std::max(hi.x,v.x);hi.y=std::max(hi.y,v.y);
+            }
+            bool rectangular=lo.x<hi.x && lo.y<hi.y;
+            for(int v=0;v<4;++v) {
+                const auto a=partition[r].vertices[v],b=partition[r].vertices[(v+1)%4];
+                rectangular=rectangular && (a.x==lo.x || a.x==hi.x) && (a.y==lo.y || a.y==hi.y)
+                    && ((a.x==b.x)!=(a.y==b.y));
+            }
+            if(!rectangular){common=false;break;}
+            typename BatchOwnership::Rectangle box{point(lo),point(hi),{}};
+            box.owners.reserve(targets.size());
+            for(const auto& target:targets)box.owners.push_back(target.regions[r].regionId);
+            ownership.rectangles.push_back(std::move(box));
+        }
+        if(common)shared.batchOwnership_=&ownership;
+        std::vector<CoincidentSupport> supports;
+        if constexpr(nativeQuarticCertificates) {
+            const int normal=1-shared.chosen_;
+            for(const auto* query:cuts)for(const auto& zero:query->zeroTraces) {
+                const bool incident=std::find(zero.cells.begin(),zero.cells.end(),shared.layout_.address())!=zero.cells.end();
+                if(!incident)continue;
+                Vector2D a=query->inputBegin,b=query->inputEnd;
+                if(std::make_pair(b.x,b.y)<std::make_pair(a.x,a.y))std::swap(a,b);
+                const int axis=a.x==b.x?0:1;
+                if(axis!=normal)continue;
+                auto first=shared.segmentLocal(a,b,zero.chart.begin),last=shared.segmentLocal(a,b,zero.chart.end);
+                const auto lower=point(graph.localLower),upper=point(graph.localUpper);
+                if(M::compare(first[normal],lower[normal])<=0 || M::compare(first[normal],upper[normal])>=0)continue;
+                if(M::compare(last[shared.chosen_],lower[shared.chosen_])<=0
+                    || M::compare(first[shared.chosen_],upper[shared.chosen_])>=0)continue;
+                require(source.resolvedZeroSetPartial(graph.nativeCellIndex,normal,graph.localLower,graph.localUpper),
+                    "coincident batch clip lacks a complete regular graph certificate");
+                supports.push_back({std::move(first),std::move(last),normal});
+            }
+        }
+        shared.coincidentSupports_=&supports;
+        for(auto* channel:channels)channel->coincidentSupports_=&supports;
+        if(!nativeGraphMoments)
+            return shared.withLocalRootResolution([&] { return shared.runBatchOnce(channels,selectedRegionIds); });
+        // This extra channel integrates the COMPLETE original graph. Actual
+        // target cuts only supply shared split/root information; they never
+        // remove a global arc or give it a local clip owner.
+        const std::vector<Public::Region> fullGraphRegions;
+        owned.push_back(std::unique_ptr<CellIntegrator>(new CellIntegrator(
+            source,graph,cuts,fullGraphRegions,GeometryOnly{})));
+        auto* global=owned.back().get();
+        global->axisymmetric_=axisymmetric;global->geometryMeasure_=true;
+        channels.push_back(global);
+        auto output=shared.withLocalRootResolution([&] { return shared.runBatchOnce(channels); });
+        Public::GraphMoments moments;
+        for(const auto& arc:output.back().integral.arcs) {
+            moments.radial+=arc.radialMoment;moments.axial+=arc.axialMoment;
+            moments.errorEstimate+=arc.momentErrorEstimate;
+        }
+        output.pop_back();
+        // Recover the global other component ONCE from the original complete
+        // graph's retained endpoints, exactly as the independent nativeMoments
+        // path. No local accumulated moment or rounded gauge shift is used.
+        auto first=shared.endpoint(graph.begin),last=shared.endpoint(graph.end);
+        if(M::compare(first.local[shared.chosen_],last.local[shared.chosen_])>0)
+            std::swap(first,last);
+        const auto midpoint=MappedHermiteInterface::between(first.local[shared.chosen_],last.local[shared.chosen_],.5);
+        const int sign=shared.integrationRoot(midpoint).derivativeSign;
+        require(sign!=0,"geometry moment primitive lost its graph orientation");
+        const auto primitive=[&](const Cut& cut) {
+            const auto point=shared.physical(cut.local);
+            return product(product(point[0],point[1]),axisymmetric?point[0]:M::constant(1.0));
+        };
+        const long double endpoint=sign*(axisymmetric?3.1415926535897932384626433832795L:1.L)
+            *M::approximate(difference(primitive(last),primitive(first)));
+        if(graph.coordinateIsX)moments.radial=moments.axial-endpoint;
+        else moments.axial=moments.radial-endpoint;
+        const long double fraction=M::approximate(difference(last.local[shared.chosen_],first.local[shared.chosen_]));
+        const long double capacity=M::approximate(shared.width_[0])*M::approximate(shared.width_[1])
+            *(axisymmetric?6.283185307179586476925286766559L
+                *M::approximate(sum(shared.origin_[0],shared.width_[0])):1.L);
+        const long double limit=2e-12L*capacity*fraction
+            +2e-10L*std::min(std::abs(moments.axial),std::abs(moments.radial));
+        require(std::isfinite(moments.axial) && std::isfinite(moments.radial)
+            && moments.errorEstimate<=limit,"recovered Green moment exceeds controlled quadrature accuracy");
+        *nativeGraphMoments=moments;
+        return output;
+    }
     // Strict-TU discovery uses these SAME edge inventories in original-cell
     // coordinates. They are not public floating points or another scalar.
     static std::vector<Root> chartEdgeRoots(const typename CellLayout::Source& source,
@@ -398,11 +710,11 @@ public:
                 counts.push_back(1);continue;
             }
             int inward=0;
-            if constexpr(std::is_same_v<CellLayout,NativeQuarticCurveCell>) {
+            if constexpr(nativeQuarticCertificates) {
                 const auto lo=sampler.edgePoint(side,root.lower),hi=sampler.edgePoint(side,root.upper);
                 const int normal=(side==0 || side==2)?0:1;
-                const auto p=source.restrictLocal(graph.nativeCellIndex,
-                    sampler.coordinate(lo[0],hi[0]),sampler.coordinate(lo[1],hi[1]),normal==0,normal==1).numerator;
+                const auto p=sampler.layout_.polynomial(
+                    sampler.coordinate(lo[0],hi[0]),sampler.coordinate(lo[1],hi[1]),normal==0,normal==1);
                 // A nonzero derivative over the COMPLETE root bracket proves
                 // the local implicit graph. No rounded root/gradient test.
                 try {
@@ -891,6 +1203,220 @@ private:
         return result;
     }
 
+    std::vector<RegionGeometryResult> runBatchOnce(const std::vector<CellIntegrator*>& channels,
+        const std::vector<std::vector<int>>* selectedRegionIds=nullptr)
+    {
+        Result result;
+        coincidentArcs_=0;
+        edgeBindings_.clear();
+        std::vector<Cut> rawCuts;
+        for (std::size_t segmentIndex=0;segmentIndex<cuts_.size();++segmentIndex)
+        {
+            const auto* query=cuts_[segmentIndex];
+            require(query!=nullptr, "null retained face cut");
+            Vector2D a=query->inputBegin,b=query->inputEnd;
+            const bool inputReversed=std::make_pair(b.x,b.y)<std::make_pair(a.x,a.y);
+            if (inputReversed) std::swap(a,b);
+            for (std::size_t rootIndex=0;rootIndex<query->roots.size();++rootIndex)
+            {
+                const auto& root=query->roots[rootIndex];
+                if (!(layout_.address()==M::CellAddress{root.info.cellI,root.info.cellJ,root.info.nativeCellIndex})) continue;
+                ++result.sourceRootIncidences;
+                contextual([&] {
+                const auto convert=[&](const Ratio& t) {
+                    Point local;
+                    for (int axis=0;axis<2;++axis)
+                    {
+                        const double av=axis==0?a.x:a.y,bv=axis==0?b.x:b.y;
+                        local[axis]=quotient(difference(sum(M::constant(av),
+                            product(M::ratio(M::difference(bv,av),M::number(1.0)),t)),origin_[axis]),width_[axis]);
+                    }
+                    return local;
+                };
+                Cut cut=stage("face root physical-to-local conversion",[&] {
+                    return Cut{convert(root.parameter),convert(root.lower)[chosen_],convert(root.upper)[chosen_]};
+                });
+                // A physical FV face can cross other charts of this SAME
+                // cell. Exclude its roots only when the retained enclosure
+                // lies outside this closed subbox. Ambiguous ordering asks
+                // the caller to refine its shared root, never snaps it.
+                const auto boxLo=point(graph_.localLower),boxHi=point(graph_.localUpper);
+                const auto enclosureA=convert(root.lower),enclosureB=convert(root.upper);
+                bool outside=false,uncertain=false;
+                for (int axis=0;axis<2;++axis) {
+                    auto lo=enclosureA[axis],hi=enclosureB[axis];
+                    if (M::compare(lo,hi)>0) std::swap(lo,hi);
+                    outside=outside || M::compare(hi,boxLo[axis])<0 || M::compare(lo,boxHi[axis])>0;
+                    uncertain=uncertain || (M::compare(lo,boxLo[axis])<0 && M::compare(hi,boxLo[axis])>=0)
+                        || (M::compare(lo,boxHi[axis])<=0 && M::compare(hi,boxHi[axis])>0);
+                }
+                if (outside) return;
+                cut.sources.push_back({segmentIndex,inputReversed?query->roots.size()-1-rootIndex:rootIndex});
+                if (M::compare(cut.lower,cut.upper)>0) std::swap(cut.lower,cut.upper);
+                for (int axis=0;axis<2;++axis)
+                    require(M::compare(cut.local[axis],M::constant(0.0))>=0
+                        && M::compare(cut.local[axis],M::constant(1.0))<=0,
+                        "retained root incidence left its source cell");
+
+                // A cut supported by a canonical cell edge is the SAME edge
+                // polynomial. Its enclosure must intersect exactly one root
+                // of the complete edge inventory; this establishes ordinal
+                // identity without comparing rounded representatives.
+                for (int side=0;side<4;++side)
+                {
+                    const int axis=(side==0 || side==2)?0:1;
+                    const auto edgePosition=sum(origin_[axis],product(width_[axis],sidePosition(side)));
+                    if (M::compare(M::constant(axis==0?a.x:a.y),edgePosition)!=0
+                        || M::compare(M::constant(axis==0?b.x:b.y),edgePosition)!=0) continue;
+                    const int tangent=1-axis;
+                    auto lo=convert(root.lower)[tangent],hi=convert(root.upper)[tangent];
+                    if (M::compare(lo,hi)>0) std::swap(lo,hi);
+                    const auto& edge=stage("face/supporting-edge ordinal match",[&]() -> const std::vector<Root>& {
+                        return edgeRoots(side);
+                    });
+                    int match=-1;
+                    for (int k=0;k<static_cast<int>(edge.size());++k)
+                        if (M::compare(lo,edge[k].upper)<=0 && M::compare(edge[k].lower,hi)<=0)
+                        {
+                            require(match<0, "face/edge root ordinal remains ambiguous");
+                            match=k;
+                        }
+                    if (match<0 && uncertain) throw Public::RootResolutionError(
+                        "face root enclosure straddles an internal graph boundary",cut.sources);
+                    require(match>=0, "face root is missing from the complete supporting edge inventory");
+                    // Intersect two enclosures of this SAME complete-edge
+                    // root. This also recognizes exact chart-corner roots:
+                    // endlessly refining a face bracket across that exact
+                    // corner would never establish strict one-sided order.
+                    if (M::compare(edge[match].lower,lo)>0) lo=edge[match].lower;
+                    if (M::compare(edge[match].upper,hi)<0) hi=edge[match].upper;
+                    if (M::compare(cut.local[tangent],lo)<0 || M::compare(cut.local[tangent],hi)>0)
+                        cut.local[tangent]=M::compare(edge[match].parameter,lo)>=0 &&
+                            M::compare(edge[match].parameter,hi)<=0?edge[match].parameter:
+                            MappedHermiteInterface::between(lo,hi,.5);
+                    cut.lower=chosen_==tangent?lo:cut.local[chosen_];
+                    cut.upper=chosen_==tangent?hi:cut.local[chosen_];
+                    cut.edgeSide=side; cut.edgeOrdinal=match;
+                    bindEdgeRoot(cut,std::move(lo),std::move(hi));
+                    break;
+                }
+                if (uncertain && cut.edgeSide<0) throw Public::RootResolutionError(
+                    "face root enclosure straddles an internal graph boundary",cut.sources);
+                rawCuts.push_back(std::move(cut));
+                },[&] {
+                    std::ostringstream out;
+                    out << std::setprecision(17) << "[MappedInterface face root " << rootIndex
+                        << ", cell=(" << layout_.address() << "), segment=("
+                        << a.x << ',' << a.y << ")->(" << b.x << ',' << b.y << "), chart="
+                        << root.info.chart << ", t=" << describe(root.parameter) << ']';
+                    return out.str();
+                });
+            }
+        }
+        // Resolve graph endpoints only AFTER binding actual face roots to
+        // canonical ordinals. A coarse edge inventory never overwrites an
+        // already refined, same-identity face root representation.
+        Cut first=stage("begin graph endpoint",[&] { return endpoint(graph_.begin); });
+        Cut last=stage("end graph endpoint",[&] { return endpoint(graph_.end); });
+        require(M::compare(first.local[chosen_],last.local[chosen_])!=0,
+            "graph has no positive chosen-coordinate extent");
+        if (M::compare(first.local[chosen_],last.local[chosen_])>0) std::swap(first,last);
+        std::vector<Cut> split{first,last};
+        if(coincidentSupports_)for(const auto& support:*coincidentSupports_)for(const auto* p:{&support.begin,&support.end}) {
+            if(M::compare((*p)[chosen_],first.local[chosen_])<=0 || M::compare((*p)[chosen_],last.local[chosen_])>=0)continue;
+            const auto lower=point(graph_.localLower),upper=point(graph_.localUpper);
+            if(M::compare((*p)[chosen_],lower[chosen_])<0 || M::compare((*p)[chosen_],upper[chosen_])>0)continue;
+            split.push_back(Cut{*p,(*p)[chosen_],(*p)[chosen_]});
+        }
+        for (auto cut:rawCuts)
+        {
+            if (cut.edgeSide>=0) cut=endpoint({cut.edgeSide,cut.edgeOrdinal});
+            if (M::compare(cut.local[chosen_],first.local[chosen_])<0)
+            {
+                if (M::compare(cut.upper,first.lower)>=0)
+                    requestResolution({&cut,&first},"face cut and graph begin have unresolved ordering");
+                continue;
+            }
+            if (M::compare(cut.local[chosen_],last.local[chosen_])>0)
+            {
+                if (M::compare(cut.lower,last.upper)<=0)
+                    requestResolution({&cut,&last},"face cut and graph end have unresolved ordering");
+                continue;
+            }
+            split.push_back(std::move(cut));
+        }
+        stage("sort retained chosen-coordinate cuts",[&] {
+            std::sort(split.begin(),split.end(),[&](const Cut& a,const Cut& b) {
+                return M::compare(a.local[chosen_],b.local[chosen_])<0;
+            });
+        });
+        std::vector<Cut> unique;
+        for (const auto& cut:split)
+        {
+            if (!unique.empty() && M::compare(unique.back().local[chosen_],cut.local[chosen_])==0)
+            {
+                require(same(unique.back().local,cut.local), "different curve points share one graph coordinate");
+                mergeSources(unique.back().sources,cut.sources);
+                if (M::compare(cut.lower,unique.back().lower)>0) unique.back().lower=cut.lower;
+                if (M::compare(cut.upper,unique.back().upper)<0) unique.back().upper=cut.upper;
+                continue;
+            }
+            if (!unique.empty() && M::compare(unique.back().upper,cut.lower)>=0)
+                requestResolution({&unique.back(),&cut},"independent cut-root enclosures cannot be strictly ordered");
+            unique.push_back(cut);
+        }
+        result.retainedCuts=unique.size();
+        std::vector<RegionGeometryResult> output;
+        output.reserve(channels.size());
+        for(std::size_t t=0;t<channels.size();++t)output.push_back({Result{},0,0});
+        for(std::size_t k=1;k<unique.size();++k) {
+            std::vector<bool> active(channels.size());bool any=false;
+            for(std::size_t t=0;t<channels.size();++t) {
+                active[t]=!channels[t]->coincidentBoundary(unique[k-1],unique[k]);
+                any=any || active[t];
+                if(!active[t])++output[t].coincidentArcs;
+            }
+            if(selectedRegionIds && any) {
+                // Complete retained face cuts prove one owner on this open
+                // subarc. Locate it with an actual enclosed midpoint root;
+                // selected GL8 nodes retain all original ownership checks.
+                const auto q=MappedHermiteInterface::between(unique[k-1].local[chosen_],unique[k].local[chosen_],.5);
+                const bool leftBlocked=M::compare(unique[k-1].upper,q)>=0;
+                const bool rightBlocked=M::compare(q,unique[k].lower)>=0;
+                if(leftBlocked || rightBlocked)
+                    requestResolution({leftBlocked?&unique[k-1]:nullptr,rightBlocked?&unique[k]:nullptr},
+                        "selected batch midpoint lies inside a cutting-root enclosure");
+                const auto sample=batchRegionIntegrationRoot(q,channels,active);
+                any=false;
+                for(std::size_t t=0;t<channels.size();++t)if(active[t]) {
+                    const int owner=sample.owners[t];
+                    require(owner!=-2,"selected batch midpoint has overlapping target owners");
+                    require(owner>=0,"selected batch midpoint has no actual target owner");
+                    require(sample.lowerOwners[t]==owner && sample.upperOwners[t]==owner,
+                        "selected batch midpoint root enclosure crosses an actual target boundary");
+                    const auto& ids=(*selectedRegionIds)[t];
+                    active[t]=std::find(ids.begin(),ids.end(),owner)!=ids.end();
+                    any=any || active[t];
+                }
+            }
+            if(!any)continue;
+            auto arcs=contextual([&] {
+                return integrateArcBatch(unique[k-1],unique[k],channels,active);
+            },[&] {
+                return "[MappedInterface batch subarc "+std::to_string(k-1)+", chosen="+std::to_string(chosen_)
+                    +", begin="+describe(unique[k-1].local[chosen_])+", end="+describe(unique[k].local[chosen_])+"]";
+            });
+            for(std::size_t t=0;t<channels.size();++t)if(active[t])
+                output[t].integral.arcs.push_back(std::move(arcs[t]));
+        }
+        for(auto& target:output) {
+            target.integral.retainedCuts=result.retainedCuts;
+            target.integral.sourceRootIncidences=result.sourceRootIncidences;
+            target.localRootRefinements=localRootRefinements_+transverseRootRefinements_;
+        }
+        return output;
+    }
+
 private:
     Point segmentLocal(Vector2D a,Vector2D b,const Ratio& t) const
     {
@@ -1002,11 +1528,14 @@ private:
         return M::constant(side==0?graph_.localLower.x:side==1?graph_.localLower.y:
             side==2?graph_.localUpper.x:graph_.localUpper.y);
     }
-    static Root mapRoot(Root root,const Ratio& lower,const Ratio& upper)
+    Root mapRoot(Root root,const Ratio& lower,const Ratio& upper) const
     {
+        NativeWorkTimer timer(work_,&Public::NativeMomentWorkProfile::rootMappingRefinement);
+        if(work_)++work_->rootMappings;
         const auto extent=difference(upper,lower);
         const auto map=[&](const Ratio& t){return sum(lower,product(extent,t));};
         root.parameter=map(root.parameter);root.lower=map(root.lower);root.upper=map(root.upper);
+        root.geometryPacket.reset();
         return root;
     }
     void refineEdgeRoot(const EdgeIdentity& identity)
@@ -1017,10 +1546,13 @@ private:
         require(identity.second>=0 && identity.second<static_cast<int>(inventory.size()),
             "local endpoint refinement ordinal is outside its complete inventory");
         auto& root=edgeRoots_[identity.first][identity.second];
+        NativeWorkTimer timer(work_,&Public::NativeMomentWorkProfile::rootMappingRefinement,
+            &Public::NativeMomentWorkProfile::restrictionConstruction);
+        if(work_)++work_->rootRefinements;
         const auto refined=MappedHermiteRootRefinement::refine(root.lower,root.upper,
             [&](const Ratio& lo,const Ratio& hi) {
                 auto p=polynomial(edgePoint(identity.first,lo),edgePoint(identity.first,hi));
-                if constexpr(std::is_same_v<CellLayout,NativeQuarticCurveCell>)
+                if constexpr(nativeQuarticCertificates)
                     if(root.deflated)p=PolynomialSquareFree::squareFree(p).polynomial;
                 return p;
             });
@@ -1049,13 +1581,59 @@ private:
         c.denominator=Exact::scalePow2(c.denominator,-exponent);
         return c;
     }
+    typename CellLayout::Polynomial sourcePolynomial(const M::Coordinate& x,const M::Coordinate& y) const
+    {
+        NativeWorkTimer timer(work_,&Public::NativeMomentWorkProfile::restrictionConstruction);
+        if(work_)++work_->restrictionQueries;
+        return layout_.polynomial(x,y);
+    }
     typename CellLayout::Polynomial polynomial(const Point& a, const Point& b) const
     { return stage("cleared restriction construction",[&] {
-        return layout_.polynomial(coordinate(a[0],b[0]),coordinate(a[1],b[1]));
+        return sourcePolynomial(coordinate(a[0],b[0]),coordinate(a[1],b[1]));
     }); }
-    std::vector<Root> isolate(Point a, Point b,bool allowMultiple=false) const
+    std::vector<Root> isolate(Point a, Point b,bool allowMultiple=false,bool guardedNewton=false) const
     {
-        return contextual([&] { return isolateImpl(a,b,allowMultiple); },[&] {
+        return contextual([&] {
+            if constexpr(std::is_same_v<CellLayout,NativeQuarticCurveCell>) {
+                using Certificate=typename CellLayout::Source::InitialRootCertificate;
+                // Retain ALL eight raw expansion vectors before endpoint
+                // reversal/normalization. The source leaf owns this cache;
+                // graph/region/face state never enters isolateImpl.
+                const std::array<Expansion,8> input{{a[0].numerator,a[0].denominator,
+                    a[1].numerator,a[1].denominator,b[0].numerator,b[0].denominator,
+                    b[1].numerator,b[1].denominator}};
+                std::vector<Certificate> certificates;
+                if(work_)++work_->initialRootCacheQueries;
+                const bool retained=[&] {
+                    NativeWorkTimer timer(work_,&Public::NativeMomentWorkProfile::initialRootCacheLookup);
+                    return layout_.lookupInitialRoots(input,allowMultiple,certificates);
+                }();
+                if(work_) {
+                    if(retained)++work_->initialRootCacheHits;else ++work_->initialRootCacheMisses;
+                }
+                if(retained) {
+                    std::vector<Root> result;result.reserve(certificates.size());
+                    for(const auto& c:certificates)result.push_back({
+                        {c.parameterNumerator,c.parameterDenominator},
+                        {c.lowerNumerator,c.lowerDenominator},{c.upperNumerator,c.upperDenominator},
+                        c.derivativeSign,c.phaseBefore,c.phaseAfter,c.deflated});
+                    return result;
+                }
+                auto result=isolateImpl(a,b,allowMultiple,guardedNewton);
+                certificates.reserve(result.size());
+                for(const auto& r:result)certificates.push_back({
+                    r.parameter.numerator,r.parameter.denominator,r.lower.numerator,r.lower.denominator,
+                    r.upper.numerator,r.upper.denominator,r.derivativeSign,r.phaseBefore,r.phaseAfter,r.deflated});
+                // Only complete successful initial inventories are retained.
+                // mapRoot, bindings and all subsequent refinements stay private.
+                {
+                    NativeWorkTimer timer(work_,&Public::NativeMomentWorkProfile::initialRootCacheRemember);
+                    if(work_)++work_->initialRootCacheRememberQueries;
+                    layout_.rememberInitialRoots(input,allowMultiple,certificates);
+                }
+                return result;
+            } else return isolateImpl(a,b,allowMultiple,guardedNewton);
+        },[&] {
             return "[MappedInterface isolate, a="+describe(a)+", b="+describe(b)+"]";
         });
     }
@@ -1073,13 +1651,19 @@ private:
     // remain strict: their derivative must belong to the original scalar.
     // Other unresolved cases retain the bounded subdivision rejection.
     PolynomialSegmentRoots::Result isolateEdgePieceWithDyadicFallback(
-        const Point& a,const Point& b,const typename CellLayout::Polynomial& p,bool allowMultiple,bool& deflated) const
+        const Point& a,const Point& b,const typename CellLayout::Polynomial& p,bool allowMultiple,bool& deflated,
+        bool guardedNewton=false) const
     {
         using PolynomialSegmentRoots::isolateEndpointRelative;
-        try { return isolateEndpointRelative(p); }
+        try {
+            if constexpr(std::is_same_v<CellLayout,NativeQuarticCurveCell>)
+                if(guardedNewton && !allowMultiple)
+                    return PolynomialSegmentRoots::isolateEndpointRelativeGuardedNewton(p);
+            return isolateEndpointRelative(p);
+        }
         catch (const std::exception& outer)
         {
-            if constexpr(std::is_same_v<CellLayout,NativeQuarticCurveCell>) {
+            if constexpr(nativeQuarticCertificates) {
                 if(allowMultiple) {
                     std::optional<typename CellLayout::Polynomial> factor;
                     try {const auto result=PolynomialSquareFree::squareFree(p);if(result.deflated)factor=result.polynomial;}
@@ -1155,12 +1739,14 @@ private:
         }
     }
 
-    std::vector<Root> isolateImpl(Point a, Point b,bool allowMultiple) const
+    std::vector<Root> isolateImpl(Point a, Point b,bool allowMultiple,bool guardedNewton) const
     {
         // Select the endpoint-relative direction before constructing all
-        // segment coefficients. Both endpoint evaluations retain the SAME
-        // cleared coordinate denominators as the original forward segment;
-        // independently normalizing endpoint charts would not be comparable.
+        // segment coefficients. Endpoint input coordinates retain the forward
+        // segment's cleared coordinate denominators. The native backend
+        // independently centers each returned homogeneous numerator, so these
+        // endpoint restrictions and the full restriction need not share a
+        // numerator scale; full-polynomial endpoint values cannot replace them.
         // A whole transverse line has an endpoint basis in its varying axis,
         // so these constant restrictions are much cheaper than two full ones.
         const auto endpoints=stage("cleared restriction construction",[&] {
@@ -1169,7 +1755,7 @@ private:
                 auto cx=x,cy=y;
                 cx.numeratorBegin=cx.numeratorEnd=last?x.numeratorEnd:x.numeratorBegin;
                 cy.numeratorBegin=cy.numeratorEnd=last?y.numeratorEnd:y.numeratorBegin;
-                return layout_.polynomial(cx,cy)[0];
+                return sourcePolynomial(cx,cy)[0];
             };
             return std::array<Expansion,2>{{atEndpoint(false),atEndpoint(true)}};
         });
@@ -1179,7 +1765,10 @@ private:
         const auto p=polynomial(a,b);
         bool deflated=false;
         const auto isolated=stage("endpoint-relative polynomial root isolation",[&] {
-            return isolateEdgePieceWithDyadicFallback(a,b,p,allowMultiple,deflated);
+            NativeWorkTimer timer(work_,&Public::NativeMomentWorkProfile::initialRootIsolation,
+                &Public::NativeMomentWorkProfile::restrictionConstruction);
+            if(work_)++work_->initialRootIsolations;
+            return isolateEdgePieceWithDyadicFallback(a,b,p,allowMultiple,deflated,guardedNewton);
         });
         require(!isolated.identicallyZero, "coincident zero restriction is unsupported");
         require(isolated.roots.size()==isolated.enclosures.size(), "root/enclosure inventory mismatch");
@@ -1362,7 +1951,36 @@ private:
             return "[MappedInterface retained-coordinate jet, local="+describe(p)+"]";
         });
     }
-    Jet jetImpl(const Point& p) const
+    // Batch geometry consumes no correction columns and only the transverse
+    // first derivative. All other consumers retain the original full jet.
+    Jet geometryJet(const Point& p) const
+    {
+        return contextual([&] { return jetImpl<true>(p); },[&] {
+            return "[MappedInterface retained-coordinate jet, local="+describe(p)+"]";
+        });
+    }
+    Jet geometryJet(const Point& p,const Root& root) const
+    {
+        if constexpr(std::is_same_v<CellLayout,NativeQuarticCurveCell>) {
+            if(geometryMeasure_&&guardedTransverseNewton_&&root.geometryPacket) {
+                const auto& packet=*root.geometryPacket;
+                // Only the final actual representative may consume its
+                // query-private coefficients. All refined/mapped roots are
+                // constructed without a packet and use the original jet.
+                if(M::compare(p[1-chosen_],M::constant(packet.parameter))==0) {
+                    FilteredTransverseJet bounded;
+                    if(filteredTransverseGeometryJet(packet.controls,packet.parameter,root.derivativeSign,bounded)) {
+                        Jet result;result.value=bounded.value;
+                        if(chosen_==0) {result.dy=bounded.derivative;result.dyRoundoff=bounded.derivativeError;}
+                        else {result.dx=bounded.derivative;result.dxRoundoff=bounded.derivativeError;}
+                        return result;
+                    }
+                }
+            }
+        }
+        return geometryJet(p);
+    }
+    template<bool GeometryOnly=false> Jet jetImpl(const Point& p) const
     {
         const Basis bx=stage("r Hermite basis",[&] { return Basis(p[0]); });
         const Basis by=stage("z Hermite basis",[&] { return Basis(p[1]); });
@@ -1387,11 +2005,17 @@ private:
             if (coefficient!=0.0)
             {
                 accumulate(0,finiteProduct({bx.value[x],by.value[y],coefficient}));
-                accumulate(1,finiteProduct({bx.derivative[x],by.value[y],coefficient}));
-                accumulate(2,finiteProduct({bx.value[x],by.derivative[y],coefficient}));
+                if constexpr(!GeometryOnly) {
+                    accumulate(1,finiteProduct({bx.derivative[x],by.value[y],coefficient}));
+                    accumulate(2,finiteProduct({bx.value[x],by.derivative[y],coefficient}));
+                } else if(chosen_==0)
+                    accumulate(2,finiteProduct({bx.value[x],by.derivative[y],coefficient}));
+                else
+                    accumulate(1,finiteProduct({bx.derivative[x],by.value[y],coefficient}));
             }
-            result.columns[k]=finiteProduct({bx.value[x],by.value[y],
-                (x==2 || x==3)?nominal_.x:1.0L,(y==2 || y==3)?nominal_.y:1.0L});
+            if constexpr(!GeometryOnly)
+                result.columns[k]=finiteProduct({bx.value[x],by.value[y],
+                    (x==2 || x==3)?nominal_.x:1.0L,(y==2 || y==3)?nominal_.y:1.0L});
         }
         result.value=sums[0]; result.dx=sums[1]; result.dy=sums[2];
         // Conservative floating cancellation screen for coordinate terminal
@@ -1402,15 +2026,49 @@ private:
         // the independent exact-coefficient simple-root inventory.
         constexpr long double accumulatedRoundoff=8.0L*dofCount*std::numeric_limits<double>::epsilon();
         constexpr long double gamma=accumulatedRoundoff/(1.0L-accumulatedRoundoff);
-        result.dxRoundoff=finiteProduct({gamma,absoluteSums[1]});
-        result.dyRoundoff=finiteProduct({gamma,absoluteSums[2]});
+        if constexpr(!GeometryOnly) {
+            result.dxRoundoff=finiteProduct({gamma,absoluteSums[1]});
+            result.dyRoundoff=finiteProduct({gamma,absoluteSums[2]});
+        } else if(chosen_==0)
+            result.dyRoundoff=finiteProduct({gamma,absoluteSums[2]});
+        else
+            result.dxRoundoff=finiteProduct({gamma,absoluteSums[1]});
         return result;
     }
     Root sectionRoot(const Ratio& q) const
     {
         Point a=point(graph_.localLower),b=point(graph_.localUpper);
         a[chosen_]=b[chosen_]=q;
-        const auto roots=stage("GL8 transverse roots",[&] { return isolate(a,b); });
+        if constexpr(std::is_same_v<CellLayout,NativeQuarticCurveCell>) {
+            if(geometryMeasure_&&guardedTransverseNewton_) {
+                FilteredTransverseRoot filtered;
+                std::array<Exact::Interval,5> controls;
+                const bool qualified=stage("filtered native transverse root",[&] {
+                    NativeWorkTimer timer(work_,&Public::NativeMomentWorkProfile::initialRootIsolation);
+                    const auto coordinate=filteredIntervalDivide(Exact::enclosure(q.numerator),
+                        Exact::enclosure(q.denominator));
+                    using A=LevelSetHermiteScalar::Detail::Outward;
+                    if(!A::finite(coordinate)||coordinate.lo<0.||coordinate.hi>1.)return false;
+                    return layout_.transverseBernsteinControls(chosen_,coordinate,controls)
+                        &&filteredTransverseRoot(controls,
+                            chosen_==0?graph_.localLower.y:graph_.localLower.x,
+                            chosen_==0?graph_.localUpper.y:graph_.localUpper.x,filtered);
+                });
+                if(qualified) {
+                    if(work_)++work_->initialRootIsolations;
+                    NativeWorkTimer timer(work_,&Public::NativeMomentWorkProfile::rootMappingRefinement);
+                    if(work_)++work_->rootMappings;
+                    // Already in the original native-cell transverse chart;
+                    // retain each certified endpoint independently as a Ratio.
+                    Root root{M::constant(filtered.parameter),M::constant(filtered.lower),
+                        M::constant(filtered.upper),filtered.derivativeSign,
+                        -filtered.derivativeSign,filtered.derivativeSign};
+                    root.geometryPacket=FilteredGeometryPacket{controls,filtered.parameter};
+                    return root;
+                }
+            }
+        }
+        const auto roots=stage("GL8 transverse roots",[&] { return isolate(a,b,false,guardedTransverseNewton_); });
         int selected=-1;
         for(int n=0;n<static_cast<int>(roots.size());++n)
             if(M::compare(roots[n].parameter,M::constant(0.0))>0 &&
@@ -1424,6 +2082,9 @@ private:
     }
     Root refineIntegrationRoot(const Ratio& q,const Root& root) const
     {
+        NativeWorkTimer timer(work_,&Public::NativeMomentWorkProfile::rootMappingRefinement,
+            &Public::NativeMomentWorkProfile::restrictionConstruction);
+        if(work_)++work_->rootRefinements;
         ++transverseRootRefinements_;
         const auto refined=MappedHermiteRootRefinement::refine(root.lower,root.upper,
             [&](const Ratio& lo,const Ratio& hi) {
@@ -1490,6 +2151,260 @@ private:
         // Original contextual owner/enclosure checks below remain mandatory
         // after the bounded work, and diagnose a genuinely unresolved case.
         return root;
+    }
+    std::vector<int> batchOwners(const Point& p,const std::vector<CellIntegrator*>& channels) const
+    {
+        std::vector<int> owners(channels.size(),-1);
+        for(std::size_t t=0;t<channels.size();++t)
+            if(channels[t]->geometryMeasure_ && channels[t]->regions_.empty())owners[t]=0;
+        if(!batchOwnership_) {
+            for(std::size_t t=0;t<channels.size();++t)owners[t]=channels[t]->uniqueOwner(p);
+            return owners;
+        }
+        // Exact closed-rectangle membership is equivalent to the validated
+        // convex rectangle's four signed orientation predicates. Evaluate it
+        // once, then preserve each channel's SAME-owner boundary semantics.
+        for(const auto& box:batchOwnership_->rectangles) {
+            if(M::compare(p[0],box.lower[0])<0 || M::compare(p[0],box.upper[0])>0
+                || M::compare(p[1],box.lower[1])<0 || M::compare(p[1],box.upper[1])>0)continue;
+            for(std::size_t t=0;t<channels.size();++t) {
+                if(channels[t]->geometryMeasure_ && channels[t]->regions_.empty())continue;
+                if(owners[t]==-2)continue;
+                if(owners[t]>=0 && owners[t]!=box.owners[t])owners[t]=-2;
+                else owners[t]=box.owners[t];
+            }
+        }
+        return owners;
+    }
+    // One query-private packet for the final actual root and the original
+    // coordinate/ownership work. Never retained across nodes or queries.
+    struct BatchRegionSample {
+        Root root;
+        Point local,location;
+        std::vector<int> owners,lowerOwners,upperOwners;
+    };
+    BatchRegionSample batchRegionIntegrationRoot(const Ratio& q,const std::vector<CellIntegrator*>& channels,
+        const std::vector<bool>& active) const
+    {
+        auto root=integrationRoot(q);
+        const auto sample=[&](const Root& actual,bool terminal) {
+            BatchRegionSample result;result.root=actual;
+            Point lo,hi;result.local[chosen_]=lo[chosen_]=hi[chosen_]=q;
+            result.local[1-chosen_]=actual.parameter;
+            lo[1-chosen_]=actual.lower;hi[1-chosen_]=actual.upper;
+            // Only after the fourth refinement did the old caller first
+            // perform this physical conversion with its explicit stage.
+            if(terminal)result.location=stage("GL8 batch shared physical point",[&] {return physical(result.local);});
+            else result.location=physical(result.local);
+            const auto lower=physical(lo),upper=physical(hi);
+            result.owners=batchOwners(result.location,channels);
+            result.lowerOwners=batchOwners(lower,channels);result.upperOwners=batchOwners(upper,channels);
+            return result;
+        };
+        for(int refinement=0;refinement<4;++refinement) {
+            auto measured=sample(root,false);
+            bool resolved=true;
+            for(std::size_t t=0;t<channels.size();++t)if(active[t])
+                resolved=resolved && measured.owners[t]>=0 && measured.lowerOwners[t]==measured.owners[t]
+                    && measured.upperOwners[t]==measured.owners[t];
+            if(resolved || M::compare(root.lower,root.upper)==0)return measured;
+            root=refineIntegrationRoot(q,root);
+        }
+        // The fourth refinement changed the root after the last ownership
+        // attempt. Recompute from that final root before the mandatory checks.
+        return sample(root,true);
+    }
+    using BatchArc=std::vector<Arc>;
+    BatchArc integrateArcRuleBatch(const Cut& firstCut,const Cut& lastCut,
+        const std::vector<CellIntegrator*>& channels,const std::vector<bool>& active) const
+    {
+        const auto& first=firstCut.local[chosen_];
+        const auto& last=lastCut.local[chosen_];
+        static constexpr std::array<double,8> x{{-0.96028985649753623168,-0.79666647741362673959,
+            -0.52553240991632898582,-0.18343464249564980494,0.18343464249564980494,
+            0.52553240991632898582,0.79666647741362673959,0.96028985649753623168}};
+        static constexpr std::array<double,8> w{{0.10122853629037625915,0.22238103445337447054,
+            0.31370664587788728734,0.36268378337836198297,0.36268378337836198297,
+            0.31370664587788728734,0.22238103445337447054,0.10122853629037625915}};
+        const auto extent=difference(last,first);
+        require(Exact::sign(extent.numerator)>0,"nonpositive retained batch free-arc width");
+        Arc prototype;
+        prototype.nativeCellIndex=graph_.nativeCellIndex;
+        prototype.requiresNativeDofConstraints=graph_.nativeCellIndex>=0;
+        prototype.fromEnd=M::compare(sum(first,last),M::constant(1.0))>0;
+        prototype.offset=M::approximate(prototype.fromEnd?difference(M::constant(1.0),last):first);
+        prototype.width=M::approximate(extent);
+        require(prototype.offset>=0.0L && prototype.offset<=1.0L && prototype.width>0.0L && prototype.width<=1.0L,
+            "unrepresentable terminal batch free-arc offset or width");
+        BatchArc output(channels.size(),prototype);
+        std::vector<std::array<long double,2>> sums(channels.size()),compensations(channels.size());
+        const long double hx=M::approximate(width_[0]),hy=M::approximate(width_[1]);
+        constexpr long double twoPi=6.283185307179586476925286766559005768L;
+        int derivativeSign=0;
+        for(std::size_t k=0;k<x.size();++k)contextual([&] {
+            const auto q=stage("GL8 batch chosen-coordinate interpolation",[&] {
+                return MappedHermiteInterface::between(first,last,0.5*(1.0+x[k]));
+            });
+            require(M::compare(first,q)<0 && M::compare(q,last)<0,"GL8 batch coordinate is not strictly interior");
+            const bool leftBlocked=M::compare(firstCut.upper,q)>=0;
+            const bool rightBlocked=M::compare(q,lastCut.lower)>=0;
+            if(leftBlocked || rightBlocked)
+                requestResolution({leftBlocked?&firstCut:nullptr,rightBlocked?&lastCut:nullptr},
+                    "GL8 batch coordinate="+describe(q)+", left root upper="+describe(firstCut.upper)
+                    +", right root lower="+describe(lastCut.lower)+"; quadrature node is inside a cutting-root enclosure");
+            const auto pointSample=batchRegionIntegrationRoot(q,channels,active);
+            const auto& root=pointSample.root;const auto& p=pointSample.local;
+            const auto& location=stage("GL8 batch shared physical point",[&]() -> const Point& {return pointSample.location;});
+            const auto& regions=pointSample.owners;const auto& lowerOwners=pointSample.lowerOwners;
+            const auto& upperOwners=pointSample.upperOwners;
+            for(std::size_t t=0;t<channels.size();++t)if(active[t]) {
+                const int region=regions[t];
+                require(region!=-2,"batch free-curve point has different overlapping target owners");
+                require(region>=0,"batch free-curve point has no actual target owner");
+                require(lowerOwners[t]==region && upperOwners[t]==region,
+                    "batch transverse root enclosure crosses an actual target boundary");
+                require(output[t].regionId<0 || output[t].regionId==region,
+                    "batch free subarc changes target owner without a retained face cut");
+                output[t].regionId=region;
+            }
+            // One actual root and the consumed geometry jet per node,
+            // never one per gauge or an unused correction-sensitivity query.
+            const auto sample=geometryJet(p,root);
+            const int sign=root.derivativeSign;
+            const long double transverse=chosen_==0?sample.dy:sample.dx;
+            const long double transverseRoundoff=chosen_==0?sample.dyRoundoff:sample.dxRoundoff;
+            require(sign!=0 && std::isfinite(transverse) && std::abs(transverse)>transverseRoundoff
+                && (transverse>0.0L?1:-1)==sign && (derivativeSign==0 || derivativeSign==sign),
+                "batch free arc lost its regular transverse derivative");
+            derivativeSign=sign;
+            const long double radius=M::approximate(location[0]),z=M::approximate(location[1]);
+            require(!axisymmetric_ || radius>0.0L,"RZ batch free-arc interior must have positive radius");
+            const long double weight=finiteProduct({0.5L,w[k],prototype.width});
+            for(std::size_t t=0;t<channels.size();++t)if(active[t]) {
+                const auto gauge=channels[t]->greenOrigin_;
+                const long double shiftedZ=gauge.y==0?z:M::approximate(difference(location[1],M::constant(gauge.y)));
+                const long double shiftedRadius=gauge.x==0?radius:M::approximate(difference(location[0],M::constant(gauge.x)));
+                const long double radialSum=gauge.x==0?radius:M::approximate(sum(location[0],M::constant(gauge.x)));
+                const long double moment=chosen_!=0?0:axisymmetric_?finiteProduct({twoPi,radius,shiftedZ,hx,weight,
+                    static_cast<long double>(sign)},1.0L):finiteProduct({shiftedZ,hx,weight,static_cast<long double>(sign)},1.0L);
+                const long double radialMoment=chosen_!=1?0:finiteProduct({axisymmetric_?twoPi*.5L:1.L,shiftedRadius,
+                    axisymmetric_?radialSum:1.L,hy,weight,static_cast<long double>(sign)},1.L);
+                for(std::size_t c=0;c<2;++c) {
+                    const long double term=c==0?moment:radialMoment;
+                    require(std::isfinite(term),"nonfinite batch mapped free-arc integral");
+                    const long double adjusted=term-compensations[t][c],next=sums[t][c]+adjusted;
+                    require(std::isfinite(adjusted) && std::isfinite(next),"nonfinite batch mapped integral accumulation");
+                    compensations[t][c]=(next-sums[t][c])-adjusted;sums[t][c]=next;
+                }
+                auto& result=output[t];
+                result.minTransverseDerivative=k==0?std::abs(transverse):std::min(result.minTransverseDerivative,std::abs(transverse));
+                result.maxScalarResidual=std::max(result.maxScalarResidual,std::abs(sample.value));
+                ++result.quadraturePoints;
+            }
+        },[&] {return "[MappedInterface batch GL8 point "+std::to_string(k)+"]";});
+        for(std::size_t t=0;t<channels.size();++t)if(active[t]) {
+            output[t].axialMoment=sums[t][0];output[t].radialMoment=sums[t][1];
+        }
+        return output;
+    }
+    BatchArc integrateGeometryControlledBatch(const Cut& first,const Cut& last,BatchArc whole,
+        std::size_t& evaluations,const std::vector<CellIntegrator*>& channels,const std::vector<bool>& active) const
+    {
+        struct Piece {Cut first,middle,last;BatchArc left,right;int depth;std::vector<long double> error;};
+        const auto split=[&](const Cut& a,const Cut& b,const BatchArc& coarse,int depth) {
+            require(evaluations+16<=16384,"batch geometry moment quadrature work budget exhausted");
+            Cut middle;middle.local=a.local;
+            middle.local[chosen_]=MappedHermiteInterface::between(a.local[chosen_],b.local[chosen_],.5);
+            middle.lower=middle.upper=middle.local[chosen_];
+            auto left=integrateArcRuleBatch(a,middle,channels,active);
+            auto right=integrateArcRuleBatch(middle,b,channels,active);evaluations+=16;
+            std::vector<long double> error(channels.size());
+            for(std::size_t t=0;t<channels.size();++t)if(active[t])
+                error[t]=std::max(std::abs(left[t].axialMoment+right[t].axialMoment-coarse[t].axialMoment),
+                    std::abs(left[t].radialMoment+right[t].radialMoment-coarse[t].radialMoment));
+            return Piece{a,middle,b,std::move(left),std::move(right),depth,std::move(error)};
+        };
+        const long double fraction=M::approximate(difference(last.local[chosen_],first.local[chosen_]));
+        const long double capacity=M::approximate(width_[0])*M::approximate(width_[1])
+            *(axisymmetric_?6.283185307179586476925286766559L*M::approximate(sum(origin_[0],width_[0])):1.L);
+        const long double budget=2e-12L*capacity*fraction;
+        std::vector<Piece> pieces;pieces.push_back(split(first,last,whole,0));
+        for(;;) {
+            std::vector<long double> error(channels.size());std::size_t worst=0;long double worstError=-1;
+            for(std::size_t k=0;k<pieces.size();++k) {
+                long double largest=0;
+                for(std::size_t t=0;t<channels.size();++t)if(active[t]) {
+                    error[t]+=pieces[k].error[t];largest=std::max(largest,pieces[k].error[t]);
+                }
+                if(largest>worstError){worst=k;worstError=largest;}
+            }
+            bool resolved=true;
+            for(std::size_t t=0;t<channels.size();++t)if(active[t])resolved=resolved && error[t]<=budget;
+            if(resolved) {
+                for(std::size_t t=0;t<channels.size();++t)if(active[t]) {
+                    auto& out=whole[t];out.axialMoment=out.radialMoment=0;out.quadraturePoints=0;
+                    long double axialCompensation=0,radialCompensation=0;
+                    for(const auto& piece:pieces)for(const auto* arc:{&piece.left[t],&piece.right[t]}) {
+                        require(arc->regionId==out.regionId,"batch controlled graph quadrature changed target ownership");
+                        const auto add=[](long double value,long double& sum,long double& compensation) {
+                            const auto increment=value-compensation,next=sum+increment;
+                            compensation=(next-sum)-increment;sum=next;
+                        };
+                        add(arc->axialMoment,out.axialMoment,axialCompensation);
+                        add(arc->radialMoment,out.radialMoment,radialCompensation);
+                        out.quadraturePoints+=arc->quadraturePoints;
+                        out.minTransverseDerivative=std::min(out.minTransverseDerivative,arc->minTransverseDerivative);
+                        out.maxScalarResidual=std::max(out.maxScalarResidual,arc->maxScalarResidual);
+                    }
+                    out.momentErrorEstimate=error[t];
+                }
+                return whole;
+            }
+            const auto piece=pieces[worst];
+            if(piece.depth>=16)throw std::runtime_error(scalarFailureContext()+" batch geometry moment quadrature depth exhausted");
+            auto left=split(piece.first,piece.middle,piece.left,piece.depth+1);
+            auto right=split(piece.middle,piece.last,piece.right,piece.depth+1);
+            pieces[worst]=std::move(left);pieces.push_back(std::move(right));
+        }
+    }
+    BatchArc integrateArcBatch(const Cut& first,const Cut& last,const std::vector<CellIntegrator*>& channels,
+        const std::vector<bool>& active) const
+    {
+        auto whole=integrateArcRuleBatch(first,last,channels,active);
+        std::size_t evaluations=8;
+        whole=integrateGeometryControlledBatch(first,last,std::move(whole),evaluations,channels,active);
+        const auto midpoint=MappedHermiteInterface::between(first.local[chosen_],last.local[chosen_],.5);
+        const int sign=integrationRoot(midpoint).derivativeSign;
+        require(sign!=0,"batch region moment primitive lost its graph orientation");
+        // Recover the second Green component with each ORIGINAL gauge in
+        // exact retained endpoint coordinates, never a rounded gauge shift
+        // of a previously accumulated universal moment.
+        const auto a=physical(first.local),b=physical(last.local);
+        const long double fraction=M::approximate(difference(last.local[chosen_],first.local[chosen_]));
+        const long double capacity=M::approximate(width_[0])*M::approximate(width_[1])
+            *(axisymmetric_?6.283185307179586476925286766559L*M::approximate(sum(origin_[0],width_[0])):1.L);
+        for(std::size_t t=0;t<channels.size();++t)if(active[t]) {
+            // Complete global graph recovery has the original whole-graph
+            // endpoint primitive and error gate, after all shared subarcs.
+            if(channels[t]->regions_.empty())continue;
+            const auto gauge=channels[t]->greenOrigin_;
+            const auto primitive=[&](const Point& p) {
+                const auto shiftedY=difference(p[1],M::constant(gauge.y));
+                const auto shiftedX=axisymmetric_?product(difference(p[0],M::constant(gauge.x)),
+                    sum(p[0],M::constant(gauge.x))):difference(p[0],M::constant(gauge.x));
+                return product(shiftedX,shiftedY);
+            };
+            const long double endpoint=sign*(axisymmetric_?3.1415926535897932384626433832795L:1.L)
+                *M::approximate(difference(primitive(b),primitive(a)));
+            auto& out=whole[t];
+            if(chosen_==0)out.radialMoment=out.axialMoment-endpoint;
+            else out.axialMoment=out.radialMoment-endpoint;
+            require(std::isfinite(out.axialMoment) && std::isfinite(out.radialMoment)
+                && out.momentErrorEstimate<=2e-12L*capacity*fraction
+                    +2e-10L*std::min(std::abs(out.axialMoment),std::abs(out.radialMoment)),
+                "recovered batch region Green moment exceeds controlled quadrature accuracy");
+        }
+        return whole;
     }
     Arc integrateArc(const Cut& firstCut,const Cut& lastCut) const
     {
@@ -1768,8 +2683,11 @@ using Integrator = CellIntegrator<UniformCurveCell>;
 using QuarticIntegrator = CellIntegrator<QuarticCurveCell>;
 using NativeIntegrator = CellIntegrator<NativeCurveCell>;
 using NativeQuarticIntegrator = CellIntegrator<NativeQuarticCurveCell>;
-template<class Scalar> using NativeIntegratorFor=CellIntegrator<BasicNativeCurveCell<Scalar,
-    std::conditional_t<Scalar::dofCount==25,QuarticDofLayout,CubicDofLayout>>>;
+// C2 sources select their actual graph piece and complete source pullback.
+// The integration embedding remains the original native-cell chart for all
+// adapters; ordinary native cubic/Q4 instantiations keep their old layout.
+template<class Scalar> using NativeIntegratorFor=CellIntegrator<
+    typename NativeCurveCellSelection<Scalar>::Type>;
 }
 }
 }

@@ -34,10 +34,10 @@ BackgroundMesh::BackgroundMesh
     vEdgeLabelCapacity_ = vEdgeIndexNum_;
     cellLabelCapacity_ = cellIndexNum_;
 
-    verts_ = new Vert[vertIndexNum_];
-    hEdges_ = new Edge[hEdgeIndexNum_];
-    vEdges_ = new Edge[vEdgeIndexNum_];
-    cells_ = new Cell[cellIndexNum_];
+    verts_.resetDense(vertIndexNum_);
+    hEdges_.resetDense(hEdgeIndexNum_);
+    vEdges_.resetDense(vEdgeIndexNum_);
+    cells_.resetDense(cellIndexNum_);
 
     vertIndexToLabel = new int[vertIndexNum_];
     hEdgeIndexToLabel = new int[hEdgeIndexNum_];
@@ -59,7 +59,7 @@ BackgroundMesh::BackgroundMesh(const DictionaryMesh& dictMesh) :
         (dictMesh.maxCoord.y - dictMesh.minCoord.y) / static_cast<double>(dictMesh.Ny)
     )
 {
-    levelSetCount_ = std::max(1, dictMesh.levelSetCount);
+    levelSetCount_ = dictMesh.levelSetCount == 0 ? 0 : std::max(1, dictMesh.levelSetCount);
     vertIndexNum_ = (Nx + 1) * (Ny + 1);
     hEdgeIndexNum_ = Nx * (Ny + 1);
     vEdgeIndexNum_ = Ny * (Nx + 1);
@@ -69,10 +69,10 @@ BackgroundMesh::BackgroundMesh(const DictionaryMesh& dictMesh) :
     vEdgeLabelCapacity_ = vEdgeIndexNum_;
     cellLabelCapacity_ = cellIndexNum_;
 
-    verts_ = new Vert[vertIndexNum_];
-    hEdges_ = new Edge[hEdgeIndexNum_];
-    vEdges_ = new Edge[vEdgeIndexNum_];
-    cells_ = new Cell[cellIndexNum_];
+    verts_.resetDense(vertIndexNum_);
+    hEdges_.resetDense(hEdgeIndexNum_);
+    vEdges_.resetDense(vEdgeIndexNum_);
+    cells_.resetDense(cellIndexNum_);
 
     vertIndexToLabel = new int[vertIndexNum_];
     hEdgeIndexToLabel = new int[hEdgeIndexNum_];
@@ -91,10 +91,6 @@ BackgroundMesh::BackgroundMesh(const BackgroundMesh& source, CopyMetadataTag)
 
 BackgroundMesh::~BackgroundMesh() 
 {
-    delete[] verts_;
-    delete[] hEdges_;
-    delete[] vEdges_;
-    delete[] cells_;
 
     delete[] vertIndexToLabel;
     delete[] hEdgeIndexToLabel;
@@ -104,22 +100,14 @@ BackgroundMesh::~BackgroundMesh()
 
 void BackgroundMesh::buildMesh()
 {
-    cout << "Building background mesh..." << endl;
-    cout << "***********************************" << endl;
-    cout << "Domain bounds: " << minCoord << " ----> " << maxCoord << endl;
-
     // 生成顶点
     createVertices();
-    cout << "Vertex count: " << vertIndexNum_ << endl;
 
     // 生成边
     createEdges();
-    cout << "Horizontal edge count: " << hEdgeIndexNum_ << endl;
-    cout << "Vertical edge count: " << vEdgeIndexNum_ << endl;
 
     // 生成单元
     createCells();
-    cout << "Cell count: " << cellIndexNum_ << endl;
 
     // 查找相邻单元
     findNeighbourCells();
@@ -131,13 +119,11 @@ void BackgroundMesh::buildMesh()
     statistics(hEdges_, hEdgeIndexNum_);
     statistics(vEdges_, vEdgeIndexNum_);
     statistics(cells_, cellIndexNum_);
-
-    cout << "********* Background mesh done! *********" << endl;
 }
 
 void BackgroundMesh::ensureLevelSetStorage()
 {
-    const std::size_t n = static_cast<std::size_t>(std::max(1, levelSetCount_));
+    const std::size_t n = static_cast<std::size_t>(levelSetCount_ == 0 ? 0 : std::max(1, levelSetCount_));
     for (int i = 0; i < vertIndexNum_; ++i)
         verts_[i].ensureLevelSetSize(n);
     for (int i = 0; i < hEdgeIndexNum_; ++i)
@@ -150,7 +136,7 @@ void BackgroundMesh::ensureLevelSetStorage()
 
 void BackgroundMesh::createVertices()
 {
-    const Quantum::Mesh::DyadicGridCoordinates coordinates(minCoord,maxCoord,Nx,Ny);
+    const LAMP::Mesh::DyadicGridCoordinates coordinates(minCoord,maxCoord,Nx,Ny);
     int count = 0;
     for (int j = 0; j < Ny + 1; j++)
     {
@@ -177,7 +163,7 @@ void BackgroundMesh::createVertices()
 
 void BackgroundMesh::createEdges()
 {
-    const Quantum::Mesh::DyadicGridCoordinates coordinates(minCoord,maxCoord,Nx,Ny);
+    const LAMP::Mesh::DyadicGridCoordinates coordinates(minCoord,maxCoord,Nx,Ny);
     int hCount = 0;
     // 水平边
     for (int j = 0; j < Ny + 1; j++)
@@ -249,7 +235,7 @@ void BackgroundMesh::createEdges()
 
 void BackgroundMesh::createCells()
 {
-    const Quantum::Mesh::DyadicGridCoordinates coordinates(minCoord,maxCoord,Nx,Ny);
+    const LAMP::Mesh::DyadicGridCoordinates coordinates(minCoord,maxCoord,Nx,Ny);
     int count = 0;
     for (int j = 0; j < Ny; j++)
     {
@@ -510,12 +496,12 @@ void BackgroundMesh::defineTypes()
 }
 
 template<typename T>
-void BackgroundMesh::statistics(T*& t, int num)
+void BackgroundMesh::statistics(LAMP::Mesh::Detail::EntityPool<T>& t, int num)
 {
     int count = 0;
     for (int i = 0; i < num; i++)
     {
-        if (t[i].label() != -1)
+        if (t.peek(i).label() != -1)
         {
             t[i].setIndex(count);
             count++;
@@ -525,21 +511,27 @@ void BackgroundMesh::statistics(T*& t, int num)
 
 int BackgroundMesh::findCellLabel(const Vector2D& coord) const
 {
+    return findCellLabel(coord, MINVAL);
+}
+
+int BackgroundMesh::findCellLabel(const Vector2D& coord, const double boundaryTolerance) const
+{
     // Safety: reject non-finite coordinates early to avoid undefined behavior
     // in comparisons/casts and to prevent out-of-range indexing.
-    if (!std::isfinite(coord.x) || !std::isfinite(coord.y))
+    if (!std::isfinite(coord.x) || !std::isfinite(coord.y) ||
+        !std::isfinite(boundaryTolerance) || boundaryTolerance < 0)
     {
         return -1;
     }
 
-    if (coord.x < minCoord.x - MINVAL || coord.x > maxCoord.x + MINVAL ||
-        coord.y < minCoord.y - MINVAL || coord.y > maxCoord.y + MINVAL)
+    if (coord.x < minCoord.x - boundaryTolerance || coord.x > maxCoord.x + boundaryTolerance ||
+        coord.y < minCoord.y - boundaryTolerance || coord.y > maxCoord.y + boundaryTolerance)
     {
         return -1;
     }
 
-    int i = coord.x < maxCoord.x - MINVAL? static_cast<int>((coord.x - minCoord.x) / cellSize.x) : Nx - 1;
-    int j = coord.y < maxCoord.y - MINVAL? static_cast<int>((coord.y - minCoord.y) / cellSize.y) : Ny - 1;
+    int i = coord.x < maxCoord.x - boundaryTolerance? static_cast<int>((coord.x - minCoord.x) / cellSize.x) : Nx - 1;
+    int j = coord.y < maxCoord.y - boundaryTolerance? static_cast<int>((coord.y - minCoord.y) / cellSize.y) : Ny - 1;
 
     // Clamp to valid background range (defensive against roundoff).
     if (i < 0) i = 0;
@@ -864,7 +856,8 @@ void BackgroundMesh::readCache()
 
     int levelSetCount = 1;
     MeshCacheIO::readRaw(cache, levelSetCount);
-    setLevelSetCount(levelSetCount);
+    if (levelSetCount == 0) levelSetCount_ = 0;
+    else setLevelSetCount(levelSetCount);
 
     Vector2D minCoordCache;
     Vector2D maxCoordCache;

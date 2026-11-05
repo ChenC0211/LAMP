@@ -19,8 +19,8 @@
 
 namespace
 {
-using namespace Quantum::Interface;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using namespace LAMP::Interface;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Snapshot=LevelSetHermiteGeometry::Snapshot;
 using Jet=Patch::NodalDof;
 using Key=std::array<int,2>;

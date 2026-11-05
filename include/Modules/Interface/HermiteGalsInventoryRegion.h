@@ -4,7 +4,7 @@
 #include <memory>
 #include <vector>
 
-namespace Quantum::Interface {
+namespace LAMP::Interface {
 struct HermiteGalsInventoryRegionConfig {
     double relativeGeometryInventoryTolerance=1e-10; // |V_geometry-M| / native capacity; NOT a conservation tolerance
 };

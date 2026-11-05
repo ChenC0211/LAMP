@@ -2,7 +2,7 @@
 #include "Core/Geometry/PlanarCellCut.h"
 #include <vector>
 
-namespace Quantum::Geometry::ClosedCurveVolumeFit
+namespace LAMP::Geometry::ClosedCurveVolumeFit
 {
 using Point=PlanarCellCut::Point;
 using Rectangle=PlanarCellCut::Rectangle;

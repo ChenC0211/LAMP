@@ -9,7 +9,7 @@ CartesianLeafLevelIndex::CartesianLeafLevelIndex(const QuadtreeMesh& mesh)
 {
     validateCartesianLeafMesh(mesh);
     for(int c=0;c<mesh.cellIndexNum();++c) {
-        const auto a=Quantum::Mesh::cellAddress(mesh,mesh.cells(mesh.cellIndexToLabel[c]));
+        const auto a=LAMP::Mesh::cellAddress(mesh,mesh.cells(mesh.cellIndexToLabel[c]));
         const auto size=extent(a.level);
         if(a.i>=static_cast<unsigned>(size[0]) || a.j>=static_cast<unsigned>(size[1]))
             throw std::invalid_argument("leaf address lies outside background lattice");

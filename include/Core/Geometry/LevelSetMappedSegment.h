@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <array>
+#include <optional>
 #include <memory>
 #include <vector>
 #include "Core/Base/Vector2D.h"
@@ -32,6 +34,31 @@ class LevelSetMappedSegment
 {
 public:
     class NativeQuarticTrace;
+    class CardinalQuarticTrace;
+    class PreparedCardinalQuarticRow;
+    // Owned actual data for ONE complete native axis-aligned row. These are
+    // cardinal interpolation data, not a complete 2D scalar or normal Taylor
+    // certificate. All aliases must preserve their immutability.
+    struct QuarticCardinalData
+    {
+        Vector2D begin,end;
+        int normalAxis=-1,nativeCellIndex=-1;
+        std::array<double,2> values{},tangentDerivatives{};
+        double midpointValue=0;
+    };
+    // Tangent derivatives are positive physical-coordinate partials, even
+    // when begin/end are reversed. inputBegin/inputEnd select a true subrow;
+    // the complete row is restricted using exact retained ratios. Exact zero
+    // returns no trace because these data cannot provide normal Taylor sides.
+    static std::optional<CardinalQuarticTrace> cardinalQuarticTrace(
+        std::shared_ptr<const QuarticCardinalData> source,Vector2D inputBegin,Vector2D inputEnd);
+    // Bind the same immutable five-point row. Exact whole-row coefficients
+    // are prepared once, on its first actual subrow query; each query keeps
+    // its own original anchors, roots, ranges and refinement inventory.
+    static PreparedCardinalQuarticRow prepareCardinalQuarticRow(
+        std::shared_ptr<const QuarticCardinalData> source);
+    static std::optional<CardinalQuarticTrace> cardinalQuarticTrace(
+        const PreparedCardinalQuarticRow& source,Vector2D inputBegin,Vector2D inputEnd);
     // Explicit geometry-only port. The normal is the POSITIVE coordinate
     // axis, independent of input traversal. Native Q4 and an axis-aligned
     // segment perpendicular to normalAxis are required; no phase convention
@@ -96,21 +123,21 @@ public:
     struct CubicValueVariation
     {
         double value=0;
-        std::vector<Quantum::Geometry::ActiveHermiteNodalSensitivity> independent;
+        std::vector<LAMP::Geometry::ActiveHermiteNodalSensitivity> independent;
     };
     CubicValueVariation nativeCubicValueVariation(bool fromEnd,long double offset,
-        Quantum::Geometry::CornerSectorVariation sectors =
-            Quantum::Geometry::CornerSectorVariation::RequireAbsent) const;
+        LAMP::Geometry::CornerSectorVariation sectors =
+            LAMP::Geometry::CornerSectorVariation::RequireAbsent) const;
     struct QuarticValueVariation
     {
         double value=0;
-        std::vector<Quantum::Geometry::ActiveQuarticHermiteSensitivity> independent;
+        std::vector<LAMP::Geometry::ActiveQuarticHermiteSensitivity> independent;
     };
     // Arbitrary input-chart sample, not a root or a reconstructed global point.
     // Used for a space-time crossing coincident with a whole native face.
     QuarticValueVariation nativeQuarticValueVariation(bool fromEnd,long double offset,
-        Quantum::Geometry::CornerSectorVariation sectors =
-            Quantum::Geometry::CornerSectorVariation::RequireAbsent) const;
+        LAMP::Geometry::CornerSectorVariation sectors =
+            LAMP::Geometry::CornerSectorVariation::RequireAbsent) const;
 
     // Refine only roots()[rootIndex] inside its certified enclosure. Returns
     // a new immutable query; the source and input segment do not change.
@@ -131,7 +158,7 @@ public:
         // exact input endpoint this returns the symmetric generalized slope
         // (one half). It is not a classical derivative of the clipped range;
         // adjacent halves recover the full interior-root contribution.
-        std::vector<Quantum::Geometry::ActiveHermiteNodalSensitivity> independent;
+        std::vector<LAMP::Geometry::ActiveHermiteNodalSensitivity> independent;
     };
     // Actual native leaves only. Uses the retained root ratios, shared local
     // Hermite basis and hanging constraints. Interior simple transverse roots
@@ -139,8 +166,8 @@ public:
     // sector-DOF variations reject unless declared jets are explicitly held
     // fixed. No velocity or physical measure is added.
     std::vector<NegativePhaseVariation> nativeNegativePhaseVariation(
-        Quantum::Geometry::CornerSectorVariation sectors =
-            Quantum::Geometry::CornerSectorVariation::RequireAbsent) const;
+        LAMP::Geometry::CornerSectorVariation sectors =
+            LAMP::Geometry::CornerSectorVariation::RequireAbsent) const;
 
     struct QuarticNegativePhaseVariation
     {
@@ -150,11 +177,11 @@ public:
         bool fromEnd = false;
         long double offset = 0.0L;
         bool endpoint = false;
-        std::vector<Quantum::Geometry::ActiveQuarticHermiteSensitivity> independent;
+        std::vector<LAMP::Geometry::ActiveQuarticHermiteSensitivity> independent;
     };
     std::vector<QuarticNegativePhaseVariation> nativeQuarticNegativePhaseVariation(
-        Quantum::Geometry::CornerSectorVariation sectors =
-            Quantum::Geometry::CornerSectorVariation::RequireAbsent) const;
+        LAMP::Geometry::CornerSectorVariation sectors =
+            LAMP::Geometry::CornerSectorVariation::RequireAbsent) const;
 
 private:
     friend class LevelSetMappedInterface;
@@ -222,6 +249,58 @@ private:
     friend class LevelSetMappedSegment;
     struct Impl;
     explicit NativeQuarticTrace(std::unique_ptr<const Impl> impl);
+    std::unique_ptr<const Impl> impl_;
+    const Impl& checked() const;
+};
+
+// Immutable owner of one actual complete cardinal row. Copies share only
+// the exact coefficient preparation, not any subrow's root/event inventory.
+class LevelSetMappedSegment::PreparedCardinalQuarticRow
+{
+public:
+    PreparedCardinalQuarticRow(const PreparedCardinalQuarticRow&)=default;
+    PreparedCardinalQuarticRow& operator=(const PreparedCardinalQuarticRow&)=default;
+    PreparedCardinalQuarticRow(PreparedCardinalQuarticRow&&) noexcept=default;
+    PreparedCardinalQuarticRow& operator=(PreparedCardinalQuarticRow&&) noexcept=default;
+    ~PreparedCardinalQuarticRow()=default;
+private:
+    friend class LevelSetMappedSegment;
+    struct Data;
+    explicit PreparedCardinalQuarticRow(std::shared_ptr<const Data>);
+    std::shared_ptr<const Data> data_;
+    const Data& checked() const;
+};
+
+// An independently owned one-dimensional Q4 cardinal trace. Its phase/root
+// inventory belongs to the retained five data above; no Snapshot authority,
+// 2D variation, or coincident-side certificate is claimed.
+class LevelSetMappedSegment::CardinalQuarticTrace
+{
+public:
+    using Event=NativeQuarticTrace::Event;
+    using CoincidentRange=NativeQuarticTrace::CoincidentRange;
+    ~CardinalQuarticTrace();
+    CardinalQuarticTrace(CardinalQuarticTrace&&) noexcept;
+    CardinalQuarticTrace& operator=(CardinalQuarticTrace&&) noexcept;
+    CardinalQuarticTrace(const CardinalQuarticTrace&)=delete;
+    CardinalQuarticTrace& operator=(const CardinalQuarticTrace&)=delete;
+    bool usesSource(const QuarticCardinalData&) const;
+    Vector2D begin() const;
+    Vector2D end() const;
+    int normalAxis() const;
+    std::size_t gridPieceCount() const;
+    const std::vector<Range>& ordinaryRanges() const;
+    const std::vector<CoincidentRange>& coincidentRanges() const;
+    const std::vector<Event>& events() const;
+    bool rootAtInputEndpoint(std::size_t eventIndex,bool atEnd) const;
+    CardinalQuarticTrace refined(std::size_t eventIndex) const;
+    const CardinalQuarticTrace& ordinary() const;
+    const std::vector<Range>& ranges() const;
+    const std::vector<Root>& roots() const;
+private:
+    friend class LevelSetMappedSegment;
+    struct Impl;
+    explicit CardinalQuarticTrace(std::unique_ptr<const Impl>);
     std::unique_ptr<const Impl> impl_;
     const Impl& checked() const;
 };

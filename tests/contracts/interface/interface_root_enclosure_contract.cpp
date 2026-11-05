@@ -2,10 +2,14 @@
 #include "Core/Geometry/LevelSetInterfacePanels.h"
 #include "Core/Geometry/LevelSetMappedSegment.h"
 #include "Core/Geometry/LevelSetHermiteGeometry.h"
+#include "Core/Geometry/Detail/ExactExpansion.h"
+#include "Core/Geometry/Detail/LevelSetHermiteQuarticCell.h"
 #include "Core/Mesh/QuadtreeMesh.h"
 #include <algorithm>
 #include <cmath>
 #include <cfenv>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -20,7 +24,7 @@
 namespace {
 using I=LevelSetMappedInterface;
 using Snapshot=LevelSetHermiteGeometry::Snapshot;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 constexpr long double pi=3.1415926535897932384626433832795L;
 int cases=0,rejections=0;
 void check(bool ok,const std::string& why){if(!ok)throw std::runtime_error(why);}
@@ -31,6 +35,51 @@ void near(long double a,long double b,long double scale,const std::string& why)
 template<class F> void rejects(F f,const std::string& why){try{f();}catch(const std::exception& e){
     check(std::string(e.what()).find(why)!=std::string::npos,std::string("unexpected rejection: ")+e.what());++rejections;return;}
     throw std::runtime_error("missing rejection: "+why);}
+// Binary64 exponent scaling must preserve EVERY expansion component bit,
+// including the normal/subnormal boundaries and low representable tails.
+void exactPowerOfTwoScalingContract()
+{
+    namespace E=LAMP::Geometry::Detail::ExactExpansion;
+    const auto bits=[](double value){std::uint64_t result=0;std::memcpy(&result,&value,sizeof result);return result;};
+    int scales=0;
+    const auto compare=[&](const E::Expansion& value,int shift){
+        const auto source=value.components();const auto scaled=E::scalePow2(value,shift);
+        const auto actual=scaled.components();
+        check(actual.size()==source.size(),"power-of-two scale changed exact component inventory");
+        auto out=actual.begin();
+        for(double component:source){
+            const double reference=std::scalbn(component,shift);
+            check(std::isfinite(reference) && reference!=0,"invalid bitwise scale reference");
+            check(bits(*out++)==bits(reference),"power-of-two scale differs bitwise from original scalbn");
+            check(bits(std::scalbn(reference,-shift))==bits(component),"power-of-two scale lost round-trip component bits");
+        }
+        ++scales;
+    };
+    const double minimum=std::numeric_limits<double>::min(),tiny=std::numeric_limits<double>::denorm_min();
+    const std::vector<std::pair<double,int>> probes{
+        {1.25,11},{0x1.23456789abcdep+17,-21},{std::numeric_limits<double>::max(),0},
+        {minimum,-1},{1.5*minimum,-1},{std::nextafter(minimum,0.),0},
+        {std::nextafter(minimum,0.),1},{tiny,52},{tiny,2097},{0x1p+1023,-2097}
+    };
+    for(const auto& probe:probes)for(double sign:{1.,-1.})compare(E::fromDouble(sign*probe.first),probe.second);
+    const auto tail=E::add(E::fromDouble(1.),E::fromDouble(0x1p-60));
+    check(tail.components().size()==2,"scaling fixture lost its independently representable tail");
+    for(int shift:{-1014,0,1000})compare(tail,shift);
+    // Expansion zero deliberately has no signed-zero distinction. Neither
+    // extreme shift may attempt to negate INT_MIN or manufacture a component.
+    for(double zero:{0.,-0.})for(int shift:{std::numeric_limits<int>::min(),std::numeric_limits<int>::max()})
+        check(E::scalePow2(E::fromDouble(zero),shift).components().empty(),"power-of-two scale changed exact zero");
+    const auto refused=[&](const E::Expansion& value,int shift){
+        rejects([&]{E::scalePow2(value,shift);},"unsupported arithmetic scale");
+    };
+    refused(E::fromDouble(std::numeric_limits<double>::max()),1); // overflow
+    refused(E::fromDouble(minimum),-53); // nonzero bit below denorm_min
+    refused(E::fromDouble(std::nextafter(minimum,1.)),-1); // nonzero rounded result still loses its low bit
+    refused(tail,-1015); // head remains normal, but the independent tail is unrepresentable
+    for(int shift:{std::numeric_limits<int>::min(),std::numeric_limits<int>::max()})
+        refused(E::fromDouble(1.),shift);
+    std::cout<<"EXACT_POW2_SCALE,SCALBN_BITWISE,"<<scales<<",NORMAL_SUBNORMAL,TAIL,EXTREME_GATES,PASS\n";
+}
 struct Fixture {
     std::unique_ptr<QuadtreeMesh> mesh;
     std::shared_ptr<const Snapshot> source;
@@ -86,8 +135,172 @@ struct Fixture {
         return sign*(radial?(xGraph?-2*pi*origin.x*area:pi*(-2*origin.x*area+square)):-area);
     }
 };
+void nativeQuarticQueryGuard(const Fixture& f)
+{
+    const auto& scalar=*f.source;const auto p=f.origin;
+    const auto chart=LAMP::Geometry::cellChartFromLocal(p-f.lo);
+    const auto pack=[](const Snapshot::ScalarJet2& j){return std::array<double,6>{j.value,j.dx,j.dy,j.dxx,j.dxy,j.dyy};};
+    const auto bits=[](double x){std::uint64_t value=0;std::memcpy(&value,&x,sizeof value);return value;};
+    const auto original=pack(scalar.scalarJetNative(p));
+    const auto same=[&](const Snapshot::ScalarJet2& j){const auto values=pack(j);
+        for(std::size_t k=0;k<values.size();++k)check(bits(values[k])==bits(original[k]),"native Q4 cold/warm component changed");};
+    same(scalar.scalarJetNative(p));same(scalar.scalarJetInNativeCell(0,p));
+    check(bits(scalar.value(p))==bits(original[0]),"native exact value differs from actual scalar jet");
+    // This unchanged public chart query supplies the original approximate
+    // derivative channels; its value is not the exact physical-value port.
+    const auto reference=pack(scalar.scalarJetAtNativeCellChart(0,chart));
+    for(std::size_t k=1;k<reference.size();++k)
+        check(bits(reference[k])==bits(original[k]),"native Q4 derivative differs from original chart query");
+    const auto query=[&](int port){
+        if(port==0)(void)scalar.scalarJetNative(p);
+        else if(port==1)(void)scalar.scalarJetInNativeCell(0,p);
+        else (void)scalar.value(p);
+    };
+    const auto refused=[](auto call,const char* reason){bool failed=false;
+        try{call();}catch(const std::exception& error){failed=std::string(error.what()).find(reason)!=std::string::npos;}
+        check(failed,std::string("actual native Q4 guard missing: ")+reason);};
+    struct RestoreRound {int saved=std::fegetround();~RestoreRound(){std::fesetround(saved);}} restore;
+    check(restore.saved==FE_TONEAREST,"native query guard fixture requires original nearest mode");
+    check(std::fesetround(FE_DOWNWARD)==0,"cannot exercise native Q4 warm FP guard");
+    // The unchanged chart entry uses the SAME geometry.cpp exact state,
+    // so this rejects a permit leaked by a successful physical query.
+    refused([&]{scalar.scalarJetAtNativeCellChart(0,chart);},"round-to-nearest");
+    for(int port=0;port<3;++port)refused([&]{query(port);},"round-to-nearest");
+    check(std::fesetround(FE_TONEAREST)==0,"cannot restore native Q4 nearest mode");
+    bool invalid=false;try{scalar.scalarJetInNativeCell(-1,p);}catch(const std::exception&){invalid=true;}
+    check(invalid,"native Q4 invalid-cell query did not fail inside prepared query");
+    check(std::fesetround(FE_DOWNWARD)==0,"cannot exercise native Q4 exceptional FP guard");
+    refused([&]{scalar.scalarJetAtNativeCellChart(0,chart);},"round-to-nearest");
+    check(std::fesetround(FE_TONEAREST)==0,"cannot restore native Q4 exceptional mode");
+#if defined(_M_X64) || (defined(__x86_64__) && defined(__SSE2__))
+    {
+        struct RestoreCsr {unsigned saved=_mm_getcsr();~RestoreCsr(){_mm_setcsr(saved);}} restoreCsr;
+        _mm_setcsr(restoreCsr.saved|(1u<<15)|(1u<<6));
+        for(int port=0;port<3;++port)refused([&]{query(port);},"gradual underflow");
+    }
+#endif
+    same(scalar.scalarJetNative(p));same(scalar.scalarJetInNativeCell(0,p));
+    check(bits(scalar.value(p))==bits(original[0]),"failed native Q4 queries changed exact value");
+    std::cout<<"NATIVE_Q4_QUERY_GUARD,3,COMPONENTS,CORE_WARM,CORE_EXCEPTION,FP,FTZ,PASS\n";
+}
+void numericalQuarticTransportPoint(const Fixture& f)
+{
+    namespace E=LAMP::Geometry::Detail::ExactExpansion;
+    using Q=LAMP::Geometry::Detail::LevelSetHermiteScalar::QuarticCell;
+    // This existing unit-width fixture has exactly representable dyadic Q2
+    // DOFs, including the tiny52 tail. The unchanged FULL restriction is an
+    // independent exact reference; it never uses the new enclosing nets.
+    const auto raw=f.source->nativeQuarticLocalDofs(0);Q::ExpandedControls data;
+    for(int k=0;k<25;++k)data[k]=E::fromDouble(raw[k]);
+    const std::array<Vector2D,3> points{{f.origin,{1.234567890123,2.789123456789},
+        {std::nextafter(f.hi.x,f.lo.x),2.9375}}};
+    int fallbacks=0;
+    for(const auto p:points) {
+        // Start with scalar-only cold preparation, then require the original
+        // full jet to prepare its derivative nets independently on this leaf.
+        const auto valueOnly=f.source->numericalScalarValueNative(p,1e-13);
+        const auto valueWarm=f.source->numericalScalarValueNative(p,1e-13);
+        check(valueOnly.boundsResolved&&valueOnly.absoluteErrorBound<=1e-13
+            &&valueOnly.absoluteErrorBound==valueWarm.absoluteErrorBound
+            &&valueOnly.exactValueFallback==valueWarm.exactValueFallback
+            &&std::memcmp(&valueOnly.value,&valueWarm.value,sizeof(double))==0,
+            "scalar-only Q4 cold/warm value certificate changed");
+        const auto numeric=f.source->numericalScalarJetNative(p,1e-13,1e-11);
+        check(std::memcmp(&valueOnly.value,&numeric.jet.value,sizeof(double))==0
+            &&valueOnly.absoluteErrorBound==numeric.absoluteErrorBounds[0]
+            &&valueOnly.exactValueFallback==numeric.exactValueFallback,
+            "scalar-only Q4 changed the original value expression/certificate");
+        const auto warm=f.source->numericalScalarJetNative(p,1e-13,1e-11);
+        check(numeric.boundsResolved && numeric.absoluteErrorBounds==warm.absoluteErrorBounds,
+            "numerical Q4 original-source bounds unresolved or changed warm");
+        const std::array<double,3> values{{numeric.jet.value,numeric.jet.dx,numeric.jet.dy}};
+        const auto chart=[](double p,double lower){const auto n=E::subtract(E::fromDouble(p),E::fromDouble(lower));
+            return LAMP::Geometry::Detail::LevelSetHermiteScalar::RationalSegmentCoordinate{n,n,E::fromDouble(1)};};
+        for(int k=0;k<3;++k) {
+            const auto exact=Q::homogeneousRestriction(data,E::fromDouble(1),chart(p.x,f.lo.x),chart(p.y,f.lo.y),k==1?1:0,k==2?1:0);
+            const auto residual=E::enclosure(E::subtract(exact.numerator[0],
+                E::multiply(E::fromDouble(values[k]),exact.denominator)));
+            const auto denominator=E::enclosure(exact.denominator);
+            check(denominator.lo>0,"invalid independent point denominator");
+            const long double error=std::max(std::abs(static_cast<long double>(residual.lo)),
+                std::abs(static_cast<long double>(residual.hi)))/denominator.lo;
+            check(error<=numeric.absoluteErrorBounds[k],"numerical Q4 bound missed original exact channel");
+            if(k==0)check(error<=valueOnly.absoluteErrorBound,
+                "scalar-only Q4 bound missed independent full exact restriction");
+            check(numeric.absoluteErrorBounds[k]<=(k?1e-11:1e-13),"numerical Q4 channel exceeded independent budget");
+        }
+        check(numeric.jet.value==warm.jet.value && numeric.jet.dx==warm.jet.dx && numeric.jet.dy==warm.jet.dy,
+            "numerical Q4 warm query changed first jet");
+        if(numeric.exactValueFallback)++fallbacks;
+    }
+    check(fallbacks>0,"tiny52 near-zero point did not use exact value fallback");
+    const auto tightValue=f.source->numericalScalarValueNative(points[1],1e-30);
+    check(tightValue.boundsResolved&&tightValue.exactValueFallback,
+        "over-budget scalar-only Q4 did not use original exact value restriction");
+    const auto tight=f.source->numericalScalarJetNative(points[1],1e-30,1e-30);
+    check(std::memcmp(&tightValue.value,&tight.jet.value,sizeof(double))==0
+        &&tightValue.absoluteErrorBound==tight.absoluteErrorBounds[0],
+        "scalar-only tight exact fallback changed original value");
+    check(tight.boundsResolved&&tight.exactValueFallback&&tight.exactGradientFallback,
+        "over-budget numerical Q4 channels did not use exact restrictions");
+    const auto refused=[](auto query,const char* text){bool failed=false;try{query();}
+        catch(const std::exception& e){failed=std::string(e.what()).find(text)!=std::string::npos;}
+        check(failed,std::string("numerical Q4 missing rejection: ")+text);};
+    refused([&]{f.source->numericalScalarJetNative(points[1],0,1e-11);},"point budget");
+    for(double budget:{0.,-1.,-std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()})
+        refused([&]{f.source->numericalScalarValueNative(points[1],budget);},"point budget");
+    const auto invalidPoint=[&](Vector2D point){bool failed=false;
+        try{f.source->numericalScalarValueNative(point,1e-13);}catch(const std::exception&){failed=true;}
+        check(failed,"scalar-only Q4 accepted an invalid physical point");};
+    invalidPoint({f.lo.x-1,f.lo.y});
+    invalidPoint({std::numeric_limits<double>::quiet_NaN(),points[1].y});
+    invalidPoint({points[1].x,std::numeric_limits<double>::infinity()});
+    struct RestoreRound {int saved=std::fegetround();~RestoreRound(){std::fesetround(saved);}} restore;
+    check(std::fesetround(FE_DOWNWARD)==0,"cannot set numerical Q4 FP guard fixture");
+    refused([&]{f.source->numericalScalarJetNative(points[1]);},"round-to-nearest");
+    refused([&]{f.source->numericalScalarValueNative(points[1]);},"round-to-nearest");
+    check(std::fesetround(FE_TONEAREST)==0,"cannot restore numerical Q4 nearest mode");
+#if defined(_M_X64) || (defined(__x86_64__) && defined(__SSE2__))
+    {struct RestoreCsr {unsigned saved=_mm_getcsr();~RestoreCsr(){_mm_setcsr(saved);}} restoreCsr;
+        _mm_setcsr(restoreCsr.saved|(1u<<15)|(1u<<6));
+        refused([&]{f.source->numericalScalarJetNative(points[1]);},"gradual underflow");
+        refused([&]{f.source->numericalScalarValueNative(points[1]);},"gradual underflow");}
+#endif
+    check(f.source->numericalScalarJetNative(points[1],1e-13,1e-11).boundsResolved,
+        "failed numerical Q4 query changed the source or FP scope");
+    const auto valueAfter=f.source->numericalScalarValueNative(points[1],1e-13);
+    const auto fullAfter=f.source->numericalScalarJetNative(points[1],1e-13,1e-11);
+    check(valueAfter.boundsResolved&&std::memcmp(&valueAfter.value,&fullAfter.jet.value,sizeof(double))==0
+        &&valueAfter.absoluteErrorBound==fullAfter.absoluteErrorBounds[0],
+        "failed scalar-only query changed source, original value or FP scope");
+    std::cout<<"NUMERICAL_Q4_TRANSPORT_POINT,3,FULL_EXACT_VALUE_GRADIENT_BOUNDS,TINY52,REFLECTED,FP,FTZ,PASS\n";
+    std::cout<<"NUMERICAL_Q4_TRANSPORT_VALUE,3,FULL_EXACT_VALUE_BOUND,COLD_VALUE_THEN_JET,TINY52,REFLECTED,TIGHT,INVALID,FP,FTZ,PASS\n";
+}
+void exactQuarticRepeat(const I::QuarticResult& a,const I::QuarticResult& b){
+    check(a.sourceRootIncidences==b.sourceRootIncidences && a.retainedCuts==b.retainedCuts
+        && a.arcs.size()==b.arcs.size(),"warmed integration changed root/cut/arc inventory");
+    for(std::size_t k=0;k<a.arcs.size();++k){const auto& x=a.arcs[k];const auto& y=b.arcs[k];
+        check(x.regionId==y.regionId && x.fromEnd==y.fromEnd && x.offset==y.offset && x.width==y.width
+            && x.axialMoment==y.axialMoment && x.radialMoment==y.radialMoment
+            && x.momentErrorEstimate==y.momentErrorEstimate && x.sensitivity==y.sensitivity
+            && x.minTransverseDerivative==y.minTransverseDerivative && x.maxScalarResidual==y.maxScalarResidual
+            && x.quadraturePoints==y.quadraturePoints && x.nativeCellIndex==y.nativeCellIndex
+            && x.requiresNativeDofConstraints==y.requiresNativeDofConstraints
+            && x.independentSensitivity.size()==y.independentSensitivity.size(),
+            "warmed integration changed an actual arc result");
+        for(std::size_t j=0;j<x.independentSensitivity.size();++j){const auto& p=x.independentSensitivity[j];const auto& q=y.independentSensitivity[j];
+            check(p.kind==q.kind && p.index==q.index && p.component==q.component && p.coefficient==q.coefficient,
+                "warmed integration changed independent source sensitivity");}
+    }
+}
 void verify(Fixture& f){
     const auto split=f.integrate(f.regions);const auto expected=f.capMoment();
+    const bool reuseWitness=f.xGraph && !f.radial && f.sign==1 && f.depth==std::ldexp(1.,-52);
+    std::vector<std::vector<LevelSetMappedSegment::Root>> retainedRoots;
+    if(reuseWitness){
+        for(const auto& cut:f.cuts)retainedRoots.push_back(cut.roots());
+        exactQuarticRepeat(split,f.integrate(f.regions));
+    }
     check(split.arcs.size()==3,"two crossings must retain three nonempty arcs");
     long double axial=0,radial=0,capWidth=0,capAxial=0,capRadial=0,capAllowance=0;int capArcs=0;
     for(const auto& arc:split.arcs){axial+=arc.axialMoment;radial+=arc.radialMoment;
@@ -109,7 +322,29 @@ void verify(Fixture& f){
     const auto unsplit=f.integrate(joined);long double wholeA=0,wholeR=0;
     for(const auto& a:unsplit.arcs){wholeA+=a.axialMoment;wholeR+=a.radialMoment;}
     near(axial,wholeA,std::max(std::abs(wholeA),1.L),"axial partition additivity");
-    near(radial,wholeR,std::max(std::abs(wholeR),1.L),"radial partition additivity");++cases;
+    near(radial,wholeR,std::max(std::abs(wholeR),1.L),"radial partition additivity");
+    if(reuseWitness){
+        // The same initial root certificates must not retain this changed owner context.
+        for(const auto& arc:unsplit.arcs)check(arc.regionId==0,"warmed integration retained the previous region owner");
+        exactQuarticRepeat(split,f.integrate(f.regions));
+        bool fpRejected=false;
+        {
+            struct RestoreRound {int saved=std::fegetround();~RestoreRound(){std::fesetround(saved);}} restore;
+            check(std::fesetround(FE_DOWNWARD)==0,"cannot exercise warmed integration FP guard");
+            try{f.integrate(f.regions);}catch(const std::exception& error){
+                fpRejected=std::string(error.what()).find("round-to-nearest")!=std::string::npos;}
+        }
+        check(fpRejected,"warmed integration ignored the actual FP environment");
+        exactQuarticRepeat(split,f.integrate(f.regions));
+        for(std::size_t k=0;k<f.cuts.size();++k){const auto& now=f.cuts[k].roots();const auto& before=retainedRoots[k];
+            check(f.cuts[k].usesSource(*f.source) && now.size()==before.size(),"warmed context changed retained input roots/source");
+            for(std::size_t j=0;j<now.size();++j){const auto& a=now[j];const auto& b=before[j];
+                check(a.cellI==b.cellI && a.cellJ==b.cellJ && a.chart==b.chart && a.parameter==b.parameter
+                    && a.lower==b.lower && a.upper==b.upper && a.pointOnly==b.pointOnly
+                    && a.nativeCellIndex==b.nativeCellIndex,"warmed context shared a refined input root");}
+        }
+    }
+    ++cases;
     std::cout<<"CAP,"<<f.xGraph<<','<<f.radial<<','<<f.sign<<','<<f.depth<<','<<expected<<','<<capWidth
         <<','<<capAxial<<','<<capRadial<<','<<std::max(std::abs(capAxial-expected),std::abs(capRadial-expected))<<','<<capAllowance<<'\n';
 }
@@ -387,14 +622,17 @@ void sideTopologyContract()
 }
 int main(int argc,char** argv){try{
     std::cout<<std::scientific<<std::setprecision(16);
+    if(argc==2 && std::string(argv[1])=="--numerical-q4"){
+        Fixture f(true,false,1,52);nativeQuarticQueryGuard(f);numericalQuarticTransportPoint(f);return 0;}
     if(argc==2 && std::string(argv[1])=="--side-topology"){sideTopologyContract();return 0;}
     if(argc==2 && std::string(argv[1])=="--reproducer"){
         Fixture f(true,false,1,52);const auto result=f.integrate(f.regions);
         for(const auto& arc:result.arcs)std::cout<<"REPRODUCER_ARC,"<<arc.regionId<<','<<arc.width<<','<<arc.axialMoment<<','<<arc.radialMoment<<'\n';
         return 0;}
+    exactPowerOfTwoScalingContract();
     for(int exponent:{24,42,48,52})for(bool radial:{false,true})for(bool x:{false,true})for(int sign:{-1,1}){
         Fixture f(x,radial,sign,exponent);verify(f);}
-    Fixture f(true,false,1,52);auto overlap=f.regions;auto duplicate=overlap[0];duplicate.regionId=2;overlap.push_back(duplicate);
+    Fixture f(true,false,1,52);nativeQuarticQueryGuard(f);numericalQuarticTransportPoint(f);auto overlap=f.regions;auto duplicate=overlap[0];duplicate.regionId=2;overlap.push_back(duplicate);
     rejects([&]{f.integrate(overlap);},"different overlapping region owners");
     auto missing=f.regions;missing.pop_back();rejects([&]{f.integrate(missing);},"no actual region owner");
     Fixture absent(true,false,1,52);

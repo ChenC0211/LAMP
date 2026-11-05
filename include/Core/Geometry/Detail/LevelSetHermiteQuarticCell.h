@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <initializer_list>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -14,7 +15,7 @@
 // another reconstruction. The caller must supply canonical shared-edge data.
 // No cubic Bernstein certificate may be used for this quartic representation.
 // Keep the same TU-local, strict floating-point implementation boundary.
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -101,12 +102,18 @@ class QuarticCell
 
     // Floating approximations for metric evaluation, NOT phase-sign authority.
     // Upper-end chart offsets are evaluated by basis reflection, without 1-a.
+    double approximateValueAtChart(CellChartPoint point) const
+    {
+        validateQuery(point);
+        const auto bx=approximateBasis(point.x,0),by=approximateBasis(point.y,0);
+        return approximateValue(bx,by);
+    }
+
     Sample approximateJetAtChart(CellChartPoint point) const
     {
         validateQuery(point);
         const auto bx = approximateBasis(point.x), by = approximateBasis(point.y);
-        return {Detail::checked(static_cast<long double>(offset_) + localDerivative(bx, by, 0, 0),
-                                "non-finite quartic value"),
+        return {approximateValue(bx,by),
                 physicalDerivative(bx, by, 1, 0), physicalDerivative(bx, by, 0, 1),
                 physicalDerivative(bx, by, 2, 0), physicalDerivative(bx, by, 1, 1),
                 physicalDerivative(bx, by, 0, 2)};
@@ -149,6 +156,28 @@ class QuarticCell
         validateCoordinate(y);
         const auto bx = restrictedBasisCleared(x, dx), by = restrictedBasisCleared(y, dy);
         ExpandedPolynomial result{};
+        // A transverse line with constant x has only bx[i][0]. Contract that
+        // axis first: sum_j by[j](t) * sum_i data[j,i]*bx[i][0]. This is the
+        // SAME exact tensor polynomial and denominator, with no fitted powers
+        // or skipped root. Dense work is 25+25 rather than 125+25 products.
+        // Component equality is a sufficient exact-constant test, never a
+        // rounded coordinate key. General and constant-y paths retain their
+        // original operation order below.
+        if(x.numeratorBegin.components()==x.numeratorEnd.components()
+            && y.numeratorBegin.components()!=y.numeratorEnd.components()) {
+            for(std::size_t j=0;j<5;++j) {
+                Exact::Expansion alongX;
+                for(std::size_t i=0;i<5;++i) {
+                    const auto& datum=data[5*j+i];
+                    if(Exact::sign(datum)!=0 && Exact::sign(bx[i][0])!=0)
+                        Exact::accumulate(alongX,Exact::multiply(datum,bx[i][0]));
+                }
+                if(Exact::sign(alongX)!=0)
+                    for(std::size_t py=0;py<5;++py)if(Exact::sign(by[j][py])!=0)
+                        Exact::accumulate(result[py],Exact::multiply(alongX,by[j][py]));
+            }
+            return result;
+        }
         // Contract the y tensor index BEFORE multiplying by the x basis.
         // Distributivity is exact in expansion arithmetic: no rounded power
         // coefficients, fitting, tolerance or dropped term is introduced.
@@ -159,11 +188,11 @@ class QuarticCell
             for(std::size_t j=0;j<5;++j) {
                 const auto& datum=data[5*j+i];if(Exact::sign(datum)==0)continue;
                 for(std::size_t py=0;py<5;++py)if(Exact::sign(by[j][py])!=0)
-                    alongY[py]=Exact::add(alongY[py],Exact::multiply(datum,by[j][py]));
+                    Exact::accumulate(alongY[py],Exact::multiply(datum,by[j][py]));
             }
             for(std::size_t py=0;py<5;++py)if(Exact::sign(alongY[py])!=0)
                 for(std::size_t px=0;px<5;++px)if(Exact::sign(bx[i][px])!=0)
-                    result[px+py]=Exact::add(result[px+py],Exact::multiply(alongY[py],bx[i][px]));
+                    Exact::accumulate(result[px+py],Exact::multiply(alongY[py],bx[i][px]));
         }
         return result;
     }
@@ -184,6 +213,17 @@ class QuarticCell
     {
         namespace E=ExactExpansion;
         E::centerHomogeneous(data,denominator);
+        return homogeneousRestrictionCentered(data,denominator,std::move(x),std::move(y),dx,dy);
+    }
+    // The supplied immutable data are the EXACT result of the original first
+    // centerHomogeneous call. A leaf may retain that result once; coordinates,
+    // output scaling and all restriction/FP checks still run for every query.
+    static HomogeneousRestriction homogeneousRestrictionCentered(const ExpandedControls& data,
+        const ExactExpansion::Expansion& denominator,RationalSegmentCoordinate x,
+        RationalSegmentCoordinate y,unsigned dx=0,unsigned dy=0)
+    {
+        namespace E=ExactExpansion;
+        E::validateEnvironment();
         for(auto* coordinate:{&x,&y}) {
             E::ExponentRange chartRange;
             chartRange.include(coordinate->numeratorBegin);
@@ -563,7 +603,7 @@ class QuarticCell
                             "quartic restriction endpoint outside cell");
     }
 
-    static ApproximateBasis approximateBasis(CellChartCoordinate point)
+    static ApproximateBasis approximateBasis(CellChartCoordinate point,unsigned maximumDerivative=3)
     {
         // Qi=Hi-Hi(1/2)*B for the four old cubic Hermite functions; Q4=B,
         // B=16*u^2*(1-u)^2. Integer coefficients avoid a second fitting step.
@@ -573,7 +613,7 @@ class QuarticCell
         constexpr std::array<std::size_t, 5> reflected{{1, 0, 3, 2, 4}};
         constexpr std::array<int, 5> parity{{1, 1, -1, -1, 1}};
         ApproximateBasis result{};
-        for (unsigned derivative = 0; derivative <= 3; ++derivative)
+        for (unsigned derivative = 0; derivative <= maximumDerivative; ++derivative)
             for (std::size_t row = 0; row < 5; ++row)
             {
                 const auto source = point.fromUpper ? reflected[row] : row;
@@ -590,6 +630,12 @@ class QuarticCell
                                               : value;
             }
         return result;
+    }
+
+    double approximateValue(const ApproximateBasis& bx,const ApproximateBasis& by) const
+    {
+        return Detail::checked(static_cast<long double>(offset_) + localDerivative(bx,by,0,0),
+            "non-finite quartic value");
     }
 
     long double localDerivative(const ApproximateBasis &bx, const ApproximateBasis &by,
@@ -712,6 +758,469 @@ class QuarticCell
         return result;
     }
 };
+
+// Four quartic pieces of ONE scalar on a native cell. The 49 physical datum
+// are supplied by the immutable shared completion, not new transported DOFs.
+// Original Q4 inputs/queries above remain a separate representation.
+class C2MacroQuarticCell
+{
+    using Exact = ExactExpansion::Expansion;
+  public:
+    using Dofs = std::array<double,49>;
+    using Interval = ExactExpansion::Interval;
+
+    C2MacroQuarticCell(const Dofs& physical,Vector2D lower,Vector2D upper)
+        : physical_(physical),lower_(lower),upper_(upper)
+    {
+        ExactExpansion::validateEnvironment();
+        for(double coordinate:{lower.x,lower.y,upper.x,upper.y})
+            Detail::require(std::isfinite(coordinate),"C2 macro requires finite native bounds");
+        Detail::require(lower.x<upper.x && lower.y<upper.y,
+            "C2 macro requires positive actual native dimensions");
+        for(double value:physical_)
+            Detail::require(std::isfinite(value),"nonfinite C2 macro physical datum");
+        width_[0]=difference(upper.x,lower.x);
+        width_[1]=difference(upper.y,lower.y);
+        constexpr std::array<int,7> orders{{0,0,0,1,1,2,2}};
+        std::array<std::array<Exact,3>,2> scale;
+        for(int axis=0;axis<2;++axis) {
+            scale[axis][0]=number(1);
+            scale[axis][1]=width_[axis];
+            scale[axis][2]=ExactExpansion::multiply(width_[axis],width_[axis]);
+        }
+        std::array<Exact,49> native;
+        for(int y=0;y<7;++y)for(int x=0;x<7;++x)
+            native[7*y+x]=ExactExpansion::multiply(
+                ExactExpansion::multiply(number(physical_[7*y+x]),scale[0][orders[x]]),
+                scale[1][orders[y]]);
+        for(int py=0;py<2;++py)for(int px=0;px<2;++px) {
+            auto& piece=pieces_[2*py+px];
+            std::array<Exact,35> alongX;
+            for(int y=0;y<7;++y)for(int x=0;x<5;++x)
+                for(int k=0;k<7;++k)if(pieceDatumNumerator[px][x][k]!=0)
+                    ExactExpansion::accumulate(alongX[5*y+x],
+                        ExactExpansion::multiply(native[7*y+k],
+                            number(pieceDatumNumerator[px][x][k])));
+            for(int y=0;y<5;++y)for(int x=0;x<5;++x)
+                for(int k=0;k<7;++k)if(pieceDatumNumerator[py][y][k]!=0)
+                    ExactExpansion::accumulate(piece.local[5*y+x],
+                        ExactExpansion::multiply(alongX[5*k+x],
+                            number(pieceDatumNumerator[py][y][k])));
+            // Fixed rational seven-basis transform, denominator 768 per axis.
+            // Exact native widths normalize all derivative orders. No rounded
+            // piece25 cache is subsequently used as scalar authority.
+            piece.denominator=number(768.0*768.0);
+            ExactExpansion::centerHomogeneous(piece.local,piece.denominator);
+            auto controls=QuarticCell::bernsteinControlsCleared(piece.local);
+            auto denominator=ExactExpansion::multiply(piece.denominator,number(144));
+            ExactExpansion::centerHomogeneous(controls,denominator);
+            Detail::require(denominator.components().size()==1,
+                "C2 macro Bernstein denominator is not exactly represented");
+            const double divisor=ExactExpansion::estimate(denominator);
+            for(std::size_t k=0;k<controls.size();++k)
+                piece.bounds[k]=Detail::Outward::dividePositive(
+                    ExactExpansion::enclosure(controls[k]),divisor);
+            // Remove the true native corner value before estimating the
+            // variation scale, so a large scalar offset cannot cancel it.
+            for(const auto& control:controls) {
+                const auto relative=ExactExpansion::subtract(control,
+                    ExactExpansion::multiply(number(physical_[0]),denominator));
+                const long double value=ratio(relative,denominator);
+                controlLower_=std::min(controlLower_,value);
+                controlUpper_=std::max(controlUpper_,value);
+            }
+        }
+        const long double minimumWidth=std::min(
+            static_cast<long double>(ExactExpansion::estimate(width_[0])),
+            static_cast<long double>(ExactExpansion::estimate(width_[1])));
+        resolutionScale_=2*(controlUpper_-controlLower_)/minimumWidth;
+        Detail::require(std::isfinite(resolutionScale_),
+            "unrepresentable C2 macro derivative-resolution scale");
+    }
+
+    const Dofs& physicalDofs() const noexcept { return physical_; }
+    long double derivativeResolutionScale() const noexcept { return resolutionScale_; }
+
+    Sample approximateJetAtChart(CellChartPoint point) const
+    { return jet(selectNative(point)); }
+    double approximateValueAtChart(CellChartPoint point) const
+    {
+        const auto selected=selectNative(point);
+        return derivative(selected,0,0);
+    }
+    Sample approximateJetAtPieceChart(int piece,CellChartPoint point) const
+    { return jet(explicitPiece(piece,point)); }
+    Sample approximateJetAtPhysicalPoint(Vector2D point) const
+    { return jet(selectPhysical(point)); }
+    double approximateValueAtPhysicalPoint(Vector2D point) const
+    { return derivative(selectPhysical(point),0,0); }
+    ThirdDerivatives approximateThirdDerivativesAtChart(CellChartPoint point) const
+    {
+        const auto selected=selectNative(point);
+        return {derivative(selected,3,0),derivative(selected,2,1),
+            derivative(selected,1,2),derivative(selected,0,3)};
+    }
+
+    // Full linear derivative of this piece scalar with respect to the 49
+    // PHYSICAL completed data. The same rational seven-basis transform and
+    // actual native widths used to form the net are transposed here.
+    std::array<long double,49> differentialWeights(CellChartPoint point,
+        const std::array<long double,6>& weights) const
+    {
+        for(long double weight:weights)
+            Detail::require(std::isfinite(weight),"nonfinite C2 macro differential weight");
+        const auto selected=selectNative(point);
+        const int half[2]={selected.piece%2,selected.piece/2};
+        const auto localX=QuarticCell::rationalBasisJet(
+            selected.x.numeratorBegin,selected.x.denominator,true);
+        const auto localY=QuarticCell::rationalBasisJet(
+            selected.y.numeratorBegin,selected.y.denominator,true);
+        const QuarticCell::RationalBasisJet* local[2]={&localX,&localY};
+        std::array<std::array<std::array<Exact,7>,3>,2> basis;
+        const auto channel=[](const QuarticCell::RationalBasisJet& jet,int order)
+            ->const std::array<Exact,5>& {
+            return order==0?jet.value:order==1?jet.derivative:jet.second;
+        };
+        for(int axis=0;axis<2;++axis)for(int derivative=0;derivative<3;++derivative)
+            for(int datum=0;datum<7;++datum)for(int k=0;k<5;++k) {
+                const int factor=pieceDatumNumerator[half[axis]][k][datum];
+                if(factor!=0)ExactExpansion::accumulate(basis[axis][derivative][datum],
+                    ExactExpansion::multiply(channel(*local[axis],derivative)[k],number(factor)));
+            }
+        const auto basisDenominator=ExactExpansion::multiply(number(768.0*768.0),
+            ExactExpansion::multiply(localX.denominator,localY.denominator));
+        constexpr int inputOrder[7]={0,0,0,1,1,2,2};
+        constexpr int xOrder[6]={0,1,0,2,1,0},yOrder[6]={0,0,1,0,1,2};
+        std::array<long double,49> result{};
+        for(int y=0;y<7;++y)for(int x=0;x<7;++x)for(int c=0;c<6;++c) {
+            if(weights[c]==0)continue;
+            auto numerator=ExactExpansion::multiply(basis[0][xOrder[c]][x],
+                basis[1][yOrder[c]][y]);
+            if(ExactExpansion::sign(numerator)==0)continue;
+            auto denominator=basisDenominator;
+            numerator=ExactExpansion::scalePow2(numerator,xOrder[c]+yOrder[c]);
+            for(int k=0;k<inputOrder[x];++k)numerator=ExactExpansion::multiply(numerator,width_[0]);
+            for(int k=0;k<inputOrder[y];++k)numerator=ExactExpansion::multiply(numerator,width_[1]);
+            for(int k=0;k<xOrder[c];++k)denominator=ExactExpansion::multiply(denominator,width_[0]);
+            for(int k=0;k<yOrder[c];++k)denominator=ExactExpansion::multiply(denominator,width_[1]);
+            std::array<Exact,1> normalized{{std::move(numerator)}};
+            ExactExpansion::centerHomogeneous(normalized,denominator);
+            const long double coefficient=static_cast<long double>(ExactExpansion::estimate(normalized[0]))
+                /ExactExpansion::estimate(denominator);
+            const long double term=weights[c]*coefficient,sum=result[7*y+x]+term;
+            Detail::require(std::isfinite(coefficient)&&coefficient!=0
+                &&std::isfinite(term)&&term!=0&&std::isfinite(sum),
+                "unrepresentable C2 macro differential coefficient");
+            result[7*y+x]=sum;
+        }
+        return result;
+    }
+
+    // Outward bounds use the exact four-piece net and the existing tensor
+    // blossom. This introduces no root/region capability or surrogate field.
+    Interval cellBounds(Vector2D lower={0,0},Vector2D upper={1,1}) const
+    {
+        ExactExpansion::validateEnvironment();
+        Detail::require(std::isfinite(lower.x)&&std::isfinite(lower.y)
+            &&std::isfinite(upper.x)&&std::isfinite(upper.y)
+            &&lower.x>=0&&lower.y>=0&&upper.x<=1&&upper.y<=1
+            &&lower.x<=upper.x&&lower.y<=upper.y,
+            "C2 macro bounds require an ordered closed native subbox");
+        Interval result{std::numeric_limits<double>::infinity(),
+            -std::numeric_limits<double>::infinity()};
+        for(int py=0;py<2;++py)for(int px=0;px<2;++px) {
+            const Vector2D lo{std::max(lower.x,px*.5),std::max(lower.y,py*.5)};
+            const Vector2D hi{std::min(upper.x,(px+1)*.5),std::min(upper.y,(py+1)*.5)};
+            if(lo.x>hi.x||lo.y>hi.y)continue;
+            const auto range=Detail::tensorBernsteinBounds(pieces_[2*py+px].bounds,
+                {2*lo.x-px,2*lo.y-py},{2*hi.x-px,2*hi.y-py});
+            result.lo=std::min(result.lo,range.lo);
+            result.hi=std::max(result.hi,range.hi);
+        }
+        return result;
+    }
+
+    // Outward enclosure of the SAME scalar or its physical derivative on
+    // an actual native box. Each intersecting piece is differentiated in its
+    // own Bernstein net; reduced-degree nets are elevated algebraically back
+    // to Q4 before the existing tensor blossom. No exterior extrapolation.
+    Interval derivativeBounds(Vector2D lower,Vector2D upper,unsigned dx,unsigned dy) const
+    {
+        ExactExpansion::validateEnvironment();
+        Detail::require(dx<=4&&dy<=4,"C2 macro bound derivative order exceeds Q4");
+        Detail::require(std::isfinite(lower.x)&&std::isfinite(lower.y)&&std::isfinite(upper.x)&&std::isfinite(upper.y)
+            &&lower.x>=0&&lower.y>=0&&upper.x<=1&&upper.y<=1&&lower.x<=upper.x&&lower.y<=upper.y,
+            "C2 macro derivative bounds leave the actual native cell");
+        Interval result{std::numeric_limits<double>::infinity(),-std::numeric_limits<double>::infinity()};
+        for(int py=0;py<2;++py)for(int px=0;px<2;++px){
+            const Vector2D lo{std::max(lower.x,px*.5),std::max(lower.y,py*.5)},
+                hi{std::min(upper.x,(px+1)*.5),std::min(upper.y,(py+1)*.5)};
+            if(lo.x>hi.x||lo.y>hi.y)continue;
+            const auto controls=physicalDerivativeControls(pieces_[2*py+px],dx,dy);
+            const auto range=Detail::tensorBernsteinBounds(controls,
+                {2*lo.x-px,2*lo.y-py},{2*hi.x-px,2*hi.y-py});
+            result.lo=std::min(result.lo,range.lo);result.hi=std::max(result.hi,range.hi);
+        }
+        return result;
+    }
+
+    // Equivalent native-chart Q4 columns of ONE named piece extension.
+    // These rounded terminal coefficients never become the scalar/root owner.
+    // The mapped graph must prove membership in that same actual piece.
+    std::array<double,25> pieceNativeLocalDofs(int piece) const
+    {
+        checkedPiece(piece);const int px=piece%2,py=piece/2;
+        constexpr int orders[7]={0,0,0,1,1,2,2};
+        std::array<std::array<Exact,3>,2> scales;
+        for(int axis=0;axis<2;++axis){scales[axis][0]=number(1);scales[axis][1]=width_[axis];
+            scales[axis][2]=ExactExpansion::multiply(width_[axis],width_[axis]);}
+        std::array<Exact,49> native;
+        for(int y=0;y<7;++y)for(int x=0;x<7;++x)
+            native[7*y+x]=ExactExpansion::multiply(number(physical_[7*y+x]),
+                ExactExpansion::multiply(scales[0][orders[x]],scales[1][orders[y]]));
+        std::array<double,25> result;
+        for(int y=0;y<5;++y)for(int x=0;x<5;++x){Exact sum;
+            for(int j=0;j<7;++j)for(int i=0;i<7;++i){
+                const double factor=static_cast<double>(nativePieceDatumNumerator[px][x][i])*nativePieceDatumNumerator[py][y][j];
+                if(factor)ExactExpansion::accumulate(sum,ExactExpansion::multiply(native[7*j+i],number(factor)));}
+            result[5*y+x]=ratio(std::move(sum),number(768.0*768.0));}
+        return result;
+    }
+    std::array<long double,49> pieceNativeDataWeights(int piece,const std::array<long double,25>& weights) const
+    {
+        checkedPiece(piece);const int px=piece%2,py=piece/2;
+        constexpr int inputOrder[7]={0,0,0,1,1,2,2},outputOrder[5]={0,0,1,1,0};
+        const long double hx=ExactExpansion::estimate(width_[0]),hy=ExactExpansion::estimate(width_[1]);
+        std::array<long double,49> result{};
+        for(long double weight:weights)Detail::require(std::isfinite(weight),"nonfinite C2 native-piece sensitivity");
+        for(int y=0;y<7;++y)for(int x=0;x<7;++x)for(int j=0;j<5;++j)for(int i=0;i<5;++i){
+            if(weights[5*j+i]==0)continue;
+            const long double factor=static_cast<long double>(nativePieceDatumNumerator[px][i][x])
+                *nativePieceDatumNumerator[py][j][y]/(768.0L*768.0L);
+            const long double term=weights[5*j+i]*factor*std::pow(hx,inputOrder[x]-outputOrder[i])
+                *std::pow(hy,inputOrder[y]-outputOrder[j]);
+            const auto sum=result[7*y+x]+term;
+            Detail::require(std::isfinite(term)&&std::isfinite(sum),"unrepresentable C2 native-piece transpose");
+            result[7*y+x]=sum;
+        }
+        return result;
+    }
+    int pieceIndexForBox(Vector2D lower,Vector2D upper) const
+    {
+        Detail::require(lower.x>=0&&lower.y>=0&&upper.x<=1&&upper.y<=1
+            &&lower.x<=upper.x&&lower.y<=upper.y,"invalid C2 piece native box");
+        const auto half=[](double lo,double hi){
+            Detail::require(hi<=.5||lo>=.5,"C2 graph box crosses a scalar half-line");
+            return lo>=.5?1:0;
+        };
+        return half(lower.x,upper.x)+2*half(lower.y,upper.y);
+    }
+
+    // Internal exact piece data are homogeneous LOCAL QuarticCell DOFs,
+    // not the old native25 physical columns. Later restriction adapters must
+    // retain piece provenance and the positive denominator together.
+    const QuarticCell::ExpandedControls& pieceLocalNumerators(int piece) const
+    { return checkedPiece(piece).local; }
+    const Exact& pieceLocalDenominator(int piece) const
+    { return checkedPiece(piece).denominator; }
+
+  private:
+    struct Piece {
+        QuarticCell::ExpandedControls local;
+        Exact denominator;
+        std::array<Interval,25> bounds;
+        mutable std::array<std::once_flag,2> gradientBoundsReady;
+        mutable std::array<std::array<Interval,25>,2> gradientBounds;
+    };
+    struct PiecePoint {
+        int piece=0;
+        RationalSegmentCoordinate x,y;
+    };
+    Dofs physical_;
+    Vector2D lower_,upper_;
+    std::array<Exact,2> width_;
+    std::array<Piece,4> pieces_;
+    long double controlLower_=0,controlUpper_=0,resolutionScale_=0;
+
+    // Fixed seven-basis evaluated as piece [V0,V1,D10,D11,Vmid].
+    // These integers are the prepared power basis evaluated at 0,1,1/2
+    // and differentiated at 0,1; denominator 768 in EACH native axis.
+    inline static constexpr int pieceDatumNumerator[2][5][7]={
+        {{768,0,0,0,0,0,0},{0,768,0,0,0,0,0},{0,0,0,384,0,0,0},
+         {-768,0,768,-192,-192,-16,16},{576,240,-48,108,12,7,-1}},
+        {{0,768,0,0,0,0,0},{0,0,768,0,0,0,0},
+         {-768,0,768,-192,-192,-16,16},{0,0,0,0,384,0,0},
+         {-48,240,576,-12,-108,-1,7}}
+    };
+    std::array<Interval,25> physicalDerivativeControls(const Piece& piece,unsigned dx,unsigned dy) const
+    {
+        if(dx==0&&dy==0)return piece.bounds;
+        if(dx+dy==1){const int axis=dy?1:0;
+            std::call_once(piece.gradientBoundsReady[axis],[&]{piece.gradientBounds[axis]=buildPhysicalDerivativeControls(piece,dx,dy);});
+            return piece.gradientBounds[axis];}
+        return buildPhysicalDerivativeControls(piece,dx,dy);
+    }
+    std::array<Interval,25> buildPhysicalDerivativeControls(const Piece& piece,unsigned dx,unsigned dy) const
+    {
+        auto controls=QuarticCell::bernsteinControlsCleared(piece.local);
+        auto denominator=ExactExpansion::multiply(piece.denominator,number(144));
+        int nx=4,ny=4;
+        for(unsigned order=0;order<dx;++order){
+            std::array<Exact,25> next;
+            for(int y=0;y<=ny;++y)for(int x=0;x<nx;++x)
+                next[5*y+x]=ExactExpansion::multiply(number(nx),ExactExpansion::subtract(controls[5*y+x+1],controls[5*y+x]));
+            controls=std::move(next);--nx;
+        }
+        for(unsigned order=0;order<dy;++order){
+            std::array<Exact,25> next;
+            for(int y=0;y<ny;++y)for(int x=0;x<=nx;++x)
+                next[5*y+x]=ExactExpansion::multiply(number(ny),ExactExpansion::subtract(controls[5*(y+1)+x],controls[5*y+x]));
+            controls=std::move(next);--ny;
+        }
+        while(nx<4){std::array<Exact,25> next;
+            for(int y=0;y<=ny;++y)for(int x=0;x<=nx+1;++x){
+                if(x<=nx)ExactExpansion::accumulate(next[5*y+x],ExactExpansion::multiply(number(nx+1-x),controls[5*y+x]));
+                if(x>0)ExactExpansion::accumulate(next[5*y+x],ExactExpansion::multiply(number(x),controls[5*y+x-1]));}
+            denominator=ExactExpansion::multiply(denominator,number(nx+1));controls=std::move(next);++nx;}
+        while(ny<4){std::array<Exact,25> next;
+            for(int y=0;y<=ny+1;++y)for(int x=0;x<=nx;++x){
+                if(y<=ny)ExactExpansion::accumulate(next[5*y+x],ExactExpansion::multiply(number(ny+1-y),controls[5*y+x]));
+                if(y>0)ExactExpansion::accumulate(next[5*y+x],ExactExpansion::multiply(number(y),controls[5*(y-1)+x]));}
+            denominator=ExactExpansion::multiply(denominator,number(ny+1));controls=std::move(next);++ny;}
+        for(auto& control:controls)control=ExactExpansion::scalePow2(control,dx+dy);
+        for(unsigned k=0;k<dx;++k)denominator=ExactExpansion::multiply(denominator,width_[0]);
+        for(unsigned k=0;k<dy;++k)denominator=ExactExpansion::multiply(denominator,width_[1]);
+        ExactExpansion::centerHomogeneous(controls,denominator);
+        const auto divisor=ExactExpansion::enclosure(denominator);
+        Detail::require(divisor.lo>0&&std::isfinite(divisor.hi),"unresolved C2 macro derivative-bound scale");
+        std::array<Interval,25> result;
+        for(int k=0;k<25;++k){const auto value=ExactExpansion::enclosure(controls[k]);
+            result[k]={Detail::Outward::down(value.lo/(value.lo<0?divisor.lo:divisor.hi)),
+                Detail::Outward::up(value.hi/(value.hi<0?divisor.hi:divisor.lo))};}
+        return result;
+    }
+    inline static constexpr int nativePieceDatumNumerator[2][5][7]={
+        {{768,0,0,0,0,0,0},{6912,-12288,6144,2304,-1536,256,128},{0,0,0,768,0,0,0},{43008,-73728,30720,14592,-7680,1664,640},{0,768,0,0,0,0,0}},
+        {{6144,-12288,6912,1536,-2304,128,256},{0,0,768,0,0,0,0},{-30720,73728,-43008,-7680,14592,-640,-1664},{0,0,0,0,768,0,0},{0,768,0,0,0,0,0}}
+    };
+    static Exact number(double value) { return ExactExpansion::fromDouble(value); }
+    static Exact difference(double first,double second)
+    { return ExactExpansion::subtract(number(first),number(second)); }
+    const Piece& checkedPiece(int piece) const
+    {
+        Detail::require(piece>=0&&piece<4,"C2 macro piece index must be 0..3");
+        return pieces_[piece];
+    }
+    static RationalSegmentCoordinate chart(CellChartCoordinate point)
+    {
+        const auto one=number(1),tail=number(point.offset);
+        const auto value=point.fromUpper?ExactExpansion::subtract(one,tail):tail;
+        return {value,value,one};
+    }
+    static std::pair<int,RationalSegmentCoordinate> selectAxis(
+        const RationalSegmentCoordinate& native)
+    {
+        Detail::require(ExactExpansion::sign(native.denominator)>0
+            &&ExactExpansion::sign(native.numeratorBegin)>=0
+            &&ExactExpansion::sign(ExactExpansion::subtract(native.denominator,
+                native.numeratorBegin))>=0,
+            "C2 macro coordinate leaves its actual native chart");
+        const auto twice=ExactExpansion::scalePow2(native.numeratorBegin,1);
+        const int half=ExactExpansion::sign(
+            ExactExpansion::subtract(twice,native.denominator))>0?1:0;
+        const auto local=half?ExactExpansion::subtract(twice,native.denominator):twice;
+        return {half,{local,local,native.denominator}};
+    }
+    static PiecePoint selectRational(const RationalSegmentCoordinate& x,
+        const RationalSegmentCoordinate& y)
+    {
+        const auto px=selectAxis(x),py=selectAxis(y);
+        return {2*py.first+px.first,px.second,py.second};
+    }
+    static PiecePoint selectNative(CellChartPoint point)
+    {
+        ExactExpansion::validateEnvironment();
+        validateCellChart(point);
+        return selectRational(chart(point.x),chart(point.y));
+    }
+    static PiecePoint explicitPiece(int piece,CellChartPoint point)
+    {
+        ExactExpansion::validateEnvironment();
+        Detail::require(piece>=0&&piece<4,"C2 macro piece index must be 0..3");
+        validateCellChart(point);
+        return {piece,chart(point.x),chart(point.y)};
+    }
+    PiecePoint selectPhysical(Vector2D point) const
+    {
+        ExactExpansion::validateEnvironment();
+        Detail::require(std::isfinite(point.x)&&std::isfinite(point.y)
+            &&point.x>=lower_.x&&point.x<=upper_.x
+            &&point.y>=lower_.y&&point.y<=upper_.y,
+            "C2 macro physical point leaves its actual native cell");
+        const auto nx=difference(point.x,lower_.x),ny=difference(point.y,lower_.y);
+        return selectRational({nx,nx,width_[0]},{ny,ny,width_[1]});
+    }
+    static double ratio(Exact numerator,Exact denominator)
+    {
+        Detail::require(ExactExpansion::sign(denominator)>0,
+            "nonpositive C2 macro homogeneous denominator");
+        std::array<Exact,1> values{{std::move(numerator)}};
+        ExactExpansion::centerHomogeneous(values,denominator);
+        const long double value=static_cast<long double>(ExactExpansion::estimate(values[0]))
+            /ExactExpansion::estimate(denominator);
+        const double result=Detail::checked(value,"unrepresentable C2 macro data ratio");
+        Detail::require(ExactExpansion::sign(values[0])==0||result!=0,
+            "C2 macro data ratio underflow");
+        return result;
+    }
+    double physicalRatio(Exact numerator,Exact denominator,unsigned dx,unsigned dy) const
+    {
+        numerator=ExactExpansion::scalePow2(numerator,static_cast<int>(dx+dy));
+        for(unsigned k=0;k<dx;++k)denominator=ExactExpansion::multiply(denominator,width_[0]);
+        for(unsigned k=0;k<dy;++k)denominator=ExactExpansion::multiply(denominator,width_[1]);
+        return ratio(std::move(numerator),std::move(denominator));
+    }
+    Sample jet(const PiecePoint& point) const
+    {
+        const auto& piece=checkedPiece(point.piece);
+        const auto bx=QuarticCell::rationalBasisJet(
+            point.x.numeratorBegin,point.x.denominator,true);
+        const auto by=QuarticCell::rationalBasisJet(
+            point.y.numeratorBegin,point.y.denominator,true);
+        const auto basis=[](const QuarticCell::RationalBasisJet& value,int order)
+            ->const std::array<Exact,5>& {
+            return order==0?value.value:order==1?value.derivative:value.second;
+        };
+        std::array<std::array<Exact,5>,3> alongY;
+        for(int order=0;order<3;++order)for(int x=0;x<5;++x)
+            for(int y=0;y<5;++y)if(ExactExpansion::sign(piece.local[5*y+x])!=0
+                &&ExactExpansion::sign(basis(by,order)[y])!=0)
+                ExactExpansion::accumulate(alongY[order][x],
+                    ExactExpansion::multiply(piece.local[5*y+x],basis(by,order)[y]));
+        const auto denominator=ExactExpansion::multiply(piece.denominator,
+            ExactExpansion::multiply(bx.denominator,by.denominator));
+        constexpr int xOrder[6]={0,1,0,2,1,0},yOrder[6]={0,0,1,0,1,2};
+        std::array<double,6> values;
+        for(int channel=0;channel<6;++channel) {
+            Exact numerator;
+            for(int x=0;x<5;++x)if(ExactExpansion::sign(alongY[yOrder[channel]][x])!=0
+                &&ExactExpansion::sign(basis(bx,xOrder[channel])[x])!=0)
+                ExactExpansion::accumulate(numerator,ExactExpansion::multiply(
+                    alongY[yOrder[channel]][x],basis(bx,xOrder[channel])[x]));
+            values[channel]=physicalRatio(std::move(numerator),denominator,
+                xOrder[channel],yOrder[channel]);
+        }
+        return {values[0],values[1],values[2],values[3],values[4],values[5]};
+    }
+    double derivative(const PiecePoint& point,unsigned dx,unsigned dy) const
+    {
+        const auto& piece=checkedPiece(point.piece);
+        auto result=QuarticCell::homogeneousRestrictionCentered(
+            piece.local,piece.denominator,point.x,point.y,dx,dy);
+        return physicalRatio(std::move(result.numerator[0]),
+            std::move(result.denominator),dx,dy);
+    }
+};
 } // namespace LevelSetHermiteScalar
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

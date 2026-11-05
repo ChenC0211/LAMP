@@ -3,7 +3,7 @@
 #include "Core/Geometry/Detail/LevelSetMappedSegment.h"
 #include <type_traits>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -66,8 +66,12 @@ auto valueVariation(const BasicQuery<BasicNativeCellLayout<Scalar>>& query,
             coefficients[4*c+3]=hx*hy*bx.value[x+2]*by.value[y+2];
         }
     }
-    return Variation{scalar.evaluateCellChart(cell,point).value,
-        scalar.pullbackCellSensitivity(cell,coefficients,sectors)};
+    return Variation{scalar.evaluateCellChart(cell,point).value,[&]{
+        if constexpr(std::is_same_v<Scalar,LevelSetHermiteScalar::C2MacroQuarticLeafData>){
+            require(sectors==CornerSectorVariation::RequireAbsent,"C2 macro has no corner-sector state");
+            return scalar.differentialSensitivity(cell,point,{1,0,0,0,0,0});
+        }else return scalar.pullbackCellSensitivity(cell,coefficients,sectors);
+    }()};
 }
 
 template<class Scalar>
@@ -152,7 +156,12 @@ auto negativePhaseVariation(
         const bool fromEnd = compare(root.parameter, constant(.5)) > 0;
         const auto offset = fromEnd ? subtract(constant(1), root.parameter) : root.parameter;
         result.push_back({fromEnd != reversed, approximate(offset), endpoint,
-                          scalar.pullbackCellSensitivity(cell, coefficients, sectors)});
+                          [&]{
+            if constexpr(std::is_same_v<Scalar,LevelSetHermiteScalar::C2MacroQuarticLeafData>){
+                require(sectors==CornerSectorVariation::RequireAbsent,"C2 macro has no corner-sector state");
+                return scalar.differentialSensitivity(cell,point,{weight,0,0,0,0,0});
+            }else return scalar.pullbackCellSensitivity(cell,coefficients,sectors);
+        }()});
         first = next;
     }
     if (reversed)
@@ -161,4 +170,4 @@ auto negativePhaseVariation(
 }
 } // namespace MappedHermiteSegment
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

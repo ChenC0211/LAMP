@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {

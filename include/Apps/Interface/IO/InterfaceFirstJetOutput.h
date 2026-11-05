@@ -7,7 +7,7 @@
 
 class QuadtreeMesh;
 struct InterfaceTransportInput;
-namespace Quantum::Interface { class HermiteGalsPublication; struct HermiteGalsMeshTransferReport; struct HermiteGalsFirstJetStepReport; }
+namespace LAMP::Interface { class HermiteGalsPublication; struct HermiteGalsMeshTransferReport; struct HermiteGalsFirstJetStepReport; }
 
 // Read-only serialization of an App-accepted publication. No geometry owner,
 // reconstruction, physical acceptance decision or restart state lives here.
@@ -18,10 +18,10 @@ public:
     explicit InterfaceFirstJetOutput(const InterfaceTransportInput&);
     ~InterfaceFirstJetOutput();
     void begin();
-    void accepted(const QuadtreeMesh&,const Quantum::Interface::HermiteGalsPublication&,
+    void accepted(const QuadtreeMesh&,const LAMP::Interface::HermiteGalsPublication&,
         Clock::time_point start,double stepSeconds,double transferSeconds,
-        const Quantum::Interface::HermiteGalsMeshTransferReport* = nullptr,
-        const Quantum::Interface::HermiteGalsFirstJetStepReport* = nullptr);
+        const LAMP::Interface::HermiteGalsMeshTransferReport* = nullptr,
+        const LAMP::Interface::HermiteGalsFirstJetStepReport* = nullptr);
     void complete(long double peakDrift);
     void rejected(int attempted,std::int64_t acceptedStep,double acceptedTime,const std::string& stage,const std::string& reason);
 private:

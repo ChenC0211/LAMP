@@ -1,5 +1,5 @@
-#include "Interface/InterfaceTransport.h"
-#include "Runtime/RunControls.h"
+#include "Interface/IO/InterfaceTransportInput.h"
+#include "RunControls.h"
 #include "Core/IO/StrictDictionary.h"
 #include <filesystem>
 #include <iomanip>
@@ -7,12 +7,33 @@
 #include <set>
 #include <sstream>
 
+using Config=InterfaceTransportConfig;
+InterfaceTransportConfigError::InterfaceTransportConfigError(Config::Field f,const char* why)
+    :std::invalid_argument(std::string("[Interface FirstJet App] ")+why),field(f){}
+void Config::validate() const
+{
+    const auto check=[](bool ok,Field f,const char* why){if(!ok)throw InterfaceTransportConfigError(f,why);};
+    check(resolution>=4 && resolution<=256,Field::Resolution,"resolution must be in [4,256]");
+    check(steps>=1 && steps<=1000000,Field::Steps,"steps must be in [1,1000000]");
+    check(std::isfinite(dt) && dt>0 && std::isfinite(dt*steps),Field::Dt,"dt and total time must be finite and positive");
+    check(std::isfinite(endTime) && endTime>0 && std::abs(dt*steps-endTime)<=1e-12*endTime,
+        Field::EndTime,"endTime must equal the configured integer number of dt steps");
+    check(!writeFields || (writeEverySteps>=1 && writeEverySteps<=1000000),Field::WriteEverySteps,"writeEverySteps must be in [1,1000000]");
+    int previous=0;for(int step:regridSteps){check(step>previous && step<steps,Field::RegridSteps,"Regrid.atSteps must increase strictly before the final step");previous=step;}
+    check(std::isfinite(domainMin.x) && std::isfinite(domainMin.y) && std::isfinite(domainMax.x) && std::isfinite(domainMax.y)
+        && domainMax.x>domainMin.x && domainMax.y>domainMin.y && std::isfinite(domainMax.x-domainMin.x) && std::isfinite(domainMax.y-domainMin.y)
+        && (!radial || domainMin.x==0),Field::Domain,"finite ordered bounds; rz requires radial minimum 0");
+    if(initialAmr || !regridSteps.empty())check(refinementLevel>=1 && refinementLevel<=2 && std::isfinite(refineMin.x) && std::isfinite(refineMin.y)
+        && std::isfinite(refineMax.x) && std::isfinite(refineMax.y) && refineMin.x>=domainMin.x && refineMin.y>=domainMin.y
+        && refineMax.x<=domainMax.x && refineMax.y<=domainMax.y && refineMax.x>refineMin.x && refineMax.y>refineMin.y,
+        Field::Refinement,"ordered refinement box inside Domain; level in [1,2]");
+}
 namespace
 {
 using Node=DictionaryInput::Node;
 using Trace=DictionaryInput::ConfigurationTrace;
 using Config=InterfaceTransportConfig;
-using Expression=Quantum::ScalarExpression;
+using Expression=LAMP::ScalarExpression;
 Vector2D vector(const Node& node,Trace& trace,const char* units,const char* consumer)
 {
     if(node.isBlock || node.values.size()!=4 || node.values.front()!="(" || node.values.back()!=")")
@@ -40,7 +61,7 @@ void inputFiles()
 }
 void readRun(const Node& root,Config& c,Trace& trace)
 {
-    root.allow({"Run","Time","Output"});const auto& run=root.block("Run");run.allow({"app"});
+    root.allow({"Run","Time","Output","Parallel"});const auto& run=root.block("Run");run.allow({"app"});
     trace.record(run.get("app"),run.get("app").choice({"Interface"}),"dimensionless","Runtime.App.dispatch");
     const auto& time=root.block("Time");time.allow({"units","dt","endTime"});
     trace.record(time.get("units"),time.get("units").choice({"code"}),"dimensionless","Runtime.clock.units");

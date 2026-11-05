@@ -5,7 +5,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace Quantum::Geometry::CubicGraphCellMeasure
+namespace LAMP::Geometry::CubicGraphCellMeasure
 {
 namespace
 {

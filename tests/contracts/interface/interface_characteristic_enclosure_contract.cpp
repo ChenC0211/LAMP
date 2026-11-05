@@ -22,11 +22,11 @@
 
 namespace
 {
-using namespace Quantum::Interface;
-using Data=Quantum::Geometry::PolynomialVelocityData;
-using Slab=Quantum::Geometry::PolynomialVelocitySlab;
-using Bounds=Quantum::Geometry::PolynomialRk2Bounds;
-using Range=Quantum::Geometry::PolynomialVelocityRange;
+using namespace LAMP::Interface;
+using Data=LAMP::Geometry::PolynomialVelocityData;
+using Slab=LAMP::Geometry::PolynomialVelocitySlab;
+using Bounds=LAMP::Geometry::PolynomialRk2Bounds;
+using Range=LAMP::Geometry::PolynomialVelocityRange;
 using Velocity=HermiteGalsTemporalVelocitySource;
 using Characteristic=HermiteGalsTemporalCharacteristicSource;
 using Interval=HermiteGalsPhaseFluxIntervalSource;
@@ -63,7 +63,7 @@ bool fineSide(const QuadtreeMesh& m,Key key)
 HermiteGalsState stateFor(const QuadtreeMesh& m,bool radial)
 {
     FaceSegmentGraph graph;graph.build(m);const auto domain=NativeLeafDomain::build(m,graph,radial);
-    Quantum::Geometry::ActiveQuarticHermitePatch patch;HermiteGalsPrimaryState p;
+    LAMP::Geometry::ActiveQuarticHermitePatch patch;HermiteGalsPrimaryState p;
     p.measure=radial?HermiteGalsMeasure::AxisymmetricVolume:HermiteGalsMeasure::CartesianArea;
     patch.activeCells.assign(m.cellIndexNum(),1);patch.nodes.resize(m.vertIndexNum());patch.cellCenters.resize(m.cellIndexNum());
     for(int v=0;v<m.vertIndexNum();++v)if(m.verts(m.vertIndexToLabel[v]).type()==TVertType::non){const auto q=point(m,v);

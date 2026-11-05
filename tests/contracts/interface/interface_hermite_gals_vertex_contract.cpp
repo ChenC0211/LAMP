@@ -16,11 +16,11 @@
 
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 using Position=HermiteGalsTimeLayer::Position;
 using Query=HermiteGalsVelocityView::Query;
-using Jet=Quantum::Geometry::ActiveHermitePatch::NodalDof;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Jet=LAMP::Geometry::ActiveHermitePatch::NodalDof;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Snapshot=LevelSetHermiteGeometry::Snapshot;
 using Domain=LevelSetBoundaryTrace::Domain;
 using Profile=std::function<Jet(Vector2D)>;

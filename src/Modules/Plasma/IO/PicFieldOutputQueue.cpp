@@ -68,7 +68,7 @@ void PicFieldOutputQueue::configureBatching(bool amrEnabled)
 {
     batchingEnabled_ = (flushEveryOutputs_ > 1) && (!amrEnabled || options_.allowBatchingWithAmr);
     if (options_.fastDensity)
-        std::cout << "[ImplicitPIC][output] fast density mode enabled (QUANTUM_IMPLICIT_OUTPUT_FAST_DENSITY=1)" << std::endl;
+        std::cout << "[ImplicitPIC][output] fast density mode enabled (LAMP_IMPLICIT_OUTPUT_FAST_DENSITY=1)" << std::endl;
     if (flushEveryOutputs_ > 1)
         std::cout << "[ImplicitPIC][output] packed-field flush every outputs=" << flushEveryOutputs_
                   << " (batching=" << (batchingEnabled_ ? "enabled" : "disabled")
@@ -76,7 +76,7 @@ void PicFieldOutputQueue::configureBatching(bool amrEnabled)
     if ((flushEveryOutputs_ > 1) && !batchingEnabled_)
         std::cout << "[ImplicitPIC][output] packed-field batching disabled (AMR active)" << std::endl;
     else if ((flushEveryOutputs_ > 1) && amrEnabled && options_.allowBatchingWithAmr)
-        std::cout << "[ImplicitPIC][output] packed-field batching forced with AMR (QUANTUM_IMPLICIT_PACKED_BATCH_WITH_AMR=1)" << std::endl;
+        std::cout << "[ImplicitPIC][output] packed-field batching forced with AMR (LAMP_IMPLICIT_PACKED_BATCH_WITH_AMR=1)" << std::endl;
 }
 
 PicFieldOutputQueue::Timing PicFieldOutputQueue::writeImplicit(int stepForOutput, const Input& input)

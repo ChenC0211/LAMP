@@ -23,10 +23,10 @@
 void interfaceGalsContract();
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 using Key=std::array<int,2>;
-using Jet=Quantum::Geometry::ActiveHermitePatch::NodalDof;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Jet=LAMP::Geometry::ActiveHermitePatch::NodalDof;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Profile=std::function<Jet(Vector2D)>;
 using Position=HermiteGalsTimeLayer::Position;
 static_assert(std::is_same_v<decltype(std::declval<HermiteGalsMixedClosureResult&>().vertexMixedDerivatives()),
@@ -116,14 +116,14 @@ void scalarStencil()
     double maximum=0;int samples=0;
     for(int degree=0;degree<=4;++degree)for(int target:{0,2,4,6,8}){
         const auto f=[&](int i){return std::pow(x[i]-2.13,degree);};
-        const double got=Quantum::Geometry::compactQuarticDerivativeAtNode(target,9,[&](int i){return x[i];},f,check);
+        const double got=LAMP::Geometry::compactQuarticDerivativeAtNode(target,9,[&](int i){return x[i];},f,check);
         const double exact=degree?degree*std::pow(x[target]-2.13,degree-1):0;
         close(got,exact,2e-12,"quartic one-dimensional derivative reproduction");
         if(!degree)check(got==0,"constant derivative must be exactly zero");
         maximum=std::max(maximum,std::abs(got-exact));++samples;
     }
-    rejects([&]{Quantum::Geometry::compactQuarticDerivativeAtNode(0,4,[&](int i){return x[i];},[](int){return 1.;},check);},"insufficient",false);
-    x[4]=x[3];rejects([&]{Quantum::Geometry::compactQuarticDerivativeAtNode(4,9,[&](int i){return x[i];},[](int){return 1.;},check);},"non-increasing",false);
+    rejects([&]{LAMP::Geometry::compactQuarticDerivativeAtNode(0,4,[&](int i){return x[i];},[](int){return 1.;},check);},"insufficient",false);
+    x[4]=x[3];rejects([&]{LAMP::Geometry::compactQuarticDerivativeAtNode(4,9,[&](int i){return x[i];},[](int){return 1.;},check);},"non-increasing",false);
     std::cout<<"MIXED_STENCIL,"<<samples<<','<<maximum<<'\n';
 }
 

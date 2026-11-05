@@ -52,7 +52,7 @@ class Prepared
     std::shared_ptr<const Impl> impl_;
     friend Prepared prepare(const QuadtreeMesh&, const std::vector<std::uint8_t>&,
         const Options&, StencilCache*, Report*);
-    friend Quantum::Geometry::ActiveQuarticHermitePatch reconstruct(
+    friend LAMP::Geometry::ActiveQuarticHermitePatch reconstruct(
         const Prepared&, const std::vector<double>&);
 };
 
@@ -61,7 +61,7 @@ Prepared prepare(const QuadtreeMesh& mesh, const std::vector<std::uint8_t>& acti
 // Current values correspond exactly to samplePoints(). Independent datum fits
 // may run concurrently; all use the SAME Q4 arithmetic. Exceptions join before
 // return; no partial patch is published. The supplied array is never retained.
-Quantum::Geometry::ActiveQuarticHermitePatch reconstruct(
+LAMP::Geometry::ActiveQuarticHermitePatch reconstruct(
     const Prepared& prepared, const std::vector<double>& values);
 
 // Optional, nonphysical workspace for repeated calls on the SAME native
@@ -99,7 +99,7 @@ class StencilCache
 // Dependent hanging jets/fine-side data are left NaN for the shared scalar
 // constraint owner. Returns no corner sector/contact law or moving candidate;
 // the caller must construct/validate geometry before committing any state.
-Quantum::Geometry::ActiveQuarticHermitePatch reconstruct(const QuadtreeMesh& mesh,
+LAMP::Geometry::ActiveQuarticHermitePatch reconstruct(const QuadtreeMesh& mesh,
     const std::vector<std::uint8_t>& activeCells,const std::function<double(Vector2D)>& scalar,
     const Options& options={}, StencilCache* cache=nullptr, Report* report=nullptr);
 }

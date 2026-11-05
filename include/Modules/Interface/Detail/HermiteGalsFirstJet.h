@@ -10,7 +10,7 @@
 
 // Private implementation shared by the vertex and edge stages. No new state,
 // interpolation, clock or geometry authority is introduced here.
-namespace Quantum::Interface::Detail
+namespace LAMP::Interface::Detail
 {
 inline void requireFirstJet(bool ok,const char* message)
 { if(!ok)throw std::invalid_argument(message); }
@@ -61,4 +61,4 @@ inline HermiteGalsFirstJet pullbackFirstJet(const LevelSetHermiteGeometry::Snaps
     requireFirstJet(std::isfinite(gradient.x) && std::isfinite(gradient.y),"nonfinite transported gradient");
     return {old.value,gradient};
 }
-} // namespace Quantum::Interface::Detail
+} // namespace LAMP::Interface::Detail

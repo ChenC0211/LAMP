@@ -10,7 +10,7 @@ Field<T>::Field(const Field<T>& field) : size_(field.size())
 {
     this->value = std::make_unique<T[]>(size_);
     this->label_ = std::make_unique<int[]>(size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < size_; i++)
     {
         this->value[i] = field.value[i];
@@ -32,7 +32,7 @@ Field<T>::Field(int size, const T& value)
     this->size_ = size;
     this->value = std::make_unique<T[]>(size_);
     this->label_ = std::make_unique<int[]>(size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < size_; i++)
     {
         this->value[i] = value;
@@ -73,7 +73,7 @@ Field<T> Field<T>::operator+(const Field& field) const
     }
 
     Field<T> result(size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < size_; i++)
     {
         if (label_[i] != field.label(i))
@@ -97,7 +97,7 @@ Field<T> Field<T>::operator-(const Field& field) const
     }
     
     Field<T> result(this->size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < this->size_; i++)
     {
         if (label_[i] != field.label(i))
@@ -115,7 +115,7 @@ template<typename T>
 Field<T> Field<T>::operator*(const double& scale) const
 {
     Field<T> result(this->size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < this->size_; i++)
     {
         result.value[i] = this->value[i] * scale;
@@ -130,7 +130,7 @@ void Field<T>::initialize(int size, const T& value)
     this->size_ = size;
     this->value = std::make_unique<T[]>(size_);
     this->label_ = std::make_unique<int[]>(size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < size_; i++)
     {
         this->value[i] = value;

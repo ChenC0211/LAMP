@@ -15,7 +15,7 @@
 
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 using Matrix = LevelSetBoundaryTrace::Jacobian;
 using Jet = LevelSetBoundaryTrace::VelocityJet;
 using Query = HermiteGalsVelocityView::Query;

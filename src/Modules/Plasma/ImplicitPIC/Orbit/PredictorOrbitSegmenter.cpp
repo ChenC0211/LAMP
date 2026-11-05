@@ -637,7 +637,7 @@ void PredictorOrbitSegmenter::segmentLinearOrbits(const BackgroundMesh& mesh,
             }
             catch (...)
             {
-                #pragma omp critical(quantum_segmenter_error)
+                #pragma omp critical(lamp_segmenter_error)
                 {
                     if (!firstError)
                         firstError = std::current_exception();
@@ -684,7 +684,7 @@ void PredictorOrbitSegmenter::segmentLinearOrbits(const BackgroundMesh& mesh,
             }
             catch (...)
             {
-                #pragma omp critical(quantum_segmenter_fill_error)
+                #pragma omp critical(lamp_segmenter_fill_error)
                 {
                     if (!copyError)
                         copyError = std::current_exception();

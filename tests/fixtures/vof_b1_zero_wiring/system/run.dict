@@ -1,0 +1,5 @@
+Run { app VofElectrohydrodynamics; }
+Parallel { threads 1; }
+Time { units code; dt .0001; endTime .0002; }
+Output { Fields { enabled true; writeEverySteps 1; } }
+Log { everySteps 1; level detail; }

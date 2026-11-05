@@ -80,7 +80,7 @@ template<class PatchType> struct TransportCandidate
     // or default file output. Nodal value and material-map queries are separate.
     std::size_t nativeStencilSampleRequests = 0, nativeStencilSampleEvaluations = 0;
 };
-struct Candidate : TransportCandidate<Quantum::Geometry::ActiveHermitePatch> {};
+struct Candidate : TransportCandidate<LAMP::Geometry::ActiveHermitePatch> {};
 // Wall-clock observations only, with nonoverlapping scopes inside the native
 // quartic advance. Never used by a timestep, acceptance gate or field writer.
 struct QuarticTimings
@@ -88,7 +88,7 @@ struct QuarticTimings
     double sourceGeometry=0, stencilPreparation=0, scalarSampling=0;
     double dataReconstruction=0, dataUpdate=0, candidateGeometry=0;
 };
-struct QuarticCandidate : TransportCandidate<Quantum::Geometry::ActiveQuarticHermitePatch>
+struct QuarticCandidate : TransportCandidate<LAMP::Geometry::ActiveQuarticHermitePatch>
 {
     // Values below supplement the nodal diagnostics, not acceptance gates.
     int changedEdgeValues = 0, changedCenterValues = 0;
@@ -104,7 +104,7 @@ struct QuarticCandidate : TransportCandidate<Quantum::Geometry::ActiveQuarticHer
 // The new snapshot is constructed before returning; caller must additionally
 // validate its topology/contacts, transport-band coverage and port separation
 // before committing. No material, contact-angle, inflow or redistance law here.
-Candidate advance(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHermitePatch& previous,
+Candidate advance(const QuadtreeMesh& mesh, const LAMP::Geometry::ActiveHermitePatch& previous,
     double dt, const LevelSetBoundaryTrace::Velocity& newVelocity,
     const LevelSetBoundaryTrace::Velocity& oldVelocity, const Options& options);
 // Fixed mixed-leaf counterpart: same characteristic, scalar-increment Q4
@@ -119,7 +119,7 @@ Candidate advance(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHermi
 // Trajectories retain the conservative GLOBAL finest active-cell half-step
 // bound. Runtime remeshing, material projection and physical inflow are not
 // enabled by this entry; the caller still validates/corrects the candidate.
-Candidate advanceNative(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHermitePatch& previous,
+Candidate advanceNative(const QuadtreeMesh& mesh, const LAMP::Geometry::ActiveHermitePatch& previous,
     double dt, const LevelSetBoundaryTrace::Velocity& newVelocity,
     const LevelSetBoundaryTrace::Velocity& oldVelocity, const Options& options);
 // Cubic counterpart of advanceQuarticNativeJet. Shares the retained RK2 map
@@ -132,7 +132,7 @@ Candidate advanceNative(const QuadtreeMesh& mesh, const Quantum::Geometry::Activ
 // the base jet is pulled back from the actual cap
 // cell across the seam, then the existing pure wet-sector rule is applied.
 // The base derivatives remain free; no contact-angle value is prescribed.
-Candidate advanceNativeJet(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHermitePatch& previous,
+Candidate advanceNativeJet(const QuadtreeMesh& mesh, const LAMP::Geometry::ActiveHermitePatch& previous,
     double dt, const LevelSetBoundaryTrace::Velocity& newVelocity,
     const LevelSetBoundaryTrace::Velocity& oldVelocity, const Options& options);
 // Same retained characteristic and GLOBAL finest-cell trace bound. Add the
@@ -150,7 +150,7 @@ Candidate advanceNativeJet(const QuadtreeMesh& mesh, const Quantum::Geometry::Ac
 // band/port checks, local volume/phase-flux correction and material projection
 // remain caller responsibilities. No runtime remeshing or new contact law.
 QuarticCandidate advanceQuarticNative(const QuadtreeMesh& mesh,
-    const Quantum::Geometry::ActiveQuarticHermitePatch& previous, double dt,
+    const LAMP::Geometry::ActiveQuarticHermitePatch& previous, double dt,
     const LevelSetBoundaryTrace::Velocity& newVelocity,
     const LevelSetBoundaryTrace::Velocity& oldVelocity, const Options& options);
 // Closed-component migration port: shares the characteristic, pointwise value
@@ -165,7 +165,7 @@ QuarticCandidate advanceQuarticNative(const QuadtreeMesh& mesh,
 // reconstruct derivatives of the transported scalar (including its boundary
 // history). Unaffected supports retain the interior jet pullback.
 QuarticCandidate advanceQuarticNativeJet(const QuadtreeMesh& mesh,
-    const Quantum::Geometry::ActiveQuarticHermitePatch& previous, double dt,
+    const LAMP::Geometry::ActiveQuarticHermitePatch& previous, double dt,
     const LevelSetBoundaryTrace::Velocity& newVelocity,
     const LevelSetBoundaryTrace::Velocity& oldVelocity, const Options& options);
 }

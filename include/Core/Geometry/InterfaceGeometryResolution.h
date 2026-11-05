@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // A valid scalar can still be under-resolved by the retained graph chart.
 // Callers may refine/retry; they must not publish a partial zero set.

@@ -2,7 +2,7 @@
 
 #include "Core/Geometry/Detail/ExactExpansion.h"
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {

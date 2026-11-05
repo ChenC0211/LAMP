@@ -14,11 +14,11 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
-using Patch = Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch = LAMP::Geometry::ActiveQuarticHermitePatch;
 using Snapshot = LevelSetHermiteGeometry::Snapshot;
 using Interval = Snapshot::QuarticCenterInterval;
 void require(bool ok, const char* message) { if (!ok) throw std::invalid_argument(message); }

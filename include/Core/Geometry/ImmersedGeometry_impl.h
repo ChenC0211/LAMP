@@ -48,6 +48,21 @@ inline double pointSegmentDist2(const Vector2D& p, const Vector2D& a, const Vect
     if (!(denom > 0.0))
         return (p - a).mod2();
 
+    // Cartesian nearest points retain the query's in-segment tangent
+    // coordinate exactly. Reconstructing it through t can move an exactly
+    // collinear query by an ULP and invent a positive distance/CSG phase.
+    // These are geometric identities, with no tolerance or coordinate shift.
+    if (a.x == b.x)
+    {
+        const double tangent = std::min(std::max(p.y, std::min(a.y, b.y)), std::max(a.y, b.y));
+        return (p - Vector2D(a.x, tangent)).mod2();
+    }
+    if (a.y == b.y)
+    {
+        const double tangent = std::min(std::max(p.x, std::min(a.x, b.x)), std::max(a.x, b.x));
+        return (p - Vector2D(tangent, a.y)).mod2();
+    }
+
     const double t = clamp01((ap.x * ab.x + ap.y * ab.y) / denom);
     const Vector2D q = a + ab * t;
     return (p - q).mod2();
@@ -593,7 +608,7 @@ void ImmersedGeometry<Mesh>::initializeLevelSets(Mesh &mesh, double time, bool w
             std::cout << "[ImmersedGeometry] computing distances..." << std::endl;
         // Hard minimum is the distance to the union of the supplied curves.
         // Smoothing that minimum would move corners and perturb the zero set.
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
         for (int i = 0; i < mesh.vertIndexNum(); i++)
         {
             const Vector2D coordinate = mesh.verts(mesh.vertIndexToLabel[i]).coord();
@@ -620,7 +635,7 @@ void ImmersedGeometry<Mesh>::initializeLevelSets(Mesh &mesh, double time, bool w
         };
 
         const bool innerInside = pointInsideCurves(levelSets[levelSetI].innerPoint());
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
         for (int i = 0; i < mesh.vertIndexNum(); i++)
         {
             const Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -637,7 +652,7 @@ void ImmersedGeometry<Mesh>::initializeLevelSets(Mesh &mesh, double time, bool w
             std::cout << "[ImmersedGeometry] sign done." << std::endl;
 
         // Legacy zero displacement is retained only for unconstrained nodes.
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
         for (int i = 0; i < mesh.vertIndexNum(); i++)
         {
             if (!boundaryValues.empty() && boundaryValues[levelSetI][i])
@@ -835,7 +850,7 @@ void ImmersedGeometry<Mesh>::markPhases(Mesh& mesh)
 template<typename Mesh>
 void ImmersedGeometry<Mesh>::diffForReinitLS(const Mesh& mesh, const int levelSetI)
 {
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); i++)
     {
         Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -844,7 +859,7 @@ void ImmersedGeometry<Mesh>::diffForReinitLS(const Mesh& mesh, const int levelSe
         LSs_dyy_[levelSetI].value[i] = FiniteDifference::dyy(levelSets[levelSetI], mesh, vert);
     }
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); i++)
     {
         Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -859,7 +874,7 @@ void ImmersedGeometry<Mesh>::diffForReinitLS(const Mesh& mesh, const int levelSe
 template<typename Mesh>
 void ImmersedGeometry<Mesh>::searchCutEdges(const Mesh& mesh, const int levelSetI)
 {
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.hEdgeIndexNum(); i++)
     {
         Edge& hEdge = mesh.hEdges(mesh.hEdgeIndexToLabel[i]);
@@ -878,7 +893,7 @@ void ImmersedGeometry<Mesh>::searchCutEdges(const Mesh& mesh, const int levelSet
         }
     }
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vEdgeIndexNum(); i++)
     {
         Edge& vEdge = mesh.vEdges(mesh.vEdgeIndexToLabel[i]);
@@ -1081,7 +1096,7 @@ void ImmersedGeometry<Mesh>::syncHistoricalLevelSetStorageToCurrent(const Mesh& 
     levelSetsPrePre_dx[levelSetI].initialize(mesh, 0.0);
     levelSetsPrePre_dy[levelSetI].initialize(mesh, 0.0);
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); ++i)
     {
         levelSetsPre[levelSetI].value[i] = levelSets[levelSetI].value[i];
@@ -1161,7 +1176,7 @@ void ImmersedGeometry<Mesh>::prepareLevelSetDerivedStorage(const Mesh& mesh, con
 template<typename Mesh>
 void ImmersedGeometry<Mesh>::computeSecondDerivatives(const Mesh& mesh, const int levelSetI)
 {
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); i++)
     {
         Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -1173,7 +1188,7 @@ void ImmersedGeometry<Mesh>::computeSecondDerivatives(const Mesh& mesh, const in
 template<typename Mesh>
 void ImmersedGeometry<Mesh>::computeFirstDerivativesAndMixed(const Mesh& mesh, const int levelSetI)
 {
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); i++)
     {
         Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -1181,7 +1196,7 @@ void ImmersedGeometry<Mesh>::computeFirstDerivativesAndMixed(const Mesh& mesh, c
         LSs_dy_[levelSetI].value[i] = FiniteDifference::dy(levelSets[levelSetI], mesh, vert);
     }
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); i++)
     {
         Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -1259,7 +1274,7 @@ void ImmersedGeometry<Mesh>::reinitLevelSet(const Mesh& mesh, const int levelSet
         double minEdgeLength = std::numeric_limits<double>::max();
         double minCutLength = minEdgeLength;
 
-#pragma omp parallel for reduction(min:minCutLength, minEdgeLength) num_threads(thread_num)
+#pragma omp parallel for reduction(min:minCutLength, minEdgeLength)
         for (int i = 0; i < mesh.vertIndexNum(); i++)
         {
             if (needReinit.value[i])
@@ -1324,7 +1339,7 @@ void ImmersedGeometry<Mesh>::reinitLevelSet(const Mesh& mesh, const int levelSet
     
         fictitiousTime = tStep * minCutLength;
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
         for (int i = 0; i < mesh.vertIndexNum(); i++)
         {
             if (needReinit.value[i])
@@ -1337,7 +1352,7 @@ void ImmersedGeometry<Mesh>::reinitLevelSet(const Mesh& mesh, const int levelSet
 
         diffForReinitLS(mesh, levelSetI);
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
         for (int i = 0; i < mesh.vertIndexNum(); i++)
         {
             if (needReinit.value[i])
@@ -1352,7 +1367,7 @@ void ImmersedGeometry<Mesh>::reinitLevelSet(const Mesh& mesh, const int levelSet
 
         fineResidual = 0.0;
         coarseResidual = 0.0;
-#pragma omp parallel for reduction(max:fineResidual, coarseResidual) num_threads(thread_num)
+#pragma omp parallel for reduction(max:fineResidual, coarseResidual)
         for (int i = 0; i < mesh.vertIndexNum(); i++)
         {
             double _residual = fabs(operatorHG(LSs_dx_forward_[levelSetI].value[i], LSs_dx_backward_[levelSetI].value[i], LSs_dy_forward_[levelSetI].value[i], LSs_dy_backward_[levelSetI].value[i], levelSets[levelSetI].value[i]) - 1.0);
@@ -1519,7 +1534,7 @@ void ImmersedGeometry<Mesh>::exactRedistanceLevelSet(const Mesh& mesh, const int
     //         hundreds of cell-sized segments produces a large negative bias that
     //         flips the sign of vertices near the boundary, creating bumps.
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); ++i)
     {
         const Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -1685,7 +1700,7 @@ void ImmersedGeometry<Mesh>::updateLevelSet(const Mesh &mesh, const int levelSet
         levelSetsPrePre_dx[levelSetI].initialize(mesh, 0.0);
         levelSetsPrePre_dy[levelSetI].initialize(mesh, 0.0);
     }
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); i++)
     {
         Vert &vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -1709,7 +1724,7 @@ void ImmersedGeometry<Mesh>::updateLevelSet(const Mesh &mesh, const int levelSet
     int prescribedBoundaryVertexCount = 0;
     double maxTraceRatio = 0.0;
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); i++)
     {
         Vert &vert = mesh.verts(mesh.vertIndexToLabel[i]);

@@ -17,7 +17,7 @@
 // selection, boundary law or IO. Views borrow retained scaled nodal doubles and
 // their original normalized cache; the caller owns that one scalar authority.
 // Keep TU-local linkage and the existing strict floating-point boundary.
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -149,12 +149,36 @@ struct Outward
             return negate(b);
         if (b.lo == -1.0 && b.hi == -1.0)
             return negate(a);
-        const std::array<double, 4> products{{a.lo * b.lo, a.lo * b.hi, a.hi * b.lo, a.hi * b.hi}};
-        for (double value : products)
-            if (!std::isfinite(value))
-                return whole();
-        return {down(*std::min_element(products.begin(), products.end())),
-                up(*std::max_element(products.begin(), products.end()))};
+        // Monotonicity selects the SAME extrema of the four endpoint
+        // products. In particular, nonnegative Bernstein weights need only
+        // two products. Keep the original adjacent-binary64 enclosure and
+        // overflow rule; only two intervals straddling zero need all four.
+        double lo, hi;
+        if (a.lo >= 0.0)
+        {
+            if (b.lo >= 0.0) { lo = a.lo * b.lo; hi = a.hi * b.hi; }
+            else if (b.hi <= 0.0) { lo = a.hi * b.lo; hi = a.lo * b.hi; }
+            else { lo = a.hi * b.lo; hi = a.hi * b.hi; }
+        }
+        else if (a.hi <= 0.0)
+        {
+            if (b.lo >= 0.0) { lo = a.lo * b.hi; hi = a.hi * b.lo; }
+            else if (b.hi <= 0.0) { lo = a.hi * b.hi; hi = a.lo * b.lo; }
+            else { lo = a.lo * b.hi; hi = a.lo * b.lo; }
+        }
+        else
+        {
+            if (b.lo >= 0.0) { lo = a.lo * b.hi; hi = a.hi * b.hi; }
+            else if (b.hi <= 0.0) { lo = a.hi * b.lo; hi = a.lo * b.lo; }
+            else
+            {
+                lo = std::min(a.lo * b.hi, a.hi * b.lo);
+                hi = std::max(a.lo * b.lo, a.hi * b.hi);
+            }
+        }
+        if (!std::isfinite(lo) || !std::isfinite(hi))
+            return whole();
+        return {down(lo), up(hi)};
     }
     // A positive represented divisor; Bernstein controls use integers 3 and 9.
     static Interval dividePositive(Interval value, double divisor)
@@ -835,4 +859,4 @@ class CellView
 };
 } // namespace LevelSetHermiteScalar
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

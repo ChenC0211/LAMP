@@ -5,8 +5,9 @@
 #include <array>
 #include <cstddef>
 #include <stdexcept>
+#include <type_traits>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -153,10 +154,27 @@ class BasicNativeCurveCell : public DofLayout
         }
     }
     Polynomial polynomial(const MappedHermiteSegment::Coordinate &x,
-                                                const MappedHermiteSegment::Coordinate &y) const
+        const MappedHermiteSegment::Coordinate &y,unsigned dx=0,unsigned dy=0) const
     {
-        return source_.restrictLocal(cell_.native, x, y).numerator;
+        return source_.restrictLocal(cell_.native,x,y,dx,dy).numerator;
     }
+    // Only the geometry-only native Q4 consumer instantiates this data port.
+    // The source owns the original outward Bernstein coefficients; root
+    // qualification and iteration remain in the mapped geometry integrator.
+    template<class S=Source>
+    bool transverseBernsteinControls(int chosenAxis,ExactExpansion::Interval q,
+        std::array<ExactExpansion::Interval,5>& controls) const
+    { return source_.transverseBernsteinControls(cell_.native,chosenAxis,q,controls); }
+    // Instantiated only by the exact NativeQuarticCurveCell integration path;
+    // the legacy native cubic adapter retains its original isolation.
+    template<class S=Source>
+    bool lookupInitialRoots(const std::array<ExactExpansion::Expansion,8>& input,bool allowMultiple,
+        std::vector<typename S::InitialRootCertificate>& roots) const
+    { return source_.lookupInitialRoots(cell_.native,input,allowMultiple,roots); }
+    template<class S=Source>
+    void rememberInitialRoots(const std::array<ExactExpansion::Expansion,8>& input,bool allowMultiple,
+        const std::vector<typename S::InitialRootCertificate>& roots) const
+    { source_.rememberInitialRoots(cell_.native,input,allowMultiple,roots); }
     void finalizeSensitivity(::LevelSetMappedInterface::CellArc<DofLayout::dofCount>& arc) const
     {
         if constexpr(DofLayout::dofCount==25)
@@ -173,8 +191,65 @@ class BasicNativeCurveCell : public DofLayout
     MappedHermiteSegment::CellAddress cell_;
     std::array<Vector2D, 2> bounds_;
 };
+// A completed native cell contains four exact Q4 pieces, not one Q4.
+// Each graph retains its original native ID/chart and belongs to one proved
+// piece. The 25 terminal columns describe that piece's polynomial in the
+// ORIGINAL native chart; they are not an independent native-25 state.
+class NativeC2MacroCurveCell : public QuarticDofLayout
+{
+  public:
+    using Source=LevelSetHermiteScalar::C2MacroQuarticLeafData;
+    using Query=MappedHermiteSegment::BasicQuery<MappedHermiteSegment::BasicNativeCellLayout<Source>>;
+    using Polynomial=typename Query::Polynomial;
+    NativeC2MacroCurveCell(const Source& source,const ::LevelSetMappedInterface::Graph& graph)
+        :source_(source),cell_{-1,-1,graph.nativeCellIndex}
+    {
+        if(graph.cellI!=-1 || graph.cellJ!=-1 || graph.nativeCellIndex<0
+            || !source.cellActive(graph.nativeCellIndex))
+            throw std::invalid_argument(
+                "[LevelSetMappedInterface] C2 graph requires a valid active native cell");
+        bounds_=source.leafBounds(cell_.native);
+        // Validate the actual complete graph subbox, before any coefficient
+        // conversion. A graph crossing a half seam is never replaced by one
+        // whole-cell polynomial or silently assigned by its midpoint.
+        piece_=source.pieceIndexForNativeBox(cell_.native,graph.localLower,graph.localUpper);
+    }
+    MappedHermiteSegment::CellAddress address() const {return cell_;}
+    std::array<Vector2D,2> bounds() const {return bounds_;}
+    Vector2D derivativeScale() const
+    {return {bounds_[1].x-bounds_[0].x,bounds_[1].y-bounds_[0].y};}
+    std::array<double,25> coefficients() const
+    {return source_.mappedPieceNativeLocalDofs(cell_.native,piece_);}
+    Polynomial polynomial(const MappedHermiteSegment::Coordinate& x,
+        const MappedHermiteSegment::Coordinate& y,unsigned dx=0,unsigned dy=0) const
+    {
+        // Root isolation/refinement continues to use the retained exact
+        // piece net. Rounded terminal coefficients never authorize a root.
+        return source_.restrictPieceNative(cell_.native,piece_,x,y,dx,dy).numerator;
+    }
+    void finalizeSensitivity(::LevelSetMappedInterface::CellArc<25>& arc) const
+    {
+        // Pull back native-chart terminal columns through this piece's net
+        // and the complete shared completion to the true formal sources.
+        arc.independentSensitivity=source_.pullbackPieceNativeSensitivity(
+            cell_.native,piece_,arc.sensitivity);
+        arc.requiresNativeDofConstraints=false;
+    }
+  private:
+    const Source& source_;
+    MappedHermiteSegment::CellAddress cell_;
+    std::array<Vector2D,2> bounds_;
+    int piece_=-1;
+};
 using NativeCurveCell=BasicNativeCurveCell<LevelSetHermiteScalar::LeafSnapshot>;
 using NativeQuarticCurveCell=BasicNativeCurveCell<LevelSetHermiteScalar::QuarticLeafData,QuarticDofLayout>;
+template<class Scalar> struct NativeCurveCellSelection
+{
+    using Type=BasicNativeCurveCell<Scalar,
+        std::conditional_t<Scalar::dofCount==25,QuarticDofLayout,CubicDofLayout>>;
+};
+template<> struct NativeCurveCellSelection<LevelSetHermiteScalar::C2MacroQuarticLeafData>
+{using Type=NativeC2MacroCurveCell;};
 } // namespace MappedHermiteInterface
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

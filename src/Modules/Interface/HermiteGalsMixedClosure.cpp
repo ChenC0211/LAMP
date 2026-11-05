@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
@@ -62,8 +62,8 @@ HermiteGalsMixedClosureResult closeHermiteGalsMixedUniform(const QuadtreeMesh& m
             const auto columnValue=[&](int s){return s%2?normal(idAt(i,s/2),idAt(i,s/2+1)):primary.vertices[idAt(i,s/2)].dx;};
             // Even scalar -> even phi_y across r=0, so its centered odd
             // derivative is exactly zero. Axis phi_x data were checked above.
-            const double dx=axis && i==0?0:Quantum::Geometry::compactQuarticDerivativeAtNode(2*i,2*nx+1,rowCoord,rowValue,require);
-            const double dy=Quantum::Geometry::compactQuarticDerivativeAtNode(2*j,2*ny+1,columnCoord,columnValue,require);
+            const double dx=axis && i==0?0:LAMP::Geometry::compactQuarticDerivativeAtNode(2*i,2*nx+1,rowCoord,rowValue,require);
+            const double dy=LAMP::Geometry::compactQuarticDerivativeAtNode(2*j,2*ny+1,columnCoord,columnValue,require);
             const double value=.5*dx+.5*dy;
             require(std::isfinite(value),"nonfinite mixed closure result");
             mixed[vertex]=value;
@@ -78,4 +78,4 @@ HermiteGalsMixedClosureResult closeHermiteGalsMixedUniform(const QuadtreeMesh& m
             +" vertex="+std::to_string(vertex)+"] "+stage+": "+error.what());
     }
 }
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

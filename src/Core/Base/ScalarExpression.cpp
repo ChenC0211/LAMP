@@ -4,7 +4,7 @@
 #include <set>
 #include <stdexcept>
 
-namespace Quantum {
+namespace LAMP {
 namespace {
 using Jet=ScalarExpression::Jet;
 using Function=std::function<Jet(double,double,double)>;

@@ -31,8 +31,8 @@ void require(bool ok, const std::string& reason)
 }
 bool finite(Vector2D p) { return std::isfinite(p.x) && std::isfinite(p.y); }
 bool same(Vector2D a, Vector2D b) { return a.x == b.x && a.y == b.y; }
-using Quantum::Geometry::Detail::InterfaceQuadrature::checked;
-using Quantum::Geometry::Detail::InterfaceQuadrature::offAxisWeight;
+using LAMP::Geometry::Detail::InterfaceQuadrature::checked;
+using LAMP::Geometry::Detail::InterfaceQuadrature::offAxisWeight;
 Vector2D midpoint(Vector2D a, Vector2D b)
 {
     return {checked((static_cast<long double>(a.x) + b.x) / 2.0L, "midpoint overflow"),
@@ -181,8 +181,8 @@ std::vector<Vector2D> crossings(const Snapshot& geometry, Vector2D a, Vector2D b
     return result;
 }
 
-using Quantum::Geometry::Detail::InterfaceQuadrature::gaussX;
-using Quantum::Geometry::Detail::InterfaceQuadrature::gaussW;
+using LAMP::Geometry::Detail::InterfaceQuadrature::gaussX;
+using LAMP::Geometry::Detail::InterfaceQuadrature::gaussW;
 
 struct CurveGraph
 {
@@ -707,7 +707,7 @@ DeclaredChain declaredChain(const QuadtreeMesh& mesh, const Grid& grid, const Sn
     result.mapping.assign(static_cast<std::size_t>(mesh.cellIndexNum()), -1);
     std::vector<std::vector<int>> nodeCells;
     for(const auto& node:nodes) nodeCells.push_back(node.cells);
-    const auto visits=Quantum::Geometry::Detail::orderInterfaceChain(
+    const auto visits=LAMP::Geometry::Detail::orderInterfaceChain(
         connections,nodeCells,start,nodes[start].cells.front(),cutCells,false);
     int currentNode = start, currentCell = nodes[start].cells.front();
     for (std::size_t p = 0; p < cutCells; ++p)
@@ -986,7 +986,7 @@ std::vector<LevelSetInterfacePanels::ArcSample> LevelSetInterfacePanels::subarcQ
     if (chart.coordinateIsX) { graph.begin.x = localCoordinateBegin; graph.end.x = localCoordinateEnd; }
     else { graph.begin.y = localCoordinateBegin; graph.end.y = localCoordinateEnd; }
     const long double span = graph.physicalSpan();
-    return Quantum::Geometry::Detail::InterfaceQuadrature::sampleGraph(span,axisymmetric_,
+    return LAMP::Geometry::Detail::InterfaceQuadrature::sampleGraph(span,axisymmetric_,
         [&](double fraction) { return graph.at(fraction); },
         [&](ArcSample& node) { node.localGraphCoordinate=chart.coordinateIsX?
             node.frame.cellLocalPoint.x:node.frame.cellLocalPoint.y; },
@@ -996,7 +996,7 @@ std::vector<LevelSetInterfacePanels::ArcSample> LevelSetInterfacePanels::subarcQ
 
 namespace
 {
-namespace ProjectionExpansion = Quantum::Geometry::Detail::ExactExpansion;
+namespace ProjectionExpansion = LAMP::Geometry::Detail::ExactExpansion;
 using Expansion = ProjectionExpansion::Expansion;
 using ProjectionQuery = LevelSetInterfacePanels::LocalProjectionQuery;
 using ProjectionResult = LevelSetInterfacePanels::LocalProjection;
@@ -1221,10 +1221,10 @@ double projectionCoordinate(const Frame& frame, const PanelGraph& graph)
     if (!frame.hasCellChartPoint)
         return graph.coordinateIsX ? frame.cellLocalPoint.x : frame.cellLocalPoint.y;
     const auto point = LevelSetHermiteGeometry::cellChartPoint(frame);
-    return Quantum::Geometry::cellChartCoordinateValue(graph.coordinateIsX ? point.x : point.y);
+    return LAMP::Geometry::cellChartCoordinateValue(graph.coordinateIsX ? point.x : point.y);
 }
 
-namespace SharedProjection = Quantum::Geometry::Detail::LocalInterfaceProjection;
+namespace SharedProjection = LAMP::Geometry::Detail::LocalInterfaceProjection;
 using SharedProjection::projectionNeighbor;
 
 // A sign bracket is in increasing ORIENTED arclength, not necessarily increasing
@@ -1301,7 +1301,7 @@ Frame loadSectionFrame(const Snapshot& source, const PanelGraph& graph, double c
     const auto roots = source.intersectCellSection(graph.cellI,graph.cellJ,
         graph.coordinateIsX,{coordinate,false});
     require(roots.size() == 1, "load section is not one resolved retained curve graph");
-    require(Quantum::Geometry::cellChartInterior(roots.front()),
+    require(LAMP::Geometry::cellChartInterior(roots.front()),
         "load section root is not inside its retained cell chart");
     auto frame = source.jetAtCellChart(graph.cellI,graph.cellJ,roots.front());
     require(frame.hasCellChartPoint && !frame.hasCellLocalPoint

@@ -1,7 +1,7 @@
 #pragma once
 #include <vector>
 
-namespace Quantum::Geometry::ArcScalarRegularization
+namespace LAMP::Geometry::ArcScalarRegularization
 {
 // Closed ordered arc, one scalar at each knot. edgeLengths[i] is the positive
 // arc length from i to (i+1)%n, not a Euclidean proximity connection. The caller

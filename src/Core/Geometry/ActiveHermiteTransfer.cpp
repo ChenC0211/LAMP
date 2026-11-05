@@ -8,10 +8,10 @@ namespace ActiveHermiteTransfer
 {
 namespace
 {
-namespace Scalar = Quantum::Geometry::Detail::LevelSetHermiteScalar;
-namespace Exact = Quantum::Geometry::Detail::ExactExpansion;
+namespace Scalar = LAMP::Geometry::Detail::LevelSetHermiteScalar;
+namespace Exact = LAMP::Geometry::Detail::ExactExpansion;
 using Source = Scalar::LeafSnapshot;
-using Sampler = Quantum::Geometry::Detail::NativeHermiteTransfer::DatumSampler<Source>;
+using Sampler = LAMP::Geometry::Detail::NativeHermiteTransfer::DatumSampler<Source>;
 using Box = std::array<Vector2D,2>;
 using Point = std::array<double,2>;
 void require(bool valid, const char* reason)
@@ -63,7 +63,7 @@ double differenceBound(const Source& a,int ca,const Source& b,int cb,const Box& 
 }
 }
 
-Result prepare(const QuadtreeMesh& sourceMesh,const Quantum::Geometry::ActiveHermitePatch& patch,
+Result prepare(const QuadtreeMesh& sourceMesh,const LAMP::Geometry::ActiveHermitePatch& patch,
     const QuadtreeMesh& target,const std::vector<std::uint8_t>& active,bool radial)
 {
     Exact::validateEnvironment();

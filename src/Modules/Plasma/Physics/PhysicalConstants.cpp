@@ -6,7 +6,7 @@
 
 void PhysicalConstants::PrintTable(std::ostream& os)
 {
-    os << "[QUANTUM] PhysicalConstants (SI)\n";
+    os << "[LAMP] PhysicalConstants (SI)\n";
     os << std::scientific << std::setprecision(16);
 
     os << "  epsilon0 [F/m]   = " << epsilon0_Fpm << "\n";

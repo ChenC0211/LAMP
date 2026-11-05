@@ -2,7 +2,7 @@
 #include "Core/Geometry/QuadraticCellCut.h"
 #include "Core/Geometry/UnitPolynomialRoots.h"
 
-namespace Quantum::Geometry::QuadraticChordEvents
+namespace LAMP::Geometry::QuadraticChordEvents
 {
 using Point=PlanarCellCut::Point;
 // Endpoints move affinely with tau in [0,1]; the chord is bilinear in

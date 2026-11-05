@@ -25,7 +25,7 @@ std::optional<PicCollisions::RngState> readCollisionState(const std::filesystem:
     };
     std::ifstream in(path);
     std::string magic, version, mode, seed, count, extra;
-    if (!(in >> magic >> version >> mode >> seed >> count) || magic != "QUANTUM_MCC_RNG" || version != "1"
+    if (!(in >> magic >> version >> mode >> seed >> count) || (magic != "LAMP_MCC_RNG" && magic != "QUANTUM_MCC_RNG") || version != "1"
         || (in >> extra) || in.bad()) throw invalid();
     auto number = [&](const std::string& token) {
         std::uint64_t value = 0;

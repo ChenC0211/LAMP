@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace Quantum::Interface::Detail
+namespace LAMP::Interface::Detail
 {
 // One private numerical owner for both the explicit old rate API and the
 // interval API. unitVolume is old dt for rates, exactly one for integrated

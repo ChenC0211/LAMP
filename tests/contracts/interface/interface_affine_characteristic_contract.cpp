@@ -16,7 +16,7 @@
 #endif
 namespace
 {
-using namespace Quantum::Geometry;
+using namespace LAMP::Geometry;
 using Data=PolynomialVelocityData;
 using Slab=PolynomialVelocitySlab;
 using Proof=PolynomialAffineRk2FaceBounds;

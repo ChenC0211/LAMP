@@ -1,0 +1,17 @@
+Hydrodynamics
+{
+    method staggered;
+    densityRepresentation cellAverageProjection;
+    capillaryModel balancedCsf;
+    Initial { velocity (0 0); }
+    Boundary { type impermeable; }
+    BodyForce { acceleration (0 0); }
+    CSF { curvatureTolerance 1e-7; }
+    Numerics { characteristicSubsteps 1; materialInitialPanels 1; }
+    TimeIntegration
+    {
+        method adaptiveLinear;
+        interfaceMismatchTolerance .01;
+        maximumCorrectionRelative .25;
+    }
+}

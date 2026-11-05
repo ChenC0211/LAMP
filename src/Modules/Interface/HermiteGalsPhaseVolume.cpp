@@ -12,7 +12,7 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
@@ -68,10 +68,21 @@ HermiteGalsPhaseVolumeResult integrateHermiteGalsNativeTracePhaseVolumes(const Q
     const InterfacePhaseGeometry::MappedFacePartitions& partitions,
     const LevelSetInterfacePanels::NativeComponents& topology, const HermiteGalsPhaseVolumeConfig& config)
 { return HermiteGalsPhaseVolumeResult::integrate(mesh,source,config,&domain,&partitions,&topology); }
+HermiteGalsPhaseVolumeResult HermiteGalsPhaseVolumeResult::integratePublicationTrace(const QuadtreeMesh& mesh,
+    const HermiteGalsState& source,const NativeLeafDomain& domain,
+    const InterfacePhaseGeometry::MappedFacePartitions& partitions,
+    const LevelSetInterfacePanels::NativeComponents& topology,const HermiteGalsPhaseVolumeConfig& config,
+    const Detail::PublicationTracePermit& permit)
+{
+    require(permit.mesh_==&mesh && permit.source_==&source && permit.domain_==&domain
+        && permit.partitions_==&partitions && permit.topology_==&topology && permit.config_==&config,
+        source.identity(),"publication trace permit differs from actual factory inputs");
+    return integrate(mesh,source,config,&domain,&partitions,&topology,&permit);
+}
 HermiteGalsPhaseVolumeResult HermiteGalsPhaseVolumeResult::integrate(const QuadtreeMesh& mesh,
     const HermiteGalsState& source, const HermiteGalsPhaseVolumeConfig& config,
     const NativeLeafDomain* retainedDomain, const InterfacePhaseGeometry::MappedFacePartitions* retainedPartitions,
-    const LevelSetInterfacePanels::NativeComponents* retainedTopology)
+    const LevelSetInterfacePanels::NativeComponents* retainedTopology, const Detail::PublicationTracePermit* publicationPermit)
 {
     const auto id=source.identity();
     try {
@@ -92,14 +103,17 @@ HermiteGalsPhaseVolumeResult HermiteGalsPhaseVolumeResult::integrate(const Quadt
         // Aliasing ownership retains the immutable view; no scalar copy or
         // externally writable shared_ptr is created.
         const std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> scalar(owner,&owner->snapshot());
-        require(scalar->usesNativeLeaves() && scalar->reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic,
+        require(scalar->usesNativeLeaves() && (scalar->reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic||scalar->usesC2Macro()),
             id,"integrate: requires native quartic source");
         require(scalar->radialAxisSymmetry()==radial,id,"integrate: scalar/primary XY/RZ measure mismatch");
-        FaceSegmentGraph graph;
-        graph.build(mesh,[&](const QuadtreeMesh&,const Cell& cell){
-            return std::binary_search(p.geometryCells.begin(),p.geometryCells.end(),cell.index());});
-        const auto localDomain=NativeLeafDomain::build(mesh,graph,radial);
-        const auto& domain=retainedDomain?*retainedDomain:localDomain;
+        std::optional<NativeLeafDomain> localDomain;
+        if(!retainedDomain) {
+            FaceSegmentGraph graph;
+            graph.build(mesh,[&](const QuadtreeMesh&,const Cell& cell){
+                return std::binary_search(p.geometryCells.begin(),p.geometryCells.end(),cell.index());});
+            localDomain.emplace(NativeLeafDomain::build(mesh,graph,radial));
+        }
+        const auto& domain=retainedDomain?*retainedDomain:*localDomain;
         InterfaceCellMeasure::DiscoveredVolumes measured;
         std::optional<InterfaceCellMeasure::NativeTraceLedger> traceLedger;
         if(conservative)measured=InterfaceCellMeasure::discoverVolumes(mesh,domain,scalar,config.boundaryContacts,config.symmetryPlanes);
@@ -108,8 +122,11 @@ HermiteGalsPhaseVolumeResult HermiteGalsPhaseVolumeResult::integrate(const Quadt
                 require(&retainedPartitions->source()==scalar.get(),id,"integrate: retained trace changed scalar owner");
                 retainedPartitions->validate(mesh,domain);
             }
-            auto trace=retainedPartitions ? InterfaceCellMeasure::measureNativeTraceVolumes(mesh,domain,*retainedPartitions,*retainedTopology,
-                config.boundaryContacts,config.symmetryPlanes)
+            auto trace=publicationPermit
+                ? InterfaceCellMeasure::Detail::PublicationTraceVolumeAccess::measure(mesh,domain,*retainedPartitions,*retainedTopology,
+                    config.boundaryContacts,config.symmetryPlanes,*publicationPermit)
+                : retainedPartitions ? InterfaceCellMeasure::measureNativeTraceVolumes(mesh,domain,*retainedPartitions,*retainedTopology,
+                    config.boundaryContacts,config.symmetryPlanes)
                 : InterfaceCellMeasure::discoverNativeTraceVolumes(mesh,domain,scalar,config.boundaryContacts,config.symmetryPlanes);
             traceLedger=std::move(trace.ledger);measured=std::move(static_cast<InterfaceCellMeasure::DiscoveredVolumes&>(trace));
         }

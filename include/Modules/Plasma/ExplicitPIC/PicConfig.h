@@ -496,7 +496,7 @@ struct PicConfig
 
     // Runtime defaults only; no longer overridden by pic.dict.
     // If true, enable the fused orbit-avg weights build path.
-    // (May still be overridden via env var QUANTUM_IMPLICIT_ORBITAVG_FUSED.)
+    // (May still be overridden via env var LAMP_IMPLICIT_ORBITAVG_FUSED.)
     bool orbitAvgFused = false;
 
     struct OrbitAvgAdaptiveConfig

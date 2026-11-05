@@ -15,7 +15,7 @@ VertField<T>::VertField(Mesh& mesh, const T& value) : Field<T>()
     this->size_ = mesh.vertIndexNum();
     this->value = std::make_unique<T[]>(this->size_);
     this->label_ = std::make_unique<int[]>(this->size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < this->size_; i++)
     {
         Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -36,7 +36,7 @@ void VertField<T>::initialize(const Mesh& mesh, const T& value)
 
     this->value = std::make_unique<T[]>(this->size_);
     this->label_ = std::make_unique<int[]>(this->size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < this->size_; i++)
     {
         Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);
@@ -88,7 +88,7 @@ void VertField<T>::updateWithMesh(const Mesh& mesh)
     this->label_ = std::move(tempLabel);
     this->size_ = mesh.vertIndexNum();
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int cellI = 0; cellI < mesh.Nx * mesh.Ny; cellI++)
     {
         Cell& cell = mesh.cells(cellI);
@@ -142,7 +142,7 @@ unique_ptr<CellField<T>> VertField<T>::toCellField(const Mesh& mesh) const
     auto cellField = make_unique<CellField<T>>();
     cellField->initialize(mesh, 0.0);
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.cellIndexNum(); i++)
     {
         Cell& cell = mesh.cells(mesh.cellIndexToLabel[i]);
@@ -177,7 +177,7 @@ std::unique_ptr<HEdgeField<T>> VertField<T>::toHEdgeField(const Mesh& mesh) cons
     auto hEdgeField = make_unique<HEdgeField<T>>();
     hEdgeField->initialize(mesh, 0.0);
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.hEdgeIndexNum(); i++)
     {
         Edge& hEdge = mesh.hEdges(mesh.hEdgeIndexToLabel[i]);
@@ -213,7 +213,7 @@ std::unique_ptr<VEdgeField<T>> VertField<T>::toVEdgeField(const Mesh& mesh) cons
     auto vEdgeField = make_unique<VEdgeField<T>>();
     vEdgeField->initialize(mesh, 0.0);
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vEdgeIndexNum(); i++)
     {
         Edge& vEdge = mesh.vEdges(mesh.vEdgeIndexToLabel[i]);

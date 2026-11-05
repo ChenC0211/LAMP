@@ -1,0 +1,3 @@
+Hydrodynamics { method staggered; densityRepresentation cellAverageProjection;
+Initial { velocity (0 0); } Boundary { type impermeable; }
+BodyForce { acceleration (0 0); } TimeIntegration { method adaptiveLinear; } }

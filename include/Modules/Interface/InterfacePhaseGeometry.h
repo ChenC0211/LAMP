@@ -10,6 +10,7 @@ class NativeLeafDomain;
 class LevelSetInterfacePanels;
 class LevelSetMappedSegment;
 namespace LevelSetHermiteGeometry { class Snapshot; }
+namespace LAMP::Interface { class HermiteGalsPublication; }
 
 // Phase geometry on the existing selected native leaves. No momentum boundary
 // law, velocity reconstruction, time integration or Hydro solver is required.
@@ -63,6 +64,12 @@ public:
     // A failed refinement preserves the entire cache and its incidence counts.
     void refineTraceEvent(int nativeRow,int half,std::size_t eventIndex);
 private:
+    // Only the immutable publication owner may reuse the full layout proof
+    // made by this cache's constructor. It still validates the current mesh
+    // through its state before checking these actual retained bindings.
+    friend class LAMP::Interface::HermiteGalsPublication;
+    void validatePublicationBinding(const NativeLeafDomain&,
+        const LevelSetHermiteGeometry::Snapshot&) const;
     struct Impl;
     MappedFacePartitions(const QuadtreeMesh& mesh,const NativeLeafDomain& domain,
         std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> source,bool nativeTrace);

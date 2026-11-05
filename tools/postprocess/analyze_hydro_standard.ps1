@@ -23,7 +23,7 @@ function Source([string]$relative){$path=Join-Path $Run $relative;if(-not (Test-
 $record=Get-Content -LiteralPath (Source 'run.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 if($record.check_only -or $record.status -notin @('completed','failed')){throw 'Require a terminal physics run, not a preflight, live or launcher-failed run.'}
 if($record.status -ne 'completed' -and -not $AcceptedPrefix){throw 'Failed run: use -AcceptedPrefix to analyze only its accepted history.'}
-$exe=Source 'runtime/QUANTUM.exe'
+$exe=Source 'runtime/LAMP.exe'
 if((Get-FileHash -LiteralPath $exe).Hash -ne $record.program_sha256){throw 'Executable snapshot differs from run identity.'}
 foreach($inputRecord in $record.inputs){$path=Source $inputRecord.path;if((Get-FileHash -LiteralPath $path).Hash -ne $inputRecord.sha256){throw "Modified input snapshot: $($inputRecord.path)"}}
 $meta=Get-Content -LiteralPath (Source 'output/meta/hydro_moment_case.json') -Raw -Encoding UTF8 | ConvertFrom-Json

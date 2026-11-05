@@ -1,4 +1,4 @@
-param([string]$Preset = 'local', [switch]$Test, [int]$Jobs = 1, [string[]]$Target = @())
+param([string]$Preset = 'local', [switch]$Test, [int]$Jobs = 1, [string[]]$Target = @(), [switch]$SkipConfigure)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $cmakeCommand = Get-Command cmake -ErrorAction SilentlyContinue
@@ -13,8 +13,10 @@ if ($cmakeCommand) {
 }
 Push-Location $projectRoot
 try {
-    & $cmakeExe --preset $Preset
-    if ($LASTEXITCODE) { throw "CMake configure failed ($LASTEXITCODE)." }
+    if (-not $SkipConfigure) {
+        & $cmakeExe --preset $Preset
+        if ($LASTEXITCODE) { throw "CMake configure failed ($LASTEXITCODE)." }
+    }
     # Normal development builds the application. Explicit -Test builds all
     # registered check executables before CTest; it never runs by default.
     if (-not $Target.Count) {

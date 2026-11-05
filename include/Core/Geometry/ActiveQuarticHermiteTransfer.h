@@ -35,7 +35,7 @@ struct Report
 
 struct Result
 {
-    Quantum::Geometry::ActiveQuarticHermitePatch patch;
+    LAMP::Geometry::ActiveQuarticHermitePatch patch;
     // Full SOURCE native index arrays, not labels. A cell entry is nonnegative
     // only when its bounds AND authoritative constrained Q4 polynomial are
     // exactly unchanged. Its retained local chart can then be reused directly.
@@ -64,7 +64,7 @@ struct Result
 // Failure publishes nothing and changes neither mesh nor source patch. This
 // does not transfer velocity/pressure/charge or accept an App AMR time step.
 Result prepare(const QuadtreeMesh& sourceMesh,
-    const Quantum::Geometry::ActiveQuarticHermitePatch& sourcePatch,
+    const LAMP::Geometry::ActiveQuarticHermitePatch& sourcePatch,
     const QuadtreeMesh& targetMesh, const std::vector<std::uint8_t>& targetActiveCells,
     bool radialAxisSymmetry = false,
     const std::vector<std::uint8_t>& protectedSourceCells = {});

@@ -3,7 +3,7 @@
 #include "Modules/Interface/HermiteGalsTrace.h"
 #include <vector>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 class HermiteGalsVertexTransportResult;
 
@@ -36,4 +36,4 @@ private:
         const QuadtreeMesh&, const HermiteGalsState&, const std::vector<int>&,
         const LevelSetBoundaryTrace::Domain&, const HermiteGalsVelocityView&, const HermiteGalsVelocityView&);
 };
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

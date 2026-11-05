@@ -25,15 +25,15 @@
 
 namespace
 {
-using namespace Quantum::Interface;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using namespace LAMP::Interface;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Jet=Patch::NodalDof;
 using Profile=std::function<Jet(Vector2D)>;
 using Key=std::array<int,2>;
 using Coeff=std::array<double,11>;
 using Boundary=HermiteGalsFaceVelocity::Boundary;
 using Position=HermiteGalsTimeLayer::Position;
-using Term=Quantum::Geometry::UnitPolynomialTerm;
+using Term=LAMP::Geometry::UnitPolynomialTerm;
 constexpr long double pi=3.1415926535897932384626433832795L;
 static_assert(!std::is_default_constructible_v<HermiteGalsPhaseFluxResult>);
 static_assert(std::is_same_v<decltype(std::declval<HermiteGalsPhaseFluxResult&>().faces()),const std::vector<HermiteGalsPhaseFaceFlux>&>);
@@ -94,7 +94,7 @@ Velocity constantVelocity(double x,double y)
 {return [=](const NativeLeafFace& face,int,Vector2D,Vector2D){Coeff p{};p[0]=face.horizontal?y:x;return p;};}
 void coreRanges()
 {
-    namespace G=Quantum::Geometry;
+    namespace G=LAMP::Geometry;
     Term constant;constant.factor=1;constant.coefficients[0]=3;
     const long double tiny=std::ldexp(1.L,-60);
     for(bool reverse:{false,true}){
@@ -535,7 +535,7 @@ void traceCacheContract()
             rejects([&]{ordinaryCache.refineTraceEvent(face.nativeRow,half,k);},"exact point root");
             check(&ordinaryCache.traceHalfFace(face.nativeRow,half)==oldAddress && ordinaryCache.traceEventIncidenceCount()==count,"late refinement failure changed the cache");lateFailure=true;break;}}
     check(lateFailure,"late typed refinement failure not exercised");
-    Quantum::Geometry::ActiveHermitePatch cubic;cubic.activeCells.assign(mesh->cellIndexNum(),1);cubic.nodes.resize(mesh->vertIndexNum());
+    LAMP::Geometry::ActiveHermitePatch cubic;cubic.activeCells.assign(mesh->cellIndexNum(),1);cubic.nodes.resize(mesh->vertIndexNum());
     for(int v=0;v<mesh->vertIndexNum();++v)cubic.nodes[v]={point(*mesh,v).x-.375,1,0,0};
     const auto wrongFamily=std::make_shared<const Snapshot>(Snapshot::fromNativeLeaves(*mesh,cubic,false));
     rejects([&]{Cache::prepareNativeTrace(*mesh,domain,wrongFamily);},"native Q4 source");

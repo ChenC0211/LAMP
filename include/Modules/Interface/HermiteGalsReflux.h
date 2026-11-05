@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 class HermiteGalsIntegratedInventoryResult;
 struct HermiteGalsSideFlux

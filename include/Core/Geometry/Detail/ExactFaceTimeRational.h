@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-namespace Quantum::Geometry::Detail::FaceTime
+namespace LAMP::Geometry::Detail::FaceTime
 {
 namespace Exact=ExactExpansion;
 // Shared original face-time rational algebra. Only power-of-two rescaling;

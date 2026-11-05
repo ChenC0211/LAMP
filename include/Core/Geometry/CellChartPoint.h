@@ -2,7 +2,7 @@
 
 #include "Core/Base/Vector2D.h"
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // A dimensionless cell coordinate retained relative to either endpoint.
 // Its mathematical value is offset (lower) or 1-offset (upper). Never form

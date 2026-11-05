@@ -2,7 +2,7 @@
 #include <sstream>
 #include <iomanip>
 
-namespace Quantum::Geometry::Parametric {
+namespace LAMP::Geometry::Parametric {
 void validateContainedSurface(const Curve& curve,const DomainRectangle& box,bool rz){
     box.validate();
     for(const auto& arc:curve.arcs)for(int axis=0;axis<2;axis++){
@@ -173,4 +173,4 @@ DistanceSample signedDistance(const Curve& curve,Point query) {
     result.curvature=curvature;result.distanceCurvature=curvature/offsetFactor;
     result.normal={d.y/speed,-d.x/speed};result.tangent=d/speed;result.differentialAvailable=true;return result;
 }
-} // namespace Quantum::Geometry::Parametric
+} // namespace LAMP::Geometry::Parametric

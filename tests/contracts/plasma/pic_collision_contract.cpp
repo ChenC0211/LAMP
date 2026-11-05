@@ -148,11 +148,11 @@ void compareAdvance(CollisionsRngMode mode, double velocityScale)
                 "factory publishes restored collision call count");
             const auto path=dir/PicCheckpointStore::collisionName;
             for(const auto& bad:std::vector<std::string>{
-                "QUANTUM_MCC_RNG 2\n2 24680 99", "QUANTUM_MCC_RNG 1\n2 24680 -1",
-                "QUANTUM_MCC_RNG 1\n2 24680 18446744073709551616", "QUANTUM_MCC_RNG 1\n2 24680",
-                "QUANTUM_MCC_RNG 1\n2 24680 99 extra", "QUANTUM_MCC_RNG 1\n3 24680 99",
-                "QUANTUM_MCC_RNG 1\n"+std::to_string(static_cast<int>(mode))+" 123 99",
-                "QUANTUM_MCC_RNG 1\n"+std::to_string((static_cast<int>(mode)+1)%3)+" 24680 99"})
+                "LAMP_MCC_RNG 2\n2 24680 99", "LAMP_MCC_RNG 1\n2 24680 -1",
+                "LAMP_MCC_RNG 1\n2 24680 18446744073709551616", "LAMP_MCC_RNG 1\n2 24680",
+                "LAMP_MCC_RNG 1\n2 24680 99 extra", "LAMP_MCC_RNG 1\n3 24680 99",
+                "LAMP_MCC_RNG 1\n"+std::to_string(static_cast<int>(mode))+" 123 99",
+                "LAMP_MCC_RNG 1\n"+std::to_string((static_cast<int>(mode)+1)%3)+" 24680 99"})
             {
                 {std::ofstream file(path);file<<bad;}
                 std::unique_ptr<PicCollisions> candidate;bool rejected=false;

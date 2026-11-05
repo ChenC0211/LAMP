@@ -5,11 +5,11 @@
 #include <cstddef>
 #include <memory>
 #include <vector>
-namespace InterfaceCellMeasure { struct NativeTraceLedger; }
+namespace InterfaceCellMeasure { struct NativeTraceLedger; namespace Detail { class PublicationTraceVolumeAccess; } }
 namespace InterfacePhaseGeometry { class MappedFacePartitions; }
 class NativeLeafDomain;
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 struct HermiteGalsPhaseVolumeConfig
 {
@@ -19,6 +19,35 @@ struct HermiteGalsPhaseVolumeConfig
     std::vector<Vector2D> boundaryContacts;
     std::vector<LevelSetInterfacePanels::SymmetryPlane> symmetryPlanes;
 };
+class HermiteGalsPublication;
+class HermiteGalsPhaseVolumeResult;
+namespace Detail
+{
+// Synchronous factory-only provenance. No public constructor, copy, getter or
+// retained token permits a caller to bypass public topology certification.
+class PublicationTracePermit
+{
+    friend class ::LAMP::Interface::HermiteGalsPublication;
+    friend class ::LAMP::Interface::HermiteGalsPhaseVolumeResult;
+    friend class ::InterfaceCellMeasure::Detail::PublicationTraceVolumeAccess;
+    PublicationTracePermit(const QuadtreeMesh& mesh,const HermiteGalsState& source,
+        const NativeLeafDomain& domain,const InterfacePhaseGeometry::MappedFacePartitions& partitions,
+        const LevelSetInterfacePanels::NativeComponents& topology,const HermiteGalsPhaseVolumeConfig& config)
+        : mesh_(&mesh),source_(&source),domain_(&domain),partitions_(&partitions),topology_(&topology),config_(&config),
+          identity_(source.identity()),time_(source.timeLayer()),scalar_(&source.geometry().snapshot()) {}
+    PublicationTracePermit(const PublicationTracePermit&)=delete;
+    PublicationTracePermit& operator=(const PublicationTracePermit&)=delete;
+    const QuadtreeMesh* mesh_;
+    const HermiteGalsState* source_;
+    const NativeLeafDomain* domain_;
+    const InterfacePhaseGeometry::MappedFacePartitions* partitions_;
+    const LevelSetInterfacePanels::NativeComponents* topology_;
+    const HermiteGalsPhaseVolumeConfig* config_;
+    HermiteGalsIdentity identity_;
+    HermiteGalsTimeLayer time_;
+    const LevelSetHermiteGeometry::Snapshot* scalar_;
+};
+}
 struct HermiteGalsPhaseVolumeCell
 {
     int cell = -1, certifiedPhase = 0; // -1 liquid, +1 gas, 0 cut
@@ -59,7 +88,13 @@ private:
     const Data& checked() const;
     static HermiteGalsPhaseVolumeResult integrate(const QuadtreeMesh&, const HermiteGalsState&,
         const HermiteGalsPhaseVolumeConfig&, const NativeLeafDomain*,
-        const InterfacePhaseGeometry::MappedFacePartitions*, const LevelSetInterfacePanels::NativeComponents*);
+        const InterfacePhaseGeometry::MappedFacePartitions*, const LevelSetInterfacePanels::NativeComponents*,
+        const Detail::PublicationTracePermit* publicationPermit=nullptr);
+    static HermiteGalsPhaseVolumeResult integratePublicationTrace(const QuadtreeMesh&, const HermiteGalsState&,
+        const NativeLeafDomain&, const InterfacePhaseGeometry::MappedFacePartitions&,
+        const LevelSetInterfacePanels::NativeComponents&, const HermiteGalsPhaseVolumeConfig&,
+        const Detail::PublicationTracePermit&);
+    friend class HermiteGalsPublication;
     friend HermiteGalsPhaseVolumeResult integrateHermiteGalsPhaseVolumes(
         const QuadtreeMesh&, const HermiteGalsState&, const HermiteGalsPhaseVolumeConfig&);
     friend HermiteGalsPhaseVolumeResult integrateHermiteGalsNativeTracePhaseVolumes(const QuadtreeMesh&,

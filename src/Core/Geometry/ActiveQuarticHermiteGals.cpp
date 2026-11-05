@@ -17,7 +17,7 @@ namespace ActiveQuarticHermiteGals
 {
 namespace
 {
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Trace=LevelSetBoundaryTrace::JetResult;
 void require(bool valid,const char* reason)
 { if(!valid) throw std::runtime_error(std::string("[ActiveQuarticHermiteGals] ")+reason); }
@@ -43,7 +43,7 @@ struct Advanced
 template<class Coordinate,class Value>
 double derivativeAtNode(int target,int count,const Coordinate& coordinate,const Value& value)
 {
-    return Quantum::Geometry::compactQuarticDerivativeAtNode(target,count,coordinate,value,require);
+    return LAMP::Geometry::compactQuarticDerivativeAtNode(target,count,coordinate,value,require);
 }
 }
 

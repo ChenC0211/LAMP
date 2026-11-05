@@ -28,6 +28,53 @@ inline bool near(double a, double b, double scale)
         std::abs(a - b) <= 256.0 * std::numeric_limits<double>::epsilon() * scale;
 }
 
+// Dynamic half of the owned integrated structure. Its graph/coverage/leaf
+// geometry and component anchors were authenticated by the owning factory.
+inline void validatePreparedValues(const QuadtreeMesh& mesh,const FaceSegmentGraph& graph,
+    const CellField<double>& rhs,const CellField<double>& phi,const std::vector<double>& kappa,
+    const std::vector<PolarizationPoissonFVSolverCellCentered::FittedBoundary>& boundaries,
+    const PolarizationPoissonFVSolverCellCentered::Options& opt,
+    const std::vector<PolarizationPoissonFVSolverCellCentered::FittedBoundaryType>& types,
+    const std::vector<std::size_t>& reverse)
+{
+    using Type=PolarizationPoissonFVSolverCellCentered::FittedBoundaryType;
+    const bool strictSuperLU=opt.requireSuperLU&&opt.useSuperLU&&!opt.useGMRES;
+    const bool strictGMRES=opt.useGMRES&&!opt.requireSuperLU&&!opt.useSuperLU&&!opt.reuseFittedFactorization
+        &&opt.gmresRestart>0&&opt.gmresBlockRows>0&&opt.maxIter>0;
+    require((strictSuperLU||strictGMRES)&&!opt.useCG&&!opt.useIC,
+        "requires explicit strict SuperLU or GMRES without alternative backend or fallback");
+#ifndef EIGEN_SUPERLU_SUPPORT
+    require(!strictSuperLU,"required SuperLU support is unavailable; no fallback is allowed");
+#endif
+    require(std::isfinite(opt.relTol)&&opt.relTol>0&&opt.relTol<1,"relTol must be finite and in (0,1)");
+    const int count=mesh.cellIndexNum();const auto& segments=graph.segments();const auto& offsets=graph.cellOffsets();
+    require(rhs.size()==count&&rhs.value&&phi.size()==count&&phi.value,"rhs and phi must already be mesh-initialized");
+    require(&rhs!=&phi&&rhs.value.get()!=phi.value.get(),"rhs/phi aliasing is unsupported");
+    require(kappa.size()==segments.size()&&boundaries.size()==segments.size(),"coefficient/boundary arrays must cover every oriented segment");
+    for(int ci=0;ci<count;++ci){const auto label=mesh.cellIndexToLabel[ci];
+        require(rhs.label(ci)==label&&phi.label(ci)==label,"stale mesh/field cell identity");
+        require(std::isfinite(rhs.value[ci])&&std::isfinite(phi.value[ci]),"non-finite rhs or initial phi");
+    }
+    for(int ci=0;ci<count;++ci)for(auto sid=offsets[ci];sid<offsets[ci+1];++sid){
+        const auto& face=segments[sid];const auto& boundary=boundaries[sid];
+        require(boundary.type==types[sid],"boundary type differs from owned integrated geometry");
+        require(std::isfinite(boundary.value),"non-finite boundary value");
+        const bool interior=boundary.type==Type::Interior;
+        require(boundary.type==Type::Dirichlet||boundary.value==0,
+            "Interior/Neumann requires exactly zero unused boundary value");
+        require(std::isfinite(kappa[sid])&&kappa[sid]>0,"kappa must be finite and positive");
+        const auto center=mesh.cells(mesh.cellIndexToLabel[ci]).centerCoord();
+        const double halfDistance=(face.faceCenter-center).dotProduct(face.n);
+        const double area=CartesianMeasure::face(face.Af,face.faceCenter.x,opt.axisymmetric);
+        if(area!=0&&boundary.type!=Type::HomogeneousNeumann){
+            const double conductance=kappa[sid]*area/(interior?face.df:halfDistance);
+            require(std::isfinite(conductance)&&conductance>0,"unrepresentable face conductance");
+        }
+        if(reverse[sid]<sid)require(kappa[reverse[sid]]==kappa[sid],"inconsistent reverse active face");
+    }
+}
+
+template<bool GeometryOnly = false>
 inline void validate(const QuadtreeMesh& mesh, const FaceSegmentGraph& graph,
     const CellField<double>& rhs, const CellField<double>& phi,
     const std::vector<double>& kappa,
@@ -35,13 +82,19 @@ inline void validate(const QuadtreeMesh& mesh, const FaceSegmentGraph& graph,
     const PolarizationPoissonFVSolverCellCentered::Options& opt)
 {
     using Type = PolarizationPoissonFVSolverCellCentered::FittedBoundaryType;
-    require(opt.requireSuperLU && opt.useSuperLU && !opt.useCG && !opt.useIC,
-            "requires requireSuperLU=true, useSuperLU=true, useCG=false, useIC=false");
+    if constexpr(!GeometryOnly)
+    {
+    const bool strictSuperLU = opt.requireSuperLU && opt.useSuperLU && !opt.useGMRES;
+    const bool strictGMRES = opt.useGMRES && !opt.requireSuperLU && !opt.useSuperLU &&
+        !opt.reuseFittedFactorization && opt.gmresRestart > 0 && opt.gmresBlockRows > 0 && opt.maxIter > 0;
+    require((strictSuperLU || strictGMRES) && !opt.useCG && !opt.useIC,
+            "requires explicit strict SuperLU or GMRES without alternative backend or fallback");
 #ifndef EIGEN_SUPERLU_SUPPORT
-    require(false, "required SuperLU support is unavailable; no fallback is allowed");
+    require(!strictSuperLU, "required SuperLU support is unavailable; no fallback is allowed");
 #endif
     require(std::isfinite(opt.relTol) && opt.relTol > 0.0 && opt.relTol < 1.0,
             "relTol must be finite and in (0,1)");
+    }
     const int count = mesh.cellIndexNum();
     require(count > 0 && mesh.cellIndexToLabel, "missing mesh cell index mapping");
     require(std::isfinite(mesh.minCoord.x) && std::isfinite(mesh.minCoord.y) &&
@@ -50,15 +103,18 @@ inline void validate(const QuadtreeMesh& mesh, const FaceSegmentGraph& graph,
             "invalid domain bounds");
     if (opt.axisymmetric)
         require(mesh.minCoord.x >= 0.0, "axisymmetric domain requires r>=0");
+    if constexpr(!GeometryOnly)
+    {
     require(rhs.size() == count && rhs.value && phi.size() == count && phi.value,
             "rhs and phi must already be mesh-initialized");
     require(&rhs != &phi && rhs.value.get() != phi.value.get(), "rhs/phi aliasing is unsupported");
+    }
     const auto& segments = graph.segments();
     const auto& offsets = graph.cellOffsets();
     require(offsets.size() == static_cast<std::size_t>(count) + 1 &&
             offsets.front() == 0 && offsets.back() == segments.size() && !segments.empty(),
             "invalid or empty active graph offsets");
-    require(kappa.size() == segments.size() && boundaries.size() == segments.size(),
+    require((GeometryOnly || kappa.size() == segments.size()) && boundaries.size() == segments.size(),
             "coefficient/boundary arrays must cover every oriented segment");
 
     std::vector<unsigned char> active(static_cast<std::size_t>(count), 0);
@@ -70,8 +126,8 @@ inline void validate(const QuadtreeMesh& mesh, const FaceSegmentGraph& graph,
         require(label >= 0 && label < mesh.cellLabelCapacity(), "cell label out of range");
         const auto& cell = mesh.cells(label);
         require(cell.index() == ci && cell.label() == label &&
-                rhs.label(ci) == label && phi.label(ci) == label, "stale mesh/field cell identity");
-        require(std::isfinite(rhs.value[ci]) && std::isfinite(phi.value[ci]),
+                (GeometryOnly || (rhs.label(ci) == label && phi.label(ci) == label)), "stale mesh/field cell identity");
+        if constexpr(!GeometryOnly) require(std::isfinite(rhs.value[ci]) && std::isfinite(phi.value[ci]),
                 "non-finite rhs or initial phi");
         if (offsets[ci] == offsets[ci + 1]) continue;
         active[ci] = 1;
@@ -152,13 +208,13 @@ inline void validate(const QuadtreeMesh& mesh, const FaceSegmentGraph& graph,
                 require(boundary.type == Type::Dirichlet ||
                         (boundary.type == Type::HomogeneousNeumann && boundary.value == 0.0),
                         "domain/inactive faces require static Dirichlet or exactly zero Neumann");
-            require(std::isfinite(kappa[sid]) && kappa[sid] > 0.0, "kappa must be finite and positive");
+            if constexpr(!GeometryOnly) require(std::isfinite(kappa[sid]) && kappa[sid] > 0.0, "kappa must be finite and positive");
             const double area = CartesianMeasure::face(face.Af, face.faceCenter.x, opt.axisymmetric);
             if (area == 0.0)
                 require(opt.axisymmetric && face.L == -1 && side == 0 && mesh.minCoord.x == 0.0 &&
                         face.faceCenter.x == 0.0 && boundary.type == Type::HomogeneousNeumann,
                         "zero-area axis faces require exactly zero Neumann");
-            else if (boundary.type != Type::HomogeneousNeumann)
+            else if (!GeometryOnly && boundary.type != Type::HomogeneousNeumann)
             {
                 const double conductance = kappa[sid] * area / (interior ? face.df : halfDistance);
                 require(std::isfinite(conductance) && conductance > 0.0, "unrepresentable face conductance");
@@ -175,7 +231,7 @@ inline void validate(const QuadtreeMesh& mesh, const FaceSegmentGraph& graph,
                 const auto& other = segments[otherSid];
                 require(interior && other.K == face.L && other.L == face.K &&
                         other.n.x == -face.n.x && other.n.y == -face.n.y &&
-                        other.Af == face.Af && other.df == face.df && kappa[otherSid] == kappa[sid] &&
+                        other.Af == face.Af && other.df == face.df && (GeometryOnly || kappa[otherSid] == kappa[sid]) &&
                         boundaries[otherSid].type == Type::Interior, "inconsistent reverse active face");
                 // A third incidence must fail rather than reuse a completed pair.
                 first = segments.size();

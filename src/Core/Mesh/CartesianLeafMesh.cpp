@@ -59,7 +59,7 @@ CartesianLeafMetrics validateCartesianLeafMesh(const QuadtreeMesh &mesh)
             "undersized native storage");
     const long long roots = static_cast<long long>(mesh.Nx) * mesh.Ny;
     require(mesh.Nx > 0 && mesh.Ny > 0 && roots <= nc, "invalid root lattice dimensions");
-    const Quantum::Mesh::DyadicGridCoordinates coordinates(mesh.minCoord, mesh.maxCoord, mesh.Nx, mesh.Ny);
+    const LAMP::Mesh::DyadicGridCoordinates coordinates(mesh.minCoord, mesh.maxCoord, mesh.Nx, mesh.Ny);
     const auto cellAt = [&](int label) -> const Cell & {
         require(label >= 0 && label < mesh.cellLabelCapacity(), "invalid cell reference");
         const auto &c = mesh.cells(label);
@@ -83,7 +83,7 @@ CartesianLeafMetrics validateCartesianLeafMesh(const QuadtreeMesh &mesh)
         for (int son : c.son)
             require(son == -1, "indexed cell is not a leaf");
         leaf[c.label()] = 1;
-        const auto address = Quantum::Mesh::cellAddress(mesh, c);
+        const auto address = LAMP::Mesh::cellAddress(mesh, c);
         const auto h = coordinates.cellSize(address.level);
         const auto center = coordinates.point(2 * address.i + 1, 2 * address.j + 1, address.level + 1);
         const double sx = std::max({std::abs(mesh.minCoord.x), std::abs(mesh.maxCoord.x), h.x});

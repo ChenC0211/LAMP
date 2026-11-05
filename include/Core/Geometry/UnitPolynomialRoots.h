@@ -2,7 +2,7 @@
 #include <array>
 #include <vector>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 struct UnitPolynomialRoots
 {

@@ -769,17 +769,17 @@ struct ScopedEnvironment {
 };
 void implicitEnvironmentInput()
 {
-    ScopedEnvironment finite("QUANTUM_IMPLICIT_CONSOLE_DQREL_WARN",nullptr),
-        positive("QUANTUM_IMPLICIT_AMR_REINIT_ACTIVE_MOVING_MAX_STREAK",nullptr),
-        integer("QUANTUM_IMPLICIT_SEGMENTER_MAXLEVEL",nullptr),
-        bounded("QUANTUM_IMPLICIT_SEGMENTER_MAXSEG",nullptr),
-        boolean("QUANTUM_IMPLICIT_ORBITAVG_FUSED",nullptr),
-        debug("QUANTUM_IMPLICIT_SEE_DEBUG",nullptr),
-        path("QUANTUM_IMPLICIT_INIT_GEOM_SNAPSHOT_PATH",nullptr),
-        mode("QUANTUM_IMPLICIT_AMR_GEOM_REFRESH_MODE",nullptr),
-        gate("QUANTUM_IMPLICIT_AMR_GATE_EFIELD_REL",nullptr),
-        omega("QUANTUM_IMPLICIT_POL_CG_TEMPORAL_OMEGA",nullptr),
-        trace("QUANTUM_SEGMENTER_TRACE",nullptr),hint("QUANTUM_SEGMENTER_NOHINT",nullptr);
+    ScopedEnvironment finite("LAMP_IMPLICIT_CONSOLE_DQREL_WARN",nullptr),
+        positive("LAMP_IMPLICIT_AMR_REINIT_ACTIVE_MOVING_MAX_STREAK",nullptr),
+        integer("LAMP_IMPLICIT_SEGMENTER_MAXLEVEL",nullptr),
+        bounded("LAMP_IMPLICIT_SEGMENTER_MAXSEG",nullptr),
+        boolean("LAMP_IMPLICIT_ORBITAVG_FUSED",nullptr),
+        debug("LAMP_IMPLICIT_SEE_DEBUG",nullptr),
+        path("LAMP_IMPLICIT_INIT_GEOM_SNAPSHOT_PATH",nullptr),
+        mode("LAMP_IMPLICIT_AMR_GEOM_REFRESH_MODE",nullptr),
+        gate("LAMP_IMPLICIT_AMR_GATE_EFIELD_REL",nullptr),
+        omega("LAMP_IMPLICIT_POL_CG_TEMPORAL_OMEGA",nullptr),
+        trace("LAMP_SEGMENTER_TRACE",nullptr),hint("LAMP_SEGMENTER_NOHINT",nullptr);
     auto absent=readImplicitPicOverrides();
     check(!absent.consoleDqrelWarn && !absent.amrReinitActiveMovingMaxStreak && !absent.segmenterMaxLevel
         && !absent.segmenterMaxSegments && !absent.orbitAvgFused && !absent.initGeomSnapshotPath
@@ -899,8 +899,8 @@ void explicitAmrSetup()
 void implicitAmrSetup()
 {
     using Mode=PicAmrGeometry::RefreshMode;
-    ScopedEnvironment liveMode("QUANTUM_IMPLICIT_AMR_GEOM_REFRESH_MODE","skip"),
-        liveRemap("QUANTUM_IMPLICIT_AMR_FAST_REMAP","1");
+    ScopedEnvironment liveMode("LAMP_IMPLICIT_AMR_GEOM_REFRESH_MODE","skip"),
+        liveRemap("LAMP_IMPLICIT_AMR_FAST_REMAP","1");
     PicCaseInput input;input.pic.amr.debye.Te_eV=0.;input.pic.amr.debye.CD=0.;
     auto setup=resolveImplicitPicAmr(input,-1,false);
     check(!setup.indicators.enabled && !setup.indicators.wantDebye && !setup.indicators.wantEField
@@ -951,7 +951,7 @@ void implicitAmrSetup()
         "deprecated PIC-only geometry policy remains effective");
     check(output.str().find("move this block to mesh.dict/GeometryRefresh.")!=std::string::npos
         && output.str().find("(dict: pic.dict/AMR/GeometryRefresh,")!=std::string::npos
-        && errors.str().find("requires QUANTUM_IMPLICIT_AMR_ALLOW_EXACT_MOVINGEB_REFRESH=1.")!=std::string::npos,
+        && errors.str().find("requires LAMP_IMPLICIT_AMR_ALLOW_EXACT_MOVINGEB_REFRESH=1.")!=std::string::npos,
         "deprecated source and exact-refresh compatibility warning");
     mesh.present=true;mesh.mode="adaptive";mesh.changeRel=.3;
     setup=resolveImplicitPicAmr(input,0,false);output.str("");errors.str("");setup.writeReport(output,errors,true);
@@ -994,10 +994,10 @@ void implicitAmrSetup()
     output.str("");errors.str("");captured.writeReport(output,errors,true);
     check(output.str().find("fast remap enabled")!=std::string::npos && output.str().find("movingEbRefreshMode=exact_refresh")!=std::string::npos
         && output.str().find("(dict: mesh.dict/GeometryRefresh,")!=std::string::npos
-        && errors.str().find("requires QUANTUM_IMPLICIT") == std::string::npos,
+        && errors.str().find("requires LAMP_IMPLICIT") == std::string::npos,
         "resolved setup owns its input/provenance snapshot and exact permission affects report only");
     output.str("");errors.str("");captured.writeReport(output,errors,false);
-    check(output.str()=="[ImplicitPIC][AMR] fast remap enabled (QUANTUM_IMPLICIT_AMR_FAST_REMAP=1)\n"
+    check(output.str()=="[ImplicitPIC][AMR] fast remap enabled (LAMP_IMPLICIT_AMR_FAST_REMAP=1)\n"
         && !errors.str().empty(),"fast-remap and conflict messages retain independent info gates");
 }
 void segmenterLookup()
@@ -1690,8 +1690,8 @@ void implicitFieldSolve()
     using Stage=ImplicitPicFieldSolve;
     static_assert(!std::is_copy_constructible_v<Stage> && !std::is_move_constructible_v<Stage>);
     static_assert(std::is_same_v<decltype(std::declval<Stage&>().options()),const Stage::Options&>);
-    ScopedEnvironment modeEnv("QUANTUM_IMPLICIT_POL_MODE",nullptr),guessEnv("QUANTUM_IMPLICIT_POL_CG_TEMPORAL_GUESS",nullptr),
-        omegaEnv("QUANTUM_IMPLICIT_POL_CG_TEMPORAL_OMEGA",nullptr),patternEnv("QUANTUM_IMPLICIT_POL_CG_REUSE_PATTERN",nullptr);
+    ScopedEnvironment modeEnv("LAMP_IMPLICIT_POL_MODE",nullptr),guessEnv("LAMP_IMPLICIT_POL_CG_TEMPORAL_GUESS",nullptr),
+        omegaEnv("LAMP_IMPLICIT_POL_CG_TEMPORAL_OMEGA",nullptr),patternEnv("LAMP_IMPLICIT_POL_CG_REUSE_PATTERN",nullptr);
     DictionaryMesh input;input.Nx=input.Ny=4;input.maxCellNum=128;input.maxInitialIterations=0;
     QuadtreeMesh mesh(input);FaceSegmentGraph graph;graph.build(mesh);PicFieldState fields(mesh);
     ImplicitPicPolarization polarization(mesh,1,graph.segments().size());
@@ -1747,16 +1747,16 @@ void implicitFieldSolve()
     check(rejected,"implicit failure prefix preserved");
     // IO captures the legacy overrides; physical construction must use only
     // that owned input, even if the process environment changes afterwards.
-    ScopedEnvironment::set("QUANTUM_IMPLICIT_POL_MODE","IC");ScopedEnvironment::set("QUANTUM_IMPLICIT_POL_CG_TEMPORAL_GUESS","OFF");
-    ScopedEnvironment::set("QUANTUM_IMPLICIT_POL_CG_TEMPORAL_OMEGA","bad");ScopedEnvironment::set("QUANTUM_IMPLICIT_POL_CG_REUSE_PATTERN","no");
+    ScopedEnvironment::set("LAMP_IMPLICIT_POL_MODE","IC");ScopedEnvironment::set("LAMP_IMPLICIT_POL_CG_TEMPORAL_GUESS","OFF");
+    ScopedEnvironment::set("LAMP_IMPLICIT_POL_CG_TEMPORAL_OMEGA","bad");ScopedEnvironment::set("LAMP_IMPLICIT_POL_CG_REUSE_PATTERN","no");
     const auto captured=readImplicitPicOverrides();
-    ScopedEnvironment::set("QUANTUM_IMPLICIT_POL_MODE","direct");
+    ScopedEnvironment::set("LAMP_IMPLICIT_POL_MODE","direct");
     Stage independent(autoFields,options,config,false,false);
     check(independent.mode()=="cg","programmatic solver input is independent of process overrides");
     Stage overridden(autoFields,options,config,false,false,captured.polarization);
     check(overridden.mode()=="ic" && overridden.options().useIC && !overridden.options().useCG && !overridden.options().useTemporalExtrapolatedGuess && !overridden.options().reuseIterativePattern,"environment policy overrides");
     near(overridden.options().temporalExtrapolationOmega,.8,"malformed omega retains fallback");
-    ScopedEnvironment::set("QUANTUM_IMPLICIT_POL_MODE","invalid");ScopedEnvironment::set("QUANTUM_IMPLICIT_POL_CG_TEMPORAL_OMEGA","-2");options.useCG=options.useIC=false;
+    ScopedEnvironment::set("LAMP_IMPLICIT_POL_MODE","invalid");ScopedEnvironment::set("LAMP_IMPLICIT_POL_CG_TEMPORAL_OMEGA","-2");options.useCG=options.useIC=false;
     Stage fallback(autoFields,options,config,false,false,readImplicitPicOverrides().polarization);
     check(fallback.mode()=="auto" && fallback.options().useIC && !fallback.options().useCG,"unknown mode and disabled inherited iterations select IC auto");
     near(fallback.options().temporalExtrapolationOmega,0.,"negative omega clamped");check(overridden.mode()=="ic","environment changes do not mutate prior service");

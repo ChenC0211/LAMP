@@ -7,7 +7,7 @@
 #include <array>
 #include <iterator>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {

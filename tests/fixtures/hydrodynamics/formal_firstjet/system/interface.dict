@@ -1,0 +1,5 @@
+Interface
+{
+    method hermiteGals;
+    Boundary { type none; }
+}

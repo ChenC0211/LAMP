@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Geometry/ActiveQuarticHermitePatch.h"
+#include "Core/Geometry/ActiveQuarticHermiteCompletion.h"
 #include "Core/Geometry/ActiveHermiteSensitivity.h"
 #include "Core/Geometry/LevelSetHermiteGeometry.h"
 #include "Core/Geometry/InterfaceGeometryResolution.h"
@@ -20,12 +21,13 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <tuple>
 #include <utility>
 #include <vector>
 #include "Core/Geometry/Detail/NativeHermiteTransferSampling.h"
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -40,6 +42,18 @@ namespace LevelSetHermiteScalar
 class QuarticLeafData
 {
     using Exact=ExactExpansion::Expansion;
+  public:
+    // Implementation-only initial isolation data. These are the original
+    // input charts and complete certificates, never a privately refined root.
+    using InitialRootInput=std::array<Exact,8>;
+    struct InitialRootCertificate
+    {
+        Exact parameterNumerator,parameterDenominator;
+        Exact lowerNumerator,lowerDenominator,upperNumerator,upperDenominator;
+        int derivativeSign=0,phaseBefore=0,phaseAfter=0;
+        bool deflated=false;
+    };
+  private:
     using Patch=ActiveQuarticHermitePatch;
     using Sensitivity=ActiveQuarticHermiteSensitivity;
     using EdgeKey=std::array<int,2>;
@@ -75,12 +89,40 @@ class QuarticLeafData
         double halfWidth=0;
         bool inside=false,outside=false,ready=false;
     };
+    struct RestrictionEntry
+    {
+        RationalSegmentCoordinate x,y;
+        unsigned dx=0,dy=0;
+        Homogeneous<9> result;
+    };
+    struct InitialRootEntry
+    {
+        InitialRootInput input;
+        bool allowMultiple=false;
+        std::vector<InitialRootCertificate> roots;
+    };
     struct Leaf
     {
         Vector2D lower,upper;
         std::array<int,4> vertices{},edges{}; // SW SE NW NE; south north west east
         std::array<int,25> physical{};
         Homogeneous<25> local;
+        // Per immutable leaf/Snapshot, retain the original restriction's
+        // input-centering result. No coordinate, query or refined root is
+        // shared. call_once failures remain retryable on the same source.
+        mutable std::once_flag restrictionDataReady;
+        mutable Homogeneous<25> restrictionData;
+        // Successful full-input restrictions only, bounded to this immutable
+        // leaf's lifetime. Allocate slots lazily; no query/root/refinement is
+        // retained, and no mathematical-value or rounded coordinate key is used.
+        mutable std::mutex restrictionCacheMutex;
+        mutable std::vector<RestrictionEntry> restrictionCache;
+        mutable std::size_t restrictionCacheNext=0;
+        // Successful initial root inventories only, bounded by this immutable
+        // leaf's lifetime. Every consumer copies before its own refinement.
+        mutable std::mutex initialRootCacheMutex;
+        mutable std::vector<InitialRootEntry> initialRootCache;
+        mutable std::size_t initialRootCacheNext=0;
         std::unique_ptr<QuarticCell> cache;
         // The mathematical data never change after construction. Cache only
         // their exact Bernstein signs, owned by this leaf in this snapshot.
@@ -98,6 +140,11 @@ class QuarticLeafData
         mutable std::once_flag boxControlsReady;
         mutable std::array<ExactExpansion::Interval,25> boxControls{};
         mutable int boxControlSign=0;
+        // Bounds of the ORIGINAL homogeneous Q4, never rounded cache controls.
+        // Numerical transport and internal filtered queries share these immutable nets.
+        mutable std::array<std::once_flag,2> transportControlsReady;
+        mutable std::array<std::array<ExactExpansion::Interval,25>,3> transportControls{};
+        mutable std::array<bool,2> transportControlsResolved{{false,false}};
         // A bounded cache for repeated corner/midpoint/center point queries.
         // Values come from the ORIGINAL exact physical restriction, not from
         // approximate nodal jets or assumed cardinal interpolation. Each new
@@ -121,7 +168,7 @@ class QuarticLeafData
     enum class Build { Geometry, Skeleton };
     QuarticLeafData(const QuadtreeMesh& mesh,const Patch& patch,bool radialAxisSymmetry=false,
         const std::vector<int>* queryCells=nullptr,Build build=Build::Geometry,const QuarticLeafData* restrictionSource=nullptr)
-        : locator_(mesh), vertices_(mesh.vertIndexNum()), cells_(mesh.cellIndexNum()),
+        : locator_(std::make_shared<const CartesianLeafLocator>(mesh)), vertices_(mesh.vertIndexNum()), cells_(mesh.cellIndexNum()),
           lower_(mesh.minCoord),upper_(mesh.maxCoord),radial_(radialAxisSymmetry),
           restrictionSource_(restrictionSource),restrictionPatch_(restrictionSource?&patch:nullptr)
     {
@@ -164,86 +211,48 @@ class QuarticLeafData
             Detail::require(edge.input<0,"duplicate quartic midpoint side identity");
             edge.input=static_cast<int>(i);
         }
-        for(std::size_t i=0;i<vertices_.size();++i)
-            if(vertices_[i].used) resolveVertex(static_cast<int>(i),patch);
+        for(int vertex:usedVertices_)resolveVertex(vertex,patch);
         for(std::size_t i=0;i<edges_.size();++i) resolveMidpoint(static_cast<int>(i),patch);
         if(build==Build::Skeleton) return; // immutable constraint graph only
         prepareSectors(mesh,patch);
-        for(std::size_t i=0;i<cells_.size();++i)
-        {
-            auto& cell=cells_[i];
-            if(!cell.active) continue;
-            for(int y=0;y<2;++y) for(int x=0;x<2;++x)
-            {
-                const auto& jet=cell.sectorIndex>=0 && cell.sectorCorner==2*y+x
-                    ? cell.sectorData:vertices_[cell.vertices[2*y+x]].jet;
-                cell.physical[5*y+x]=jet[0];
-                cell.physical[5*y+x+2]=jet[1];
-                cell.physical[5*(y+2)+x]=jet[2];
-                cell.physical[5*(y+2)+x+2]=jet[3];
-            }
-            for(int side=0;side<2;++side)
-            {
-                const auto& h=edges_[cell.edges[side]].midpoint;
-                const auto& v=edges_[cell.edges[side+2]].midpoint;
-                cell.physical[5*side+4]=h[0]; cell.physical[5*(side+2)+4]=h[1];
-                cell.physical[20+side]=v[0]; cell.physical[22+side]=v[1];
-            }
-            cell.physical[24]=independent(patch.cellCenters[i],Sensitivity::Kind::CellCenter,
-                static_cast<int>(i),0);
-        }
-        // Freeze the shared dependency graph and all independent IDs first.
-        // Each remaining transform owns one leaf; common() only reads data_.
-        // No parallel registration, change of constraint order or reduction.
-        const auto prepareLeaf=[&](std::size_t i) {
-            ExactExpansion::validateEnvironment();
-            auto& cell=cells_[i];
-            if (!cell.active) return;
-            if(restrictionSource_)cell.local=restrictionSource_->restrictionData(cell.lower,cell.upper);
-            else cell.local=common(cell.physical);
-            const auto hx=difference(cell.upper.x,cell.lower.x),hy=difference(cell.upper.y,cell.lower.y);
-            QuarticCell::Dofs approximate{};
-            for(int y=0;y<5;++y) for(int x=0;x<5;++x)
-            {
-                auto& value=cell.local.numerator[5*y+x];
-                if(!restrictionSource_ && (x==2 || x==3)) value=ExactExpansion::multiply(value,hx);
-                if(!restrictionSource_ && (y==2 || y==3)) value=ExactExpansion::multiply(value,hy);
-            }
-            normalize(cell.local);
-            for(std::size_t k=0;k<25;++k)
-                approximate[k]=ratio(cell.local.numerator[k],cell.local.denominator);
-            cell.cache=std::make_unique<QuarticCell>(approximate,cell.upper.x-cell.lower.x,cell.upper.y-cell.lower.y);
-            if(cell.sectorIndex>=0)
-            {
-                constexpr unsigned masks[4]={1u,2u,8u,4u};
-                Detail::require(cellSignExceptVertices(static_cast<int>(i),masks[cell.sectorCorner])==cell.sectorPhaseSign,
-                    "native quartic corner sector lacks its exact single-phase certificate");
-            }
-        };
-        if (!cells_.empty()) prepareLeaf(0);
-        std::vector<std::exception_ptr> errors(cells_.size());
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 32) if(cells_.size()>64)
-#endif
-        for (std::ptrdiff_t i=1;i<static_cast<std::ptrdiff_t>(cells_.size());++i)
-        {
-            try {prepareLeaf(static_cast<std::size_t>(i));}
-            catch (...) {errors[i]=std::current_exception();}
-        }
-        // Construction has not published a snapshot. Preserve native-cell
-        // failure order and unwind all completed private leaves on failure.
-        for (const auto& error:errors) if (error) std::rethrow_exception(error);
-        // Borrowed construction inputs are never retained by the immutable result.
-        restrictionSource_=nullptr;restrictionPatch_=nullptr;
+        completeGeometry(patch);
     }
 
+    QuarticLeafData(const QuarticLeafData& source,const ::LevelSetHermiteGeometry::Snapshot::NativeLeafSubset& payload)
+        : locator_(source.locator_),lower_(source.lower_),upper_(source.upper_),radial_(source.radial_)
+    {
+        ExactExpansion::validateEnvironment();
+        Detail::require(!payload.nativeCells.empty()&&payload.nativeCells.size()==payload.cellCenters.size()
+            &&payload.nativeVertices.size()==payload.nodes.size(),"quartic subset support requires matching compact arrays");
+        Detail::require(!source.hasCornerSectors(),"quartic subset support does not accept corner sectors");
+        sparse_=true;meshContext_=source.nativeMeshContext();
+        int previous=-1;
+        for(int id:payload.nativeCells) {
+            Detail::require(id>previous&&static_cast<std::size_t>(id)<meshContext_->cells.size(),"invalid or unordered subset native cell indices");
+            previous=id;
+        }
+        previous=-1;
+        for(int id:payload.nativeVertices) {
+            Detail::require(id>previous&&static_cast<std::size_t>(id)<meshContext_->vertices.size(),"invalid or unordered subset native vertex indices");
+            previous=id;
+        }
+        prepareSparseTopology(payload);
+        for(std::size_t i=0;i<payload.edgeMidpoints.size();++i) {
+            const auto found=edgeIndex_.find(payload.edgeMidpoints[i].vertices);
+            Detail::require(found!=edgeIndex_.end(),"quartic midpoint is not an ordered active leaf side");
+            auto& edge=edges_[found->second];Detail::require(edge.input<0,"duplicate quartic midpoint side identity");edge.input=static_cast<int>(i);
+        }
+        for(int vertex:usedVertices_)resolveVertex(vertex,payload);
+        for(std::size_t edge=0;edge<edges_.size();++edge)resolveMidpoint(static_cast<int>(edge),payload);
+        completeGeometry(payload);
+    }
     static std::unique_ptr<QuarticLeafData> refined(const QuadtreeMesh& mesh,const QuarticLeafData& source)
     {
         ExactExpansion::validateEnvironment();
         Detail::require(source.sectorCount_==0,"exact quartic refinement does not support corner sectors");
         Detail::require(mesh.minCoord.x==source.lower_.x && mesh.minCoord.y==source.lower_.y
             && mesh.maxCoord.x==source.upper_.x && mesh.maxCoord.y==source.upper_.y,"exact quartic refinement changes domain");
-        for(const auto& cell:source.cells_)Detail::require(cell.active,"exact quartic refinement requires full active source");
+        for(std::size_t cell=0;cell<source.cellCount();++cell)Detail::require(source.cellActive(static_cast<int>(cell)),"exact quartic refinement requires full active source");
         // This patch declares only the target topology. Its dummy floating
         // payload is replaced by retained exact source data at registration.
         Patch topology;topology.activeCells.assign(mesh.cellIndexNum(),1);topology.nodes.resize(mesh.vertIndexNum());
@@ -265,7 +274,7 @@ class QuarticLeafData
         const NativeHermiteTransfer::DatumSampler<QuarticLeafData> sampler(source);
         // Hermite unisolvence: compare ALL 25 normalized data exactly, not a
         // floating sampling test. Shared constraints are checked by this too.
-        for(std::size_t c=0;c<result->cells_.size();++c){const auto& cell=result->cells_[c];
+        for(std::size_t c=0;c<result->cells_.size();++c){const auto& cell=result->cellData(c);
             for(int y=0;y<5;++y)for(int x=0;x<5;++x){try {const auto coordinate=[](int i,double lo,double hi){
                     return std::array<double,2>{{i==1 || i==3?hi:lo,i==0 || i==2?lo:hi}};};
                 const auto px=coordinate(x,cell.lower.x,cell.upper.x),py=coordinate(y,cell.lower.y,cell.upper.y);
@@ -283,23 +292,24 @@ class QuarticLeafData
         return result;
     }
 
-    std::size_t cellCount() const noexcept { return cells_.size(); }
+    std::size_t cellCount() const noexcept { return sparse_?meshContext_->cells.size():cells_.size(); }
     Vector2D minCoord() const noexcept { return lower_; }
     Vector2D maxCoord() const noexcept { return upper_; }
-    std::size_t vertexCount() const noexcept { return vertices_.size(); }
+    std::size_t vertexCount() const noexcept { return sparse_?meshContext_->vertices.size():vertices_.size(); }
     bool radialAxisSymmetry() const noexcept { return radial_; }
     bool hasCornerSectors() const noexcept { return sectorCount_!=0; }
     std::vector<int> leafCandidates(Vector2D lo,Vector2D hi) const
-    { return locator_.intersectingBox(lo,hi); }
+    { return locator_->intersectingBox(lo,hi); }
     bool cellActive(int index) const
     {
-        Detail::require(index>=0 && static_cast<std::size_t>(index)<cells_.size(),"quartic leaf index out of range");
-        return cells_[index].active;
+        Detail::require(index>=0 && static_cast<std::size_t>(index)<cellCount(),"quartic leaf index out of range");
+        return sparse_?sparseCells_.find(index)!=sparseCells_.end():cellData(index).active;
     }
     std::array<Vector2D,2> leafBounds(int index) const
     {
         cellActive(index);
-        return {{cells_[index].lower,cells_[index].upper}};
+        if(sparse_)return {{meshContext_->cells[index].lower,meshContext_->cells[index].upper}};
+        return {{cellData(index).lower,cellData(index).upper}};
     }
     std::array<int,4> cellVertices(int index) const
     {
@@ -308,7 +318,7 @@ class QuarticLeafData
     }
     int selectedCell(Vector2D point) const
     {
-        const auto incident=locator_.incident(point);
+        const auto incident=locator_->incident(point);
         int selected=-1;
         for(int k=0;k<incident.count;++k)
             if(cellActive(incident.indices[k]) && (selected<0 || incident.indices[k]<selected))
@@ -346,6 +356,294 @@ class QuarticLeafData
     }
     Sample evaluateCell(int index,Vector2D point) const
     { return evaluateCellChart(index,chartAtPoint(index,point)); }
+    ::LevelSetHermiteGeometry::Snapshot::TransportScalarJet2 numericalJetInCell(
+        int index,Vector2D point,double valueBudget,double gradientBudget) const
+    { return numericalPointInCell(index,point,valueBudget,gradientBudget,true); }
+    ::LevelSetHermiteGeometry::Snapshot::TransportScalarValue numericalValueInCell(
+        int index,Vector2D point,double valueBudget) const
+    {
+        const auto result=numericalPointInCell(index,point,valueBudget,0,false);
+        return {result.jet.value,result.absoluteErrorBounds[0],result.boundsResolved,result.exactValueFallback};
+    }
+    // Data-only restriction of the ORIGINAL homogeneous Q4 Bernstein net.
+    // chosenAxis is fixed; output controls retain the transverse [0,1] chart.
+    // No root, phase classification, replacement scalar or rounded DOF net.
+    bool transverseBernsteinControls(int index,int chosenAxis,ExactExpansion::Interval q,
+        std::array<ExactExpansion::Interval,5>& controls) const
+    {
+        using A=Detail::Outward;using Interval=ExactExpansion::Interval;
+        ExactExpansion::validateActualEnvironment();
+        const auto& cell=activeCell(index);
+        Detail::require(chosenAxis==0||chosenAxis==1,"invalid transverse Bernstein fixed axis");
+        Detail::require(A::finite(q)&&q.lo>=0&&q.lo<=q.hi&&q.hi<=1,
+            "transverse Bernstein coordinate leaves the actual native chart");
+        const bool resolved=[&] {
+            if(cell.sectorIndex>=0)return false;
+            prepareTransportValueControls(cell,[&] {
+                auto values=QuarticCell::bernsteinControlsCleared(cell.local.numerator);
+                auto denominator=ExactExpansion::multiply(cell.local.denominator,number(144));
+                ExactExpansion::centerHomogeneous(values,denominator);
+                return std::make_pair(std::move(values),std::move(denominator));
+            });
+            if(!cell.transportControlsResolved[0])return false;
+            auto complement=A::add(A::point(1),A::negate(q));
+            complement.lo=std::max(0.,complement.lo);complement.hi=std::min(1.,complement.hi);
+            std::array<Interval,5> prepared{};
+            for(int transverse=0;transverse<5;++transverse) {
+                std::array<Interval,5> line{};
+                double hullLo=std::numeric_limits<double>::infinity(),hullHi=-hullLo;
+                for(int fixed=0;fixed<5;++fixed) {
+                    line[fixed]=cell.transportControls[0][chosenAxis==0?5*transverse+fixed:5*fixed+transverse];
+                    hullLo=std::min(hullLo,line[fixed].lo);hullHi=std::max(hullHi,line[fixed].hi);
+                }
+                if(q.lo==0&&q.hi==0)prepared[transverse]=line[0];
+                else if(q.lo==1&&q.hi==1)prepared[transverse]=line[4];
+                else {
+                    for(int degree=4;degree>0;--degree)for(int k=0;k<degree;++k)
+                        line[k]=A::add(A::multiply(complement,line[k]),A::multiply(q,line[k+1]));
+                    // Bernstein weights are nonnegative and sum to one for
+                    // every actual q in this certified closed interval.
+                    prepared[transverse]={std::max(line[0].lo,hullLo),std::min(line[0].hi,hullHi)};
+                }
+                if(!A::finite(prepared[transverse])||prepared[transverse].lo>prepared[transverse].hi)return false;
+            }
+            controls=prepared;return true;
+        }();
+        ExactExpansion::validateActualEnvironment();
+        return resolved;
+    }
+  private:
+    static ExactExpansion::Interval transportControlQuotient(ExactExpansion::Interval n,ExactExpansion::Interval d)
+    {
+        using A=Detail::Outward;using Interval=ExactExpansion::Interval;
+        if(!A::finite(n)||!A::finite(d)||!(d.lo>0))return A::whole();
+        if(A::zero(n))return Interval{};
+        const std::array<double,4> q{{n.lo/d.lo,n.lo/d.hi,n.hi/d.lo,n.hi/d.hi}};
+        for(double v:q)if(!std::isfinite(v))return A::whole();
+        return Interval{A::down(*std::min_element(q.begin(),q.end())),
+            A::up(*std::max_element(q.begin(),q.end()))};
+    }
+    template<class Authority> static void prepareTransportValueControls(const Leaf& cell,const Authority& authority)
+    {
+        std::call_once(cell.transportControlsReady[0],[&] {
+            // Preserve the original numerical-control preparation policy.
+            // Unresolved controls grant no filtered result or transport bound.
+            try {
+                const auto& data=authority();
+                const auto valueDen=ExactExpansion::enclosure(data.second);
+                bool resolved=true;
+                for(int k=0;k<25;++k) {
+                    cell.transportControls[0][k]=transportControlQuotient(ExactExpansion::enclosure(data.first[k]),valueDen);
+                    resolved=resolved&&Detail::Outward::finite(cell.transportControls[0][k]);
+                }
+                cell.transportControlsResolved[0]=resolved;
+            } catch(const std::runtime_error&) {
+                cell.transportControlsResolved[0]=false;
+            } catch(const std::invalid_argument&) {
+                cell.transportControlsResolved[0]=false;
+            }
+        });
+    }
+    // One certificate implementation; only actually requested channels are
+    // evaluated, enclosed or sent to the original exact restriction.
+    ::LevelSetHermiteGeometry::Snapshot::TransportScalarJet2 numericalPointInCell(
+        int index,Vector2D point,double valueBudget,double gradientBudget,bool requestGradient) const
+    {
+        using A=Detail::Outward;using Interval=ExactExpansion::Interval;
+        using Net=std::array<Interval,25>;
+        ExactExpansion::validateEnvironment();
+        const auto& cell=activeCell(index);
+        Detail::require(cell.sectorIndex<0,"numerical Q4 transport point rejects corner sectors");
+        const auto chartPoint=chartAtPoint(index,point);
+        ::LevelSetHermiteGeometry::Snapshot::TransportScalarJet2 result;
+        if(requestGradient) {
+            const auto sample=evaluateCellChart(index,chartPoint);
+            result.jet={sample.value,sample.dx,sample.dy,sample.dxx,sample.dxy,sample.dyy};
+        } else result.jet.value=cell.cache->approximateValueAtChart(chartPoint);
+        const int channelCount=requestGradient?3:1;
+        const auto divide=[](Interval n,Interval d) {return transportControlQuotient(n,d);};
+        // A cold full jet shares its exact preparation between value and
+        // gradient nets. A value-only call never prepares derivative nets.
+        // The same immutable leaf owns both once flags; neither result grants
+        // permission for an unprepared channel or a different FP environment.
+        using PreparedControls=std::pair<QuarticCell::ExpandedControls,Exact>;
+        std::optional<PreparedControls> prepared;
+        const auto authority=[&]() -> const PreparedControls& {
+            if(!prepared) {
+                auto controls=QuarticCell::bernsteinControlsCleared(cell.local.numerator);
+                auto denominator=ExactExpansion::multiply(cell.local.denominator,number(144));
+                ExactExpansion::centerHomogeneous(controls,denominator);
+                prepared.emplace(std::move(controls),std::move(denominator));
+            }
+            return *prepared;
+        };
+        prepareTransportValueControls(cell,authority);
+        if(requestGradient)std::call_once(cell.transportControlsReady[1],[&] {
+            try {
+                const auto& data=authority();const auto& controls=data.first;
+                bool resolved=true;
+                for(int axis=0;axis<2;++axis) {
+                    QuarticCell::ExpandedControls derivative{};
+                    for(int y=0;y<(axis?4:5);++y)for(int x=0;x<(axis?5:4);++x) {
+                        const int k=5*y+x,neighbor=k+(axis?5:1);
+                        derivative[k]=ExactExpansion::multiply(number(4),
+                            ExactExpansion::subtract(controls[neighbor],controls[k]));
+                    }
+                    auto derivativeDen=ExactExpansion::multiply(data.second,
+                        difference(axis?cell.upper.y:cell.upper.x,axis?cell.lower.y:cell.lower.x));
+                    ExactExpansion::centerHomogeneous(derivative,derivativeDen);
+                    const auto den=ExactExpansion::enclosure(derivativeDen);
+                    for(int k=0;k<25;++k) {
+                        cell.transportControls[axis+1][k]=divide(ExactExpansion::enclosure(derivative[k]),den);
+                        resolved=resolved&&A::finite(cell.transportControls[axis+1][k]);
+                    }
+                }
+                cell.transportControlsResolved[1]=resolved;
+            } catch(const std::runtime_error&) {
+                cell.transportControlsResolved[1]=false;
+            } catch(const std::invalid_argument&) {
+                cell.transportControlsResolved[1]=false;
+            }
+        });
+        const auto coordinate=[&](double p,double lo,double hi,bool upper) {
+            const auto n=upper?A::add(A::point(hi),A::negate(A::point(p))):
+                A::add(A::point(p),A::negate(A::point(lo)));
+            const auto d=A::add(A::point(hi),A::negate(A::point(lo)));
+            auto t=divide(n,d);
+            if(!A::finite(t))return A::whole();
+            // Actual closed-leaf membership was checked by chartAtPoint.
+            t.lo=std::max(0.,t.lo);t.hi=std::min(1.,t.hi);return t;
+        };
+        const auto tx=coordinate(point.x,cell.lower.x,cell.upper.x,chartPoint.x.fromUpper),
+            ty=coordinate(point.y,cell.lower.y,cell.upper.y,chartPoint.y.fromUpper);
+        const auto evaluate=[](const Net& controls,int nx,int ny,Interval x,Interval y,bool upperX,bool upperY) {
+            if(!A::finite(x)||!A::finite(y))return A::whole();
+            const auto line=[](std::array<Interval,5> values,int degree,Interval t) {
+                if(t.lo==0 && t.hi==0)return values[0];
+                if(t.lo==1 && t.hi==1)return values[degree];
+                const auto oneMinus=A::add(A::point(1),A::negate(t));
+                for(int stage=degree;stage>0;--stage)for(int k=0;k<stage;++k)
+                    values[k]=A::add(A::multiply(oneMinus,values[k]),A::multiply(t,values[k+1]));
+                return values[0];
+            };
+            std::array<Interval,5> rows{};
+            for(int yrow=0;yrow<=ny;++yrow) {
+                std::array<Interval,5> values{};
+                const int originalY=upperY?ny-yrow:yrow;
+                for(int xcol=0;xcol<=nx;++xcol)
+                    values[xcol]=controls[5*originalY+(upperX?nx-xcol:xcol)];
+                rows[yrow]=line(values,nx,x);
+            }
+            return line(rows,ny,y);
+        };
+        const auto error=[](Interval enclosure,double value) {
+            if(!A::finite(enclosure)||!std::isfinite(value))return std::numeric_limits<double>::infinity();
+            const auto difference=A::add(enclosure,A::negate(A::point(value)));
+            if(!A::finite(difference))return std::numeric_limits<double>::infinity();
+            return std::max(std::abs(difference.lo),std::abs(difference.hi));
+        };
+        // The three authoritative homogeneous nets share the same actual
+        // closed-leaf coordinates. Enclose B_i^3(t) and B_i^4(t) once per
+        // axis, then contract each net with these outward tensor weights.
+        // This changes only the certificate, never the approximate jet.
+        using AxisWeights=std::array<std::array<Interval,5>,2>;
+        const auto weights=[requestGradient](Interval t) {
+            AxisWeights result{};
+            if(!A::finite(t)) {
+                for(auto& degree:result)for(auto& value:degree)value=A::whole();
+                return result;
+            }
+            if(t.lo==0 && t.hi==0) {
+                result[0][0]=result[1][0]=A::point(1);return result;
+            }
+            if(t.lo==1 && t.hi==1) {
+                result[0][3]=result[1][4]=A::point(1);return result;
+            }
+            // t and 1-t are known to be in [0,1] from actual leaf
+            // membership, so intersecting their outward ranges is exact.
+            auto complement=A::add(A::point(1),A::negate(t));
+            complement.lo=std::max(0.,complement.lo);
+            complement.hi=std::min(1.,complement.hi);
+            std::array<Interval,5> powers{},complementPowers{};
+            powers[0]=complementPowers[0]=A::point(1);
+            for(int k=1;k<=4;++k) {
+                powers[k]=A::multiply(powers[k-1],t);
+                complementPowers[k]=A::multiply(complementPowers[k-1],complement);
+                powers[k].lo=std::max(0.,powers[k].lo);
+                powers[k].hi=std::min(1.,powers[k].hi);
+                complementPowers[k].lo=std::max(0.,complementPowers[k].lo);
+                complementPowers[k].hi=std::min(1.,complementPowers[k].hi);
+            }
+            constexpr int binomial[2][5]={{1,3,3,1,0},{1,4,6,4,1}};
+            for(int degree=requestGradient?3:4;degree<=4;++degree)for(int k=0;k<=degree;++k) {
+                auto value=A::multiply(powers[k],complementPowers[degree-k]);
+                value=A::multiply(A::point(binomial[degree-3][k]),value);
+                // Each Bernstein basis value itself belongs to [0,1].
+                value.lo=std::max(0.,value.lo);value.hi=std::min(1.,value.hi);
+                result[degree-3][k]=value;
+            }
+            return result;
+        };
+        const auto tensor=[](const Net& controls,int nx,int ny,
+            const std::array<Interval,5>& wx,const std::array<Interval,5>& wy,
+            bool upperX,bool upperY) {
+            Interval result{};
+            double hullLo=std::numeric_limits<double>::infinity(),
+                hullHi=-std::numeric_limits<double>::infinity();
+            for(int yrow=0;yrow<=ny;++yrow) {
+                Interval row{};
+                const int originalY=upperY?ny-yrow:yrow;
+                for(int xcol=0;xcol<=nx;++xcol) {
+                    const auto control=controls[5*originalY+(upperX?nx-xcol:xcol)];
+                    hullLo=std::min(hullLo,control.lo);hullHi=std::max(hullHi,control.hi);
+                    row=A::add(row,A::multiply(wx[xcol],control));
+                }
+                result=A::add(result,A::multiply(wy[yrow],row));
+            }
+            if(!A::finite(result))return A::whole();
+            // Bernstein weights are nonnegative and sum to one in the
+            // exact polynomial. Intersect with its control convex hull.
+            result.lo=std::max(result.lo,hullLo);result.hi=std::min(result.hi,hullHi);
+            return result;
+        };
+        std::array<Interval,3> enclosures{{A::whole(),A::whole(),A::whole()}};
+        double* channels[3]={&result.jet.value,&result.jet.dx,&result.jet.dy};
+        if(cell.transportControlsResolved[0]&&(!requestGradient||cell.transportControlsResolved[1])) {
+            const auto wx=weights(tx),wy=weights(ty);
+            constexpr int degrees[3][2]={{4,4},{3,4},{4,3}};
+            for(int k=0;k<channelCount;++k) {
+                const int nx=degrees[k][0],ny=degrees[k][1];
+                auto enclosure=tensor(cell.transportControls[k],nx,ny,wx[nx-3],wy[ny-3],
+                    chartPoint.x.fromUpper,chartPoint.y.fromUpper);
+                const auto bound=error(enclosure,*channels[k]);
+                const bool nearZero=k==0&&enclosure.lo<=0&&enclosure.hi>=0;
+                // A direct tensor certificate may be wider than de
+                // Casteljau. Select the original bound computation BEFORE
+                // deciding the unchanged exact fallback or physical budget.
+                // This is an a-priori enclosure test, not a caught failure.
+                if(nearZero||!std::isfinite(bound)||bound>(k?gradientBudget:valueBudget))
+                    enclosure=evaluate(cell.transportControls[k],nx,ny,tx,ty,
+                        chartPoint.x.fromUpper,chartPoint.y.fromUpper);
+                enclosures[k]=enclosure;
+            }
+        }
+        for(int k=0;k<channelCount;++k)result.absoluteErrorBounds[k]=error(enclosures[k],*channels[k]);
+        for(int k=0;k<channelCount;++k) {
+            const double budget=k?gradientBudget:valueBudget;
+            const bool nearZero=k==0&&enclosures[0].lo<=0&&enclosures[0].hi>=0;
+            if(nearZero||!std::isfinite(result.absoluteErrorBounds[k])||result.absoluteErrorBounds[k]>budget) {
+                const auto exact=restrictPhysical(index,point,point,k==1?1:0,k==2?1:0);
+                *channels[k]=ratio(exact.numerator[0],exact.denominator);
+                enclosures[k]=divide(ExactExpansion::enclosure(exact.numerator[0]),ExactExpansion::enclosure(exact.denominator));
+                result.absoluteErrorBounds[k]=error(enclosures[k],*channels[k]);
+                if(k)result.exactGradientFallback=true;else result.exactValueFallback=true;
+            }
+        }
+        result.boundsResolved=std::all_of(result.absoluteErrorBounds.begin(),result.absoluteErrorBounds.begin()+channelCount,
+            [](double e){return std::isfinite(e)&&e>=0;});
+        return result;
+    }
+  public:
     double valueInCell(int index,Vector2D point) const
     {
         ExactExpansion::validateEnvironment();
@@ -372,16 +670,16 @@ class QuarticLeafData
     std::size_t independentDofCount() const noexcept { return independentCount_; }
     std::array<double,4> nodeJet(int index) const
     {
-        Detail::require(index>=0 && static_cast<std::size_t>(index)<vertices_.size() && vertices_[index].used,
+        Detail::require(usedVertex(index),
             "quartic nodal query requires a used native vertex");
         std::array<double,4> result;
-        for(int k=0;k<4;++k) result[k]=value(vertices_[index].jet[k]);
+        for(int k=0;k<4;++k) result[k]=value(vertexData(index).jet[k]);
         return result;
     }
     std::vector<int> skeletonVertices() const
     {
         std::vector<int> result;
-        for(std::size_t i=0;i<vertices_.size();++i)if(vertices_[i].used)result.push_back(static_cast<int>(i));
+        for(int index:usedVertices_)result.push_back(index);
         return result;
     }
     std::vector<EdgeKey> skeletonEdges() const
@@ -392,9 +690,9 @@ class QuarticLeafData
     }
     EdgeKey vertexMasterSide(int index) const
     {
-        Detail::require(index>=0 && static_cast<std::size_t>(index)<vertices_.size() && vertices_[index].used,
+        Detail::require(usedVertex(index),
             "quartic vertex ownership requires a used native vertex");
-        const int edge=vertices_[index].coarseEdge;
+        const int edge=vertexData(index).coarseEdge;
         return edge<0?EdgeKey{{-1,-1}}:edges_[edge].vertices;
     }
     EdgeKey edgeParentSide(const EdgeKey& key) const
@@ -411,7 +709,7 @@ class QuarticLeafData
     {
         ExactExpansion::validateEnvironment();
         const auto& edge=skeletonEdge(key);
-        const auto a=vertices_[key[0]].point,b=vertices_[key[1]].point;
+        const auto a=vertexData(key[0]).point,b=vertexData(key[1]).point;
         const auto t=chart(coordinate,coordinate,edge.horizontal?a.x:a.y,edge.horizontal?b.x:b.y);
         std::array<double,4> result;
         visitTrace(edge,t.numeratorBegin,t.denominator,[&](int component,const auto& inputs,const auto& weights,const auto& denominator) {
@@ -928,15 +1226,78 @@ class QuarticLeafData
     Polynomial restrictLocal(int index,const RationalSegmentCoordinate& x,const RationalSegmentCoordinate& y,
         unsigned dx=0,unsigned dy=0) const
     {
-        const auto& cell=activeCell(index);
-        auto restricted=QuarticCell::homogeneousRestriction(cell.local.numerator,cell.local.denominator,x,y,dx,dy);
+        ExactExpansion::validateEnvironment();const auto& cell=activeCell(index);
+        const auto sameCoordinate=[](const RationalSegmentCoordinate& a,const RationalSegmentCoordinate& b) {
+            return a.numeratorBegin.components()==b.numeratorBegin.components()
+                && a.numeratorEnd.components()==b.numeratorEnd.components()
+                && a.denominator.components()==b.denominator.components();
+        };
+        const auto matches=[&](const RestrictionEntry& entry) {
+            return entry.dx==dx && entry.dy==dy && sameCoordinate(entry.x,x) && sameCoordinate(entry.y,y);
+        };
+        {
+            std::lock_guard<std::mutex> lock(cell.restrictionCacheMutex);
+            for(const auto& entry:cell.restrictionCache)if(matches(entry))return entry.result;
+        }
+        // A hit's identical six expansion vectors and derivative orders have
+        // already passed ALL original input/chart checks. FP/active-leaf checks
+        // above still run per actual caller. A cold input keeps the original
+        // calculation and errors; failed work cannot create a cache entry.
+        std::call_once(cell.restrictionDataReady,[&] {
+            auto prepared=cell.local;
+            ExactExpansion::centerHomogeneous(prepared.numerator,prepared.denominator);
+            cell.restrictionData=std::move(prepared);
+        });
+        auto restricted=QuarticCell::homogeneousRestrictionCentered(cell.restrictionData.numerator,
+            cell.restrictionData.denominator,x,y,dx,dy);
         Polynomial result{std::move(restricted.numerator),std::move(restricted.denominator)};
         for(unsigned k=0;k<dx;++k)
             result.denominator=ExactExpansion::multiply(result.denominator,difference(cell.upper.x,cell.lower.x));
         for(unsigned k=0;k<dy;++k)
             result.denominator=ExactExpansion::multiply(result.denominator,difference(cell.upper.y,cell.lower.y));
         ExactExpansion::centerHomogeneous(result.numerator,result.denominator);
+        // Compute and prepare outside the mutex. Concurrent cold callers may
+        // duplicate exact work, but only one complete successful result wins.
+        RestrictionEntry prepared{x,y,dx,dy,result};
+        {
+            std::lock_guard<std::mutex> lock(cell.restrictionCacheMutex);
+            for(const auto& entry:cell.restrictionCache)if(matches(entry))return entry.result;
+            constexpr std::size_t capacity=32;
+            if(cell.restrictionCache.empty())cell.restrictionCache.reserve(capacity);
+            if(cell.restrictionCache.size()<capacity)cell.restrictionCache.push_back(std::move(prepared));
+            else {
+                cell.restrictionCache[cell.restrictionCacheNext]=std::move(prepared);
+                cell.restrictionCacheNext=(cell.restrictionCacheNext+1)%capacity;
+            }
+        }
         return result;
+    }
+
+    bool lookupInitialRoots(int index,const InitialRootInput& input,bool allowMultiple,
+        std::vector<InitialRootCertificate>& roots) const
+    {
+        ExactExpansion::validateEnvironment();const auto& cell=activeCell(index);
+        std::lock_guard<std::mutex> lock(cell.initialRootCacheMutex);
+        for(const auto& entry:cell.initialRootCache)if(sameInitialRootInput(entry,input,allowMultiple)){
+            roots=entry.roots;return true;}
+        return false;
+    }
+    void rememberInitialRoots(int index,const InitialRootInput& input,bool allowMultiple,
+        const std::vector<InitialRootCertificate>& roots) const
+    {
+        ExactExpansion::validateEnvironment();const auto& cell=activeCell(index);
+        // Copy/prepare outside the lock. A concurrent successful cold query
+        // may duplicate isolation, but never mutates another query's roots.
+        InitialRootEntry prepared{input,allowMultiple,roots};
+        std::lock_guard<std::mutex> lock(cell.initialRootCacheMutex);
+        for(const auto& entry:cell.initialRootCache)if(sameInitialRootInput(entry,input,allowMultiple))return;
+        constexpr std::size_t capacity=256;
+        if(cell.initialRootCache.empty())cell.initialRootCache.reserve(capacity);
+        if(cell.initialRootCache.size()<capacity)cell.initialRootCache.push_back(std::move(prepared));
+        else {
+            cell.initialRootCache[cell.initialRootCacheNext]=std::move(prepared);
+            cell.initialRootCacheNext=(cell.initialRootCacheNext+1)%capacity;
+        }
     }
 
     // Physical 5*y+x cell columns -> independent vertex/edge/center data.
@@ -946,9 +1307,9 @@ class QuarticLeafData
     std::vector<Sensitivity> pullbackNodeSensitivity(int index,int component) const
     {
         ExactExpansion::validateEnvironment();
-        Detail::require(index>=0 && static_cast<std::size_t>(index)<vertices_.size() && vertices_[index].used
+        Detail::require(usedVertex(index)
             && component>=0 && component<4,"quartic nodal sensitivity requires a used vertex and component 0..3");
-        return pullbackDataSensitivity({{vertices_[index].jet[component],1.0L}});
+        return pullbackDataSensitivity({{vertexData(index).jet[component],1.0L}});
     }
     std::vector<Sensitivity> pullbackCellSensitivity(int index,const std::array<long double,25>& columns,
         CornerSectorVariation sectors=CornerSectorVariation::RequireAbsent) const
@@ -1029,7 +1390,7 @@ class QuarticLeafData
         for(std::size_t k=0;k<25;++k) result[k]=ExactExpansion::sign(controls[k]);
         return result;
     }
-    CartesianLeafLocator locator_; // validates and owns actual leaf coordinates
+    std::shared_ptr<const CartesianLeafLocator> locator_; // immutable actual leaf coordinates
     std::vector<VertexData> vertices_;
     std::vector<EdgeData> edges_;
     std::map<EdgeKey,int> edgeIndex_;
@@ -1043,13 +1404,140 @@ class QuarticLeafData
     const QuarticLeafData* restrictionSource_=nullptr;
     const Patch* restrictionPatch_=nullptr;
 
+    struct NativeMeshContext
+    {
+        struct Vertex {Vector2D point;int coarseCell=-1;};
+        struct Cell {Vector2D lower,upper;std::array<int,4> vertices;};
+        std::vector<Vertex> vertices;
+        std::vector<Cell> cells;
+    };
+    bool sparse_=false;
+    std::map<int,std::unique_ptr<VertexData>> sparseVertices_;
+    std::map<int,std::unique_ptr<Leaf>> sparseCells_;
+    std::vector<int> usedVertices_,activeCells_;
+    mutable std::once_flag meshContextReady_;
+    mutable std::shared_ptr<const NativeMeshContext> meshContext_;
+    const VertexData& vertexData(std::size_t index) const
+    {
+        if(!sparse_)return vertices_[index];
+        const auto found=sparseVertices_.find(static_cast<int>(index));
+        Detail::require(found!=sparseVertices_.end(),"quartic subset support lacks native vertex");return *found->second;
+    }
+    VertexData& vertexData(std::size_t index)
+    {return const_cast<VertexData&>(static_cast<const QuarticLeafData&>(*this).vertexData(index));}
+    const Leaf& cellData(std::size_t index) const
+    {
+        if(!sparse_)return cells_[index];
+        const auto found=sparseCells_.find(static_cast<int>(index));
+        Detail::require(found!=sparseCells_.end(),"quartic subset support lacks native coarse/active cell");return *found->second;
+    }
+    Leaf& cellData(std::size_t index)
+    {return const_cast<Leaf&>(static_cast<const QuarticLeafData&>(*this).cellData(index));}
+    bool usedVertex(int index) const
+    {return index>=0&&static_cast<std::size_t>(index)<vertexCount()
+        &&(!sparse_||sparseVertices_.find(index)!=sparseVertices_.end())&&vertexData(index).used;}
+    std::shared_ptr<const NativeMeshContext> nativeMeshContext() const
+    {
+        if(sparse_)return meshContext_;
+        std::call_once(meshContextReady_,[&]{
+            auto result=std::make_shared<NativeMeshContext>();
+            result->vertices.reserve(vertices_.size());result->cells.reserve(cells_.size());
+            for(const auto& vertex:vertices_)result->vertices.push_back({vertex.point,vertex.coarseCell});
+            for(const auto& cell:cells_)result->cells.push_back({cell.lower,cell.upper,cell.vertices});
+            meshContext_=std::move(result);
+        });
+        return meshContext_;
+    }
+    static const Patch::NodalDof& nodeDatum(const Patch& patch,int index){return patch.nodes[index];}
+    static const Patch::NodalDof& nodeDatum(const ::LevelSetHermiteGeometry::Snapshot::NativeLeafSubset& patch,int index)
+    {
+        const auto found=std::lower_bound(patch.nativeVertices.begin(),patch.nativeVertices.end(),index);
+        Detail::require(found!=patch.nativeVertices.end()&&*found==index,"quartic subset support lacks native vertex data");
+        return patch.nodes[static_cast<std::size_t>(found-patch.nativeVertices.begin())];
+    }
+    static double centerDatum(const Patch& patch,int index){return patch.cellCenters[index];}
+    static double centerDatum(const ::LevelSetHermiteGeometry::Snapshot::NativeLeafSubset& patch,int index)
+    {
+        const auto found=std::lower_bound(patch.nativeCells.begin(),patch.nativeCells.end(),index);
+        Detail::require(found!=patch.nativeCells.end()&&*found==index,"quartic subset support lacks native center data");
+        return patch.cellCenters[static_cast<std::size_t>(found-patch.nativeCells.begin())];
+    }
+    template<class Payload> void completeGeometry(const Payload& patch)
+    {
+        for(int nativeId:activeCells_)
+        {
+            const auto i=static_cast<std::size_t>(nativeId);auto& cell=cellData(nativeId);
+            for(int y=0;y<2;++y) for(int x=0;x<2;++x)
+            {
+                const auto& jet=cell.sectorIndex>=0 && cell.sectorCorner==2*y+x
+                    ? cell.sectorData:vertexData(cell.vertices[2*y+x]).jet;
+                cell.physical[5*y+x]=jet[0];
+                cell.physical[5*y+x+2]=jet[1];
+                cell.physical[5*(y+2)+x]=jet[2];
+                cell.physical[5*(y+2)+x+2]=jet[3];
+            }
+            for(int side=0;side<2;++side)
+            {
+                const auto& h=edges_[cell.edges[side]].midpoint;
+                const auto& v=edges_[cell.edges[side+2]].midpoint;
+                cell.physical[5*side+4]=h[0]; cell.physical[5*(side+2)+4]=h[1];
+                cell.physical[20+side]=v[0]; cell.physical[22+side]=v[1];
+            }
+            cell.physical[24]=independent(centerDatum(patch,static_cast<int>(i)),Sensitivity::Kind::CellCenter,
+                static_cast<int>(i),0);
+        }
+        // Freeze the shared dependency graph and all independent IDs first.
+        // Each remaining transform owns one leaf; common() only reads data_.
+        // No parallel registration, change of constraint order or reduction.
+        const auto prepareLeaf=[&](std::size_t i) {
+            ExactExpansion::validateEnvironment();
+            auto& cell=cellData(i);
+            if (!cell.active) return;
+            if(restrictionSource_)cell.local=restrictionSource_->restrictionData(cell.lower,cell.upper);
+            else cell.local=common(cell.physical);
+            const auto hx=difference(cell.upper.x,cell.lower.x),hy=difference(cell.upper.y,cell.lower.y);
+            QuarticCell::Dofs approximate{};
+            for(int y=0;y<5;++y) for(int x=0;x<5;++x)
+            {
+                auto& value=cell.local.numerator[5*y+x];
+                if(!restrictionSource_ && (x==2 || x==3)) value=ExactExpansion::multiply(value,hx);
+                if(!restrictionSource_ && (y==2 || y==3)) value=ExactExpansion::multiply(value,hy);
+            }
+            normalize(cell.local);
+            for(std::size_t k=0;k<25;++k)
+                approximate[k]=ratio(cell.local.numerator[k],cell.local.denominator);
+            cell.cache=std::make_unique<QuarticCell>(approximate,cell.upper.x-cell.lower.x,cell.upper.y-cell.lower.y);
+            if(cell.sectorIndex>=0)
+            {
+                constexpr unsigned masks[4]={1u,2u,8u,4u};
+                Detail::require(cellSignExceptVertices(static_cast<int>(i),masks[cell.sectorCorner])==cell.sectorPhaseSign,
+                    "native quartic corner sector lacks its exact single-phase certificate");
+            }
+        };
+        if (!activeCells_.empty()) prepareLeaf(static_cast<std::size_t>(activeCells_.front()));
+        std::vector<std::exception_ptr> errors(activeCells_.size());
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 32) if(activeCells_.size()>64)
+#endif
+        for (std::ptrdiff_t i=1;i<static_cast<std::ptrdiff_t>(activeCells_.size());++i)
+        {
+            try {prepareLeaf(static_cast<std::size_t>(activeCells_[i]));}
+            catch (...) {errors[i]=std::current_exception();}
+        }
+        // Construction has not published a snapshot. Preserve native-cell
+        // failure order and unwind all completed private leaves on failure.
+        for (const auto& error:errors) if (error) std::rethrow_exception(error);
+        // Borrowed construction inputs are never retained by the immutable result.
+        restrictionSource_=nullptr;restrictionPatch_=nullptr;
+    }
+
     void prepareTopology(const QuadtreeMesh& mesh,const std::vector<std::uint8_t>& active)
     {
         for(std::size_t i=0;i<vertices_.size();++i)
         {
             const auto& source=mesh.verts(mesh.vertIndexToLabel[i]);
-            vertices_[i].point=source.coord();
-            if(source.supCell>=0) vertices_[i].coarseCell=mesh.cells(source.supCell).index();
+            vertexData(i).point=source.coord();
+            if(source.supCell>=0) vertexData(i).coarseCell=mesh.cells(source.supCell).index();
         }
         bool any=false;
         constexpr int cornerOrder[4]={0,1,3,2};
@@ -1057,16 +1545,16 @@ class QuarticLeafData
         for(std::size_t i=0;i<cells_.size();++i)
         {
             Detail::require(active[i]<=1,"native quartic activity mask must be binary");
-            auto& cell=cells_[i];
+            auto& cell=cellData(i);
             const auto& source=mesh.cells(mesh.cellIndexToLabel[i]);
             cell.active=active[i]!=0;
             for(int k=0;k<4;++k)
                 cell.vertices[k]=mesh.verts(source.cellToVert[cornerOrder[k]]).index();
-            cell.lower=vertices_[cell.vertices[0]].point;
-            cell.upper=vertices_[cell.vertices[3]].point;
+            cell.lower=vertexData(cell.vertices[0]).point;
+            cell.upper=vertexData(cell.vertices[3]).point;
             if(!cell.active) continue;
-            any=true;
-            for(int vertex:cell.vertices) vertices_[vertex].used=true;
+            any=true;activeCells_.push_back(static_cast<int>(i));
+            for(int vertex:cell.vertices) vertexData(vertex).used=true;
             for(int side=0;side<4;++side)
             {
                 const EdgeKey key{{cell.vertices[sideCorners[side][0]],cell.vertices[sideCorners[side][1]]}};
@@ -1081,8 +1569,15 @@ class QuarticLeafData
             }
         }
         Detail::require(any,"native quartic patch has no active leaves");
-        for(auto& vertex:vertices_) if(vertex.used && vertex.coarseCell>=0)
+        for(std::size_t i=0;i<vertices_.size();++i)if(vertexData(i).used)usedVertices_.push_back(static_cast<int>(i));
+        linkTopology();
+    }
+    void linkTopology()
+    {
+        for(int index:usedVertices_)
         {
+            auto& vertex=vertexData(index);if(vertex.coarseCell<0)continue;
+            if(sparse_)Detail::require(cellActive(vertex.coarseCell),"quartic subset support lacks native coarse owner");
             const auto& coarse=activeCell(vertex.coarseCell);
             const auto p=vertex.point;
             int side=-1;
@@ -1093,21 +1588,21 @@ class QuarticLeafData
             Detail::require(side>=0,"quartic hanging vertex is not on its actual coarse side");
             vertex.coarseEdge=coarse.edges[side];
             const auto& edge=edges_[vertex.coarseEdge];
-            const auto a=vertices_[edge.vertices[0]].point,b=vertices_[edge.vertices[1]].point;
+            const auto a=vertexData(edge.vertices[0]).point,b=vertexData(edge.vertices[1]).point;
             Detail::require(edge.horizontal ? (a.x<p.x && p.x<b.x) : (a.y<p.y && p.y<b.y),
                 "quartic hanging vertex is not strictly inside its coarse side");
             ++hangingCount_;
         }
         for(auto& edge:edges_)
         {
-            const auto a=vertices_[edge.vertices[0]].point,b=vertices_[edge.vertices[1]].point;
+            const auto a=vertexData(edge.vertices[0]).point,b=vertexData(edge.vertices[1]).point;
             for(int vertex:edge.vertices)
             {
-                const int parent=vertices_[vertex].coarseEdge;
+                const int parent=vertexData(vertex).coarseEdge;
                 if(parent<0) continue;
                 const auto& coarse=edges_[parent];
                 if(coarse.horizontal!=edge.horizontal) continue;
-                const auto lo=vertices_[coarse.vertices[0]].point,hi=vertices_[coarse.vertices[1]].point;
+                const auto lo=vertexData(coarse.vertices[0]).point,hi=vertexData(coarse.vertices[1]).point;
                 const bool contained=edge.horizontal
                     ? (a.y==lo.y && b.y==lo.y && lo.x<=a.x && b.x<=hi.x && b.x-a.x<hi.x-lo.x)
                     : (a.x==lo.x && b.x==lo.x && lo.y<=a.y && b.y<=hi.y && b.y-a.y<hi.y-lo.y);
@@ -1119,6 +1614,29 @@ class QuarticLeafData
         }
     }
 
+    void prepareSparseTopology(const ::LevelSetHermiteGeometry::Snapshot::NativeLeafSubset& payload)
+    {
+        constexpr int sideCorners[4][2]={{0,1},{2,3},{0,2},{1,3}};
+        activeCells_=payload.nativeCells;
+        for(int id:activeCells_) {
+            auto owned=std::make_unique<Leaf>();const auto& topology=meshContext_->cells[id];
+            owned->active=true;owned->lower=topology.lower;owned->upper=topology.upper;owned->vertices=topology.vertices;
+            for(int vertex:owned->vertices)if(sparseVertices_.find(vertex)==sparseVertices_.end()) {
+                auto data=std::make_unique<VertexData>();const auto& original=meshContext_->vertices[vertex];
+                data->point=original.point;data->coarseCell=original.coarseCell;data->used=true;
+                sparseVertices_.emplace(vertex,std::move(data));
+            }
+            for(int side=0;side<4;++side) {
+                const EdgeKey key{{owned->vertices[sideCorners[side][0]],owned->vertices[sideCorners[side][1]]}};
+                const auto inserted=edgeIndex_.emplace(key,static_cast<int>(edges_.size()));
+                if(inserted.second){EdgeData edge;edge.vertices=key;edge.horizontal=side<2;edges_.push_back(edge);}
+                owned->edges[side]=inserted.first->second;
+            }
+            sparseCells_.emplace(id,std::move(owned));
+        }
+        for(const auto& vertex:sparseVertices_)usedVertices_.push_back(vertex.first);
+        linkTopology();
+    }
     void prepareSectors(const QuadtreeMesh& mesh,const Patch& patch)
     {
         std::vector<bool> declared(vertices_.size(),false);
@@ -1127,15 +1645,15 @@ class QuarticLeafData
             const int cellIndex=declaration.cellIndex,vertexIndex=declaration.vertexIndex;
             Detail::require(cellActive(cellIndex) && vertexIndex>=0 && static_cast<std::size_t>(vertexIndex)<vertices_.size(),
                 "native quartic corner sector requires active cell and valid native vertex");
-            auto& cell=cells_[cellIndex];
+            auto& cell=cellData(cellIndex);
             const auto corner=std::find(cell.vertices.begin(),cell.vertices.end(),vertexIndex);
             Detail::require(corner!=cell.vertices.end() && !declared[vertexIndex] && cell.sectorIndex<0,
                 "native quartic corner sector is not a unique incident vertex/cell");
-            const auto shared=nativeCornerSharedComponents(mesh,locator_,cellIndex,vertexIndex,
-                [&](int index){return cells_[index].active;});
+            const auto shared=nativeCornerSharedComponents(mesh,*locator_,cellIndex,vertexIndex,
+                [&](int index){return cellData(index).active;});
             const auto& d=declaration.dof;
             const std::array<double,4> values{{d.value,d.dx,d.dy,d.dxy}};
-            const auto& base=vertices_[vertexIndex].jet;
+            const auto& base=vertexData(vertexIndex).jet;
             Detail::require(d.value==0 && ExactExpansion::sign(data_[base[0]].value.numerator[0])==0,
                 "native quartic corner sector must preserve the exact base zero");
             Detail::require(declaration.phaseSign==-1 || declaration.phaseSign==1,
@@ -1158,23 +1676,23 @@ class QuarticLeafData
             declared[vertexIndex]=true;
         }
     }
-    void resolveVertex(int index,const Patch& patch)
+    template<class Payload> void resolveVertex(int index,const Payload& patch)
     {
-        auto& vertex=vertices_[index];
+        auto& vertex=vertexData(index);
         if(vertex.state==2) return;
         Detail::require(vertex.state==0,"cyclic native quartic vertex constraint");
         vertex.state=1;
         if(vertex.coarseEdge>=0)
         {
             const auto& edge=edges_[vertex.coarseEdge];
-            const auto a=vertices_[edge.vertices[0]].point,b=vertices_[edge.vertices[1]].point;
+            const auto a=vertexData(edge.vertices[0]).point,b=vertexData(edge.vertices[1]).point;
             const double p=edge.horizontal?vertex.point.x:vertex.point.y;
             const auto coordinate=chart(p,p,edge.horizontal?a.x:a.y,edge.horizontal?b.x:b.y);
             vertex.jet=traceJet(vertex.coarseEdge,coordinate.numeratorBegin,coordinate.denominator,patch);
         }
         else
         {
-            const auto& node=patch.nodes[index];
+            const auto& node=nodeDatum(patch,index);
             Detail::require(!radial_ || vertex.point.x!=0.0 || (node.dx==0.0 && node.dxy==0.0),
                 "native quartic axis dx and dxy must be exactly zero");
             const std::array<double,4> values{{node.value,node.dx,node.dy,node.dxy}};
@@ -1182,7 +1700,7 @@ class QuarticLeafData
         }
         vertex.state=2;
     }
-    void resolveMidpoint(int index,const Patch& patch)
+    template<class Payload> void resolveMidpoint(int index,const Payload& patch)
     {
         auto& edge=edges_[index];
         if(edge.state==2) return;
@@ -1192,7 +1710,7 @@ class QuarticLeafData
         {
             Detail::require(edge.input>=0,"missing independent coarse/shared quartic midpoint");
             const auto& input=patch.edgeMidpoints[edge.input];
-            Detail::require(!radial_ || edge.horizontal || vertices_[edge.vertices[0]].point.x!=0.0
+            Detail::require(!radial_ || edge.horizontal || vertexData(edge.vertices[0]).point.x!=0.0
                 || input.normalDerivative==0.0,"native quartic axis midpoint normal derivative must be zero");
             edge.midpoint={{independent(input.value,Sensitivity::Kind::EdgeMidpoint,edge.input,0),
                 independent(input.normalDerivative,Sensitivity::Kind::EdgeMidpoint,edge.input,1)}};
@@ -1200,8 +1718,8 @@ class QuarticLeafData
         else
         {
             const auto& parent=edges_[edge.parent];
-            const auto a=vertices_[edge.vertices[0]].point,b=vertices_[edge.vertices[1]].point;
-            const auto lo=vertices_[parent.vertices[0]].point,hi=vertices_[parent.vertices[1]].point;
+            const auto a=vertexData(edge.vertices[0]).point,b=vertexData(edge.vertices[1]).point;
+            const auto lo=vertexData(parent.vertices[0]).point,hi=vertexData(parent.vertices[1]).point;
             const double low=edge.horizontal?lo.x:lo.y,high=edge.horizontal?hi.x:hi.y;
             // Exact midpoint of actual fine endpoints, not rounded (a+b)/2.
             const auto numerator=ExactExpansion::add(difference(edge.horizontal?a.x:a.y,low),
@@ -1212,7 +1730,7 @@ class QuarticLeafData
         }
         edge.state=2;
     }
-    std::array<int,4> traceJet(int edgeIndex,const Exact& numerator,const Exact& denominator,const Patch& patch)
+    template<class Payload> std::array<int,4> traceJet(int edgeIndex,const Exact& numerator,const Exact& denominator,const Payload& patch)
     {
         const auto& edge=edges_[edgeIndex];
         resolveVertex(edge.vertices[0],patch); resolveVertex(edge.vertices[1],patch);
@@ -1225,9 +1743,9 @@ class QuarticLeafData
     }
     template<class Apply> void visitTrace(const EdgeData& edge,const Exact& numerator,const Exact& denominator,const Apply& apply) const
     {
-        const auto& first=vertices_[edge.vertices[0]].jet;
-        const auto& last=vertices_[edge.vertices[1]].jet;
-        const auto a=vertices_[edge.vertices[0]].point,b=vertices_[edge.vertices[1]].point;
+        const auto& first=vertexData(edge.vertices[0]).jet;
+        const auto& last=vertexData(edge.vertices[1]).jet;
+        const auto a=vertexData(edge.vertices[0]).point,b=vertexData(edge.vertices[1]).point;
         const auto width=difference(edge.horizontal?b.x:b.y,edge.horizontal?a.x:a.y);
         const auto basis=QuarticCell::rationalBasisJet(numerator,denominator);
         const auto commonDenominator=ExactExpansion::multiply(basis.denominator,width);
@@ -1421,12 +1939,325 @@ class QuarticLeafData
         target+=term;
         Detail::require(std::isfinite(target),"nonfinite quartic sensitivity accumulation");
     }
+    static bool sameInitialRootInput(const InitialRootEntry& entry,const InitialRootInput& input,bool allowMultiple)
+    {
+        if(entry.allowMultiple!=allowMultiple)return false;
+        for(std::size_t k=0;k<input.size();++k){
+            const auto a=entry.input[k].components(),b=input[k].components();
+            if(a.size()!=b.size() || (a.size()!=0 && std::memcmp(a.begin(),b.begin(),a.size()*sizeof(double))!=0))return false;}
+        return true;
+    }
     const Leaf& activeCell(int index) const
     {
         Detail::require(cellActive(index),"native quartic query/support crosses an inactive leaf");
-        return cells_[index];
+        return cellData(index);
+    }
+};
+
+// Single complete uniform XY four-piece scalar with the same immutable
+// completion and native identities. Exact half-piece restriction/root and
+// mapped terminal/pullback ports never treat a whole cell as one Q4. Bounds,
+// charts and all first variations read this owner. No hanging/radial/subset
+// source or legacy whole-native25 operation is supplied by this class.
+class C2MacroQuarticLeafData
+{
+    using Completion=ActiveQuarticHermiteCompletion;
+    using Exact=ExactExpansion::Expansion;
+    struct Leaf {
+        Vector2D lower,upper;
+        std::unique_ptr<C2MacroQuarticCell> scalar;
+        std::array<int,4> vertices;
+    };
+  public:
+    C2MacroQuarticLeafData(const QuadtreeMesh& mesh,const Completion& completion)
+        : completion_(completion),lower_(mesh.minCoord),upper_(mesh.maxCoord),
+          vertices_(static_cast<std::size_t>(mesh.vertIndexNum()))
+    {
+        ExactExpansion::validateEnvironment();
+        completion_.validateFor(mesh,completion_.sourcePatch(),completion_.symmetryPlanes());
+        locator_=std::make_unique<CartesianLeafLocator>(mesh);
+        cells_.reserve(static_cast<std::size_t>(mesh.cellIndexNum()));
+        for(int index=0;index<mesh.cellIndexNum();++index) {
+            const auto& native=mesh.cells(mesh.cellIndexToLabel[index]);
+            const auto lower=mesh.verts(native.cellToVert[0]).coord();
+            const auto upper=mesh.verts(native.cellToVert[2]).coord();
+            Leaf leaf{lower,upper,std::make_unique<C2MacroQuarticCell>(
+                completion_.physicalCellDofs(index),lower,upper),
+                {{mesh.verts(native.cellToVert[0]).index(),mesh.verts(native.cellToVert[1]).index(),
+                  mesh.verts(native.cellToVert[2]).index(),mesh.verts(native.cellToVert[3]).index()}}};
+            cells_.push_back(std::move(leaf));
+        }
+        ExactExpansion::validateEnvironment();
+    }
+
+    static constexpr std::size_t dofCount=25; // terminal polynomial columns, not primary DOFs
+    static constexpr bool requiresPieceCharts=true;
+    using Polynomial=QuarticLeafData::Polynomial;
+    int pieceIndexForNativeBox(int index,Vector2D lower,Vector2D upper) const
+    {return checkedCell(index).scalar->pieceIndexForBox(lower,upper);}
+    std::array<double,25> mappedPieceNativeLocalDofs(int index,int piece) const
+    {return checkedCell(index).scalar->pieceNativeLocalDofs(piece);}
+    std::vector<Completion::SourceWeight> pullbackPieceNativeSensitivity(int index,int piece,
+        const std::array<long double,25>& weights) const
+    {return completion_.pullbackCell(index,checkedCell(index).scalar->pieceNativeDataWeights(piece,weights));}
+    Polynomial restrictPieceNative(int index,int piece,const RationalSegmentCoordinate& x,
+        const RationalSegmentCoordinate& y,unsigned dx=0,unsigned dy=0) const
+    {
+        ExactExpansion::validateEnvironment();Detail::require(dx<=4&&dy<=4,"C2 piece restriction derivative exceeds Q4");
+        const auto& cell=checkedCell(index);Detail::require(piece>=0&&piece<4,"C2 restriction piece index invalid");
+        const auto local=[](const RationalSegmentCoordinate& native,int half){
+            const auto transform=[&](const Exact& numerator){
+                const auto twice=ExactExpansion::scalePow2(numerator,1);
+                return half?ExactExpansion::subtract(twice,native.denominator):twice;};
+            return RationalSegmentCoordinate{transform(native.numeratorBegin),transform(native.numeratorEnd),native.denominator};
+        };
+        auto data=QuarticCell::homogeneousRestrictionCentered(cell.scalar->pieceLocalNumerators(piece),
+            cell.scalar->pieceLocalDenominator(piece),local(x,piece%2),local(y,piece/2),dx,dy);
+        Polynomial result{std::move(data.numerator),std::move(data.denominator)};
+        for(auto& value:result.numerator)value=ExactExpansion::scalePow2(value,dx+dy);
+        const auto wx=difference(cell.upper.x,cell.lower.x),wy=difference(cell.upper.y,cell.lower.y);
+        for(unsigned k=0;k<dx;++k)result.denominator=ExactExpansion::multiply(result.denominator,wx);
+        for(unsigned k=0;k<dy;++k)result.denominator=ExactExpansion::multiply(result.denominator,wy);
+        ExactExpansion::centerHomogeneous(result.numerator,result.denominator);return result;
+    }
+    Polynomial restrictLocal(int index,const RationalSegmentCoordinate& x,const RationalSegmentCoordinate& y,
+        unsigned dx=0,unsigned dy=0) const
+    {
+        const auto half=[](const RationalSegmentCoordinate& coordinate){
+            const auto a=ExactExpansion::subtract(ExactExpansion::scalePow2(coordinate.numeratorBegin,1),coordinate.denominator),
+                b=ExactExpansion::subtract(ExactExpansion::scalePow2(coordinate.numeratorEnd,1),coordinate.denominator);
+            const int first=ExactExpansion::sign(a),last=ExactExpansion::sign(b);
+            Detail::require(first==0||last==0||first==last,"C2 restriction crosses an unsplit half-line");
+            return first>0||last>0?1:0;
+        };
+        return restrictPieceNative(index,half(x)+2*half(y),x,y,dx,dy);
+    }
+    int localBoxSign(int index,Vector2D lower,Vector2D upper) const
+    {const auto bounds=scalarBounds(index,lower,upper,0,0);return bounds.lo>0?1:bounds.hi<0?-1:0;}
+    int boxSign(int index,Vector2D lower,Vector2D upper) const
+    {
+        const auto& cell=checkedCell(index);
+        Detail::require(lower.x>=cell.lower.x&&lower.y>=cell.lower.y&&upper.x<=cell.upper.x&&upper.y<=cell.upper.y
+            &&lower.x<=upper.x&&lower.y<=upper.y,"C2 physical sign box leaves its actual native cell");
+        const auto axis=[](double value,double lo,double hi){
+            const auto numerator=ExactExpansion::enclosure(difference(value,lo)),denominator=ExactExpansion::enclosure(difference(hi,lo));
+            Detail::require(denominator.lo>0,"unresolved C2 box chart width");
+            return ExactExpansion::Interval{std::max(0.,Detail::Outward::down(numerator.lo/denominator.hi)),
+                std::min(1.,Detail::Outward::up(numerator.hi/denominator.lo))};};
+        const auto lx=axis(lower.x,cell.lower.x,cell.upper.x),ly=axis(lower.y,cell.lower.y,cell.upper.y),
+            ux=axis(upper.x,cell.lower.x,cell.upper.x),uy=axis(upper.y,cell.lower.y,cell.upper.y);
+        return localBoxSign(index,{lx.lo,ly.lo},{ux.hi,uy.hi});
+    }
+    int cellSignExceptVertices(int index,unsigned allowedMask) const
+    {
+        Detail::require((allowedMask&~15u)==0,"invalid C2 macro native corner mask");
+        const auto& cell=checkedCell(index);int common=0;
+        constexpr unsigned nativeMask[4]={1,2,8,4},pieceCornerMask[4]={1,2,8,4};
+        for(int piece=0;piece<4;++piece){const auto controls=QuarticCell::bernsteinControlsCleared(cell.scalar->pieceLocalNumerators(piece));
+            std::array<int,25> signs;for(int k=0;k<25;++k)signs[k]=ExactExpansion::sign(controls[k]);
+            const int sign=CellView::certifyBernsteinSigns(signs,(allowedMask&nativeMask[piece])?pieceCornerMask[piece]:0);
+            if(!sign||(common&&common!=sign))return 0;common=sign;}
+        return common;
+    }
+    bool resolvedCartesianPartial(int index,int axis=-1) const
+    {
+        Detail::require(axis>=-1&&axis<2,"invalid C2 partial axis");
+        const double guard=static_cast<double>(512*std::numeric_limits<double>::epsilon()*derivativeResolutionScale(index));
+        for(int candidate=0;candidate<2;++candidate){if(axis>=0&&candidate!=axis)continue;
+            const auto bounds=scalarBounds(index,{0,0},{1,1},candidate==0,candidate==1);
+            if(bounds.lo>guard||bounds.hi<-guard)return true;}
+        return false;
+    }
+    bool resolvedZeroSetPartial(int index,int axis=-1,Vector2D lower={0,0},Vector2D upper={1,1}) const
+    {
+        Detail::require(axis>=-1&&axis<2,"invalid C2 zero partial axis");
+        std::array<bool,2> common{true,true};const auto& cell=checkedCell(index);
+        for(int py=0;py<2;++py)for(int px=0;px<2;++px){
+            const Vector2D lo{std::max(lower.x,px*.5),std::max(lower.y,py*.5)},hi{std::min(upper.x,(px+1)*.5),std::min(upper.y,(py+1)*.5)};
+            if(lo.x>=hi.x||lo.y>=hi.y)continue;
+            const auto controls=QuarticCell::bernsteinControlsCleared(cell.scalar->pieceLocalNumerators(px+2*py));
+            const auto value=scalarBounds(index,lo,hi,0,0);if(value.lo>0||value.hi<0)continue;
+            const auto certified=QuarticCell::zeroSetCartesianPartials(controls,{2*lo.x-px,2*lo.y-py},{2*hi.x-px,2*hi.y-py});
+            for(int a=0;a<2;++a)common[a]=common[a]&&certified[a];}
+        return axis<0?common[0]||common[1]:common[axis];
+    }
+    std::vector<QuarticCell::RegularChartBox> regularChartPartition(int index) const
+    {
+        const auto& cell=checkedCell(index);std::array<std::vector<QuarticCell::RegularChartBox>,4> pieces;
+        std::vector<double> xs{0,.5,1},ys{0,.5,1};
+        for(int piece=0;piece<4;++piece){pieces[piece]=QuarticCell::regularChartPartition(
+                QuarticCell::bernsteinControlsCleared(cell.scalar->pieceLocalNumerators(piece)));
+            if(pieces[piece].empty())return {};
+            for(const auto& box:pieces[piece]){xs.push_back((piece%2+box.lower.x)/2);xs.push_back((piece%2+box.upper.x)/2);
+                ys.push_back((piece/2+box.lower.y)/2);ys.push_back((piece/2+box.upper.y)/2);}}
+        const auto unique=[](auto& values){std::sort(values.begin(),values.end());values.erase(std::unique(values.begin(),values.end()),values.end());};
+        unique(xs);unique(ys);std::vector<QuarticCell::RegularChartBox> result;
+        for(std::size_t y=1;y<ys.size();++y)for(std::size_t x=1;x<xs.size();++x){
+            const Vector2D lo{xs[x-1],ys[y-1]},hi{xs[x],ys[y]};const int piece=cell.scalar->pieceIndexForBox(lo,hi);
+            const Vector2D localLo{2*lo.x-piece%2,2*lo.y-piece/2},localHi{2*hi.x-piece%2,2*hi.y-piece/2};
+            bool found=false;for(const auto& box:pieces[piece])if(box.lower.x<=localLo.x&&box.lower.y<=localLo.y
+                &&box.upper.x>=localHi.x&&box.upper.y>=localHi.y){result.push_back({lo,hi,box.phase,box.partial});found=true;break;}
+            Detail::require(found,"C2 conforming chart partition lost its actual piece certificate");}
+        return result;
+    }
+    std::array<int,2> zeroCornerGradientSigns(int index,int corner) const
+    {
+        Detail::require(corner>=0&&corner<4,"invalid C2 zero corner");const auto data=physicalCellDofs(index);
+        constexpr int x[4]={0,2,2,0},y[4]={0,0,2,2};
+        Detail::require(data[7*y[corner]+x[corner]]==0,"C2 corner gradient requires an exact zero value");
+        const double gx=data[7*y[corner]+(x[corner]?4:3)],gy=data[7*(y[corner]?4:3)+x[corner]];
+        return {{gx>0?1:gx<0?-1:0,gy>0?1:gy<0?-1:0}};
+    }
+    std::array<int,2> localGradientSigns(int index,Vector2D point) const
+    {const RationalSegmentCoordinate x{number(point.x),number(point.x),number(1)},y{number(point.y),number(point.y),number(1)};
+        return {{ExactExpansion::sign(restrictLocal(index,x,y,1,0).numerator[0]),ExactExpansion::sign(restrictLocal(index,x,y,0,1).numerator[0])}};}
+    bool closedCellOutsideBand(int index,double width) const
+    {Detail::require(std::isfinite(width)&&width>=0,"invalid C2 band width");const auto b=scalarBounds(index,{0,0},{1,1},0,0);return b.lo>width||b.hi<-width;}
+    bool closedCellInsideBand(int index,double width) const
+    {Detail::require(std::isfinite(width)&&width>=0,"invalid C2 band width");const auto b=scalarBounds(index,{0,0},{1,1},0,0);return b.lo>=-width&&b.hi<=width;}
+    std::array<int,4> cellVertices(int index) const{return checkedCell(index).vertices;}
+    Polynomial restrictPhysical(int index,Vector2D a,Vector2D b,unsigned dx=0,unsigned dy=0) const
+    {
+        const auto& cell=checkedCell(index);
+        const auto coordinate=[](double first,double last,double lo,double hi){
+            Detail::require(first>=lo&&last>=lo&&first<=hi&&last<=hi,"C2 physical restriction leaves its native cell");
+            return RationalSegmentCoordinate{difference(first,lo),difference(last,lo),difference(hi,lo)};};
+        return restrictLocal(index,coordinate(a.x,b.x,cell.lower.x,cell.upper.x),coordinate(a.y,b.y,cell.lower.y,cell.upper.y),dx,dy);
+    }
+    bool normalTraceIdenticallyZero(int index,Vector2D a,Vector2D b,int axis) const
+    {
+        Detail::require(axis==0||axis==1,"invalid C2 symmetry normal axis");const auto& cell=checkedCell(index);
+        Detail::require(axis==0?(a.x==b.x&&a.y<b.y):(a.y==b.y&&a.x<b.x),"C2 normal-zero certificate needs an ascending actual side");
+        const double fixed=axis==0?a.x:a.y,normalLo=axis==0?cell.lower.x:cell.lower.y,normalHi=axis==0?cell.upper.x:cell.upper.y;
+        Detail::require(fixed==normalLo||fixed==normalHi,"C2 symmetry trace is not an actual native side");
+        const double first=axis==0?a.y:a.x,last=axis==0?b.y:b.x,
+            tangentLo=axis==0?cell.lower.y:cell.lower.x,tangentHi=axis==0?cell.upper.y:cell.upper.x;
+        Detail::require(first>=tangentLo&&last<=tangentHi,"C2 symmetry trace leaves its actual side");
+        const auto denominator=difference(tangentHi,tangentLo),begin=difference(first,tangentLo),end=difference(last,tangentLo),
+            knot=ExactExpansion::scalePow2(denominator,-1);
+        const auto fixedWidth=difference(normalHi,normalLo),fixedNumerator=difference(fixed,normalLo);
+        for(int half=0;half<2;++half){const auto lower=half?knot:number(0),upper=half?denominator:knot;
+            const auto lo=ExactExpansion::sign(ExactExpansion::subtract(begin,lower))>0?begin:lower,
+                hi=ExactExpansion::sign(ExactExpansion::subtract(end,upper))<0?end:upper;
+            if(ExactExpansion::sign(ExactExpansion::subtract(hi,lo))<=0)continue;
+            const RationalSegmentCoordinate tangent{lo,hi,denominator},normal{fixedNumerator,fixedNumerator,fixedWidth};
+            const int fixedHalf=fixed==normalHi?1:0,piece=axis==0?fixedHalf+2*half:half+2*fixedHalf;
+            const auto p=restrictPieceNative(index,piece,axis==0?normal:tangent,axis==0?tangent:normal,axis==0,axis==1);
+            for(const auto& coefficient:p.numerator)if(ExactExpansion::sign(coefficient)!=0)return false;
+        }
+        return true;
+    }
+    const Completion& completion() const noexcept { return completion_; }
+    std::size_t cellCount() const noexcept { return cells_.size(); }
+    std::size_t vertexCount() const noexcept { return vertices_; }
+    Vector2D minCoord() const noexcept { return lower_; }
+    Vector2D maxCoord() const noexcept { return upper_; }
+    bool radialAxisSymmetry() const noexcept { return false; }
+    bool hasCornerSectors() const noexcept { return false; }
+    bool cellActive(int index) const { checkedCell(index);return true; }
+    std::array<Vector2D,2> leafBounds(int index) const
+    { const auto& cell=checkedCell(index);return {{cell.lower,cell.upper}}; }
+    std::vector<int> leafCandidates(Vector2D lower,Vector2D upper) const
+    { return locator_->intersectingBox(lower,upper); }
+    int selectedCell(Vector2D point) const
+    {
+        const auto incident=locator_->incident(point);
+        Detail::require(incident.count>0,"C2 macro point leaves the full native domain");
+        return *std::min_element(incident.indices.begin(),
+            incident.indices.begin()+incident.count);
+    }
+
+    CellChartPoint chartAtPoint(int index,Vector2D point) const
+    {
+        ExactExpansion::validateEnvironment();
+        const auto& cell=checkedCell(index);
+        const auto coordinate=[](double value,double lower,double upper) {
+            Detail::require(std::isfinite(value)&&value>=lower&&value<=upper,
+                "C2 macro chart point leaves its actual native cell");
+            const auto fromLower=difference(value,lower),fromUpper=difference(upper,value);
+            const bool upperEnd=ExactExpansion::sign(
+                ExactExpansion::subtract(fromLower,fromUpper))>0;
+            const auto width=difference(upper,lower);
+            return CellChartCoordinate{ratio(upperEnd?fromUpper:fromLower,width),upperEnd};
+        };
+        return {coordinate(point.x,cell.lower.x,cell.upper.x),
+            coordinate(point.y,cell.lower.y,cell.upper.y)};
+    }
+    Vector2D chartDisplayPoint(int index,CellChartPoint point) const
+    {
+        ExactExpansion::validateEnvironment();
+        validateCellChart(point);
+        const auto& cell=checkedCell(index);
+        const auto coordinate=[](CellChartCoordinate chart,double lower,double upper) {
+            const auto tail=ExactExpansion::multiply(difference(upper,lower),number(chart.offset));
+            return ExactExpansion::estimate(chart.fromUpper
+                ?ExactExpansion::subtract(number(upper),tail)
+                :ExactExpansion::add(number(lower),tail));
+        };
+        return {coordinate(point.x,cell.lower.x,cell.upper.x),
+            coordinate(point.y,cell.lower.y,cell.upper.y)};
+    }
+
+    Sample evaluateCell(int index,Vector2D point) const
+    { return checkedCell(index).scalar->approximateJetAtPhysicalPoint(point); }
+    Sample evaluateCellChart(int index,CellChartPoint point) const
+    { return checkedCell(index).scalar->approximateJetAtChart(point); }
+    // Explicit true one-sided piece query. piece=2*py+px, and its input chart
+    // is local to that piece, including exact endpoint-relative upper tails.
+    Sample evaluatePieceCellChart(int index,int piece,CellChartPoint point) const
+    { return checkedCell(index).scalar->approximateJetAtPieceChart(piece,point); }
+    double valueInCell(int index,Vector2D point) const
+    { return checkedCell(index).scalar->approximateValueAtPhysicalPoint(point); }
+    double valueAtCellChart(int index,CellChartPoint point) const
+    { return checkedCell(index).scalar->approximateValueAtChart(point); }
+    ThirdDerivatives thirdDerivativesCellChart(int index,CellChartPoint point) const
+    { return checkedCell(index).scalar->approximateThirdDerivativesAtChart(point); }
+    long double derivativeResolutionScale(int index) const
+    { return checkedCell(index).scalar->derivativeResolutionScale(); }
+    std::array<double,49> physicalCellDofs(int index) const
+    { return checkedCell(index).scalar->physicalDofs(); }
+    std::vector<Completion::SourceWeight> differentialSensitivity(int index,
+        CellChartPoint point,const std::array<long double,6>& weights) const
+    {
+        return completion_.pullbackCell(index,
+            checkedCell(index).scalar->differentialWeights(point,weights));
+    }
+    ExactExpansion::Interval scalarBounds(int index,Vector2D lower,Vector2D upper,unsigned dx,unsigned dy) const
+    {return checkedCell(index).scalar->derivativeBounds(lower,upper,dx,dy);}
+    ExactExpansion::Interval cellValueBounds(int index,Vector2D lower={0,0},
+        Vector2D upper={1,1}) const
+    { return checkedCell(index).scalar->cellBounds(lower,upper); }
+
+  private:
+    Completion completion_;
+    Vector2D lower_,upper_;
+    std::size_t vertices_=0;
+    std::vector<Leaf> cells_;
+    std::unique_ptr<CartesianLeafLocator> locator_;
+
+    const Leaf& checkedCell(int index) const
+    {
+        Detail::require(index>=0&&static_cast<std::size_t>(index)<cells_.size(),
+            "C2 macro native cell index out of range");
+        return cells_[static_cast<std::size_t>(index)];
+    }
+    static Exact number(double value) { return ExactExpansion::fromDouble(value); }
+    static Exact difference(double first,double second)
+    { return ExactExpansion::subtract(number(first),number(second)); }
+    static double ratio(Exact numerator,Exact denominator)
+    {
+        Detail::require(ExactExpansion::sign(denominator)>0,
+            "nonpositive C2 macro chart denominator");
+        std::array<Exact,1> values{{std::move(numerator)}};
+        ExactExpansion::centerHomogeneous(values,denominator);
+        const long double value=static_cast<long double>(ExactExpansion::estimate(values[0]))
+            /ExactExpansion::estimate(denominator);
+        const double result=Detail::checked(value,"unrepresentable C2 macro chart offset");
+        Detail::require(ExactExpansion::sign(values[0])==0||result!=0,
+            "C2 macro chart offset underflow");
+        return result;
     }
 };
 } // namespace LevelSetHermiteScalar
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

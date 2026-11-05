@@ -1,0 +1,7 @@
+Geometry
+{
+    coordinates xy;
+    Domain { min (0 0); max (1 1); }
+    Phases { negative 1; positive 2; }
+    Initial { phi "(x-cx)^2+(y-cy)^2-radius^2"; }
+}

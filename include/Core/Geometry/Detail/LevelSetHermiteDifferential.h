@@ -5,7 +5,7 @@
 #include <cmath>
 #include <limits>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -58,4 +58,4 @@ double curvatureDerivative(const LevelSetHermiteScalar::Sample &s,
 }
 } // namespace HermiteDifferential
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

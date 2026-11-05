@@ -16,15 +16,15 @@
 
 namespace
 {
-namespace E = Quantum::Geometry::Detail::ExactExpansion;
-namespace Search = Quantum::Geometry::Detail::LocalInterfaceProjection;
+namespace E = LAMP::Geometry::Detail::ExactExpansion;
+namespace Search = LAMP::Geometry::Detail::LocalInterfaceProjection;
 using Search::require;
 using Snapshot = LevelSetHermiteGeometry::Snapshot;
 using Frame = LevelSetHermiteGeometry::Frame;
 using Chain = LevelSetInterfacePanels::NativeGraphChain;
 using Query = LevelSetInterfacePanels::NativeProjectionQuery;
 using Result = LevelSetInterfacePanels::LocalProjection;
-using Chart = Quantum::Geometry::CellChartPoint;
+using Chart = LAMP::Geometry::CellChartPoint;
 using Coordinates = std::array<E::Expansion, 2>;
 
 E::Expansion physicalComponent(const Snapshot& source,int cell,const Chart& chart,int axis)
@@ -78,7 +78,7 @@ class NativeProjectionContext
         E::validateEnvironment();
         require(source.usesNativeLeaves() && source.nativeCellActive(query.cellIndex),
                 "native projection requires an active unchanged leaf anchor");
-        Quantum::Geometry::validateCellChart(query.cellChartPoint);
+        LAMP::Geometry::validateCellChart(query.cellChartPoint);
         const double h = std::min(spacing.x, spacing.y);
         radius = h / 4.0;
         tolerance = 1e-9 * h;
@@ -142,8 +142,8 @@ class NativeProjectionContext
     double boxDistance(int cell,const Frame& first,const Frame& last,bool coordinateIsX,
         Vector2D localLower,Vector2D localUpper,const PreparedGraphCoordinates* prepared=nullptr) const
     {
-        const auto lowerChart=Quantum::Geometry::cellChartFromLocal(localLower);
-        const auto upperChart=Quantum::Geometry::cellChartFromLocal(localUpper);
+        const auto lowerChart=LAMP::Geometry::cellChartFromLocal(localLower);
+        const auto upperChart=LAMP::Geometry::cellChartFromLocal(localUpper);
         double distance[2]{};
         for (int axis = 0; axis < 2; ++axis)
         {
@@ -277,7 +277,7 @@ class NativeProjectionLayout
     {
         std::vector<Sample> samples;
         samples.push_back(endpoint(context, index, true));
-        for (double x : Quantum::Geometry::Detail::InterfaceQuadrature::gaussX)
+        for (double x : LAMP::Geometry::Detail::InterfaceQuadrature::gaussX)
             samples.push_back(evaluate(context, index, (1.0 + x) / 2.0));
         samples.push_back(endpoint(context, index, false));
         const double seed = context.targetFraction(samples.front().result.frame, samples.back().result.frame,
@@ -315,7 +315,7 @@ class NativeProjectionLayout
         // only query-dependent stationary iterates need that local cache.
         if(coordinates_) {
             if(fraction==0 || fraction==1)return chain_.frameAt(index,fraction);
-            for(double x:Quantum::Geometry::Detail::InterfaceQuadrature::gaussX)
+            for(double x:LAMP::Geometry::Detail::InterfaceQuadrature::gaussX)
                 if(fraction==(1.0+x)/2.0)return chain_.frameAt(index,fraction);
         }
         const auto key = std::make_pair(index, fraction);
@@ -328,7 +328,7 @@ class NativeProjectionLayout
     {
         const Coordinates* coordinates=nullptr;
         if(coordinates_) {
-            const auto& nodes=Quantum::Geometry::Detail::InterfaceQuadrature::gaussX;
+            const auto& nodes=LAMP::Geometry::Detail::InterfaceQuadrature::gaussX;
             for(std::size_t k=0;k<nodes.size();++k)
                 if(fraction==(1.0+nodes[k])/2.0) {coordinates=&coordinates_->at(index).fixed[k+2];break;}
         }
@@ -359,8 +359,8 @@ void LevelSetInterfacePanels::NativeGraphChain::prepareProjectionCoordinates()
             for(int axis=0;axis<2;++axis)
                 prepared.fixed[k][axis]=physicalComponent(*source_,graph.nativeCellIndex,frame.cellChartPoint,axis);
         }
-        const auto lower=Quantum::Geometry::cellChartFromLocal(graph.localLower);
-        const auto upper=Quantum::Geometry::cellChartFromLocal(graph.localUpper);
+        const auto lower=LAMP::Geometry::cellChartFromLocal(graph.localLower);
+        const auto upper=LAMP::Geometry::cellChartFromLocal(graph.localUpper);
         for(int axis=0;axis<2;++axis) {
             prepared.lower[axis]=physicalComponent(*source_,graph.nativeCellIndex,lower,axis);
             prepared.upper[axis]=physicalComponent(*source_,graph.nativeCellIndex,upper,axis);

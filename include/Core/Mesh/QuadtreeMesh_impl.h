@@ -8,6 +8,12 @@
 #include <string>
 #include <stdexcept>
 #include <vector>
+#include <algorithm>
+#include <array>
+#include <new>
+#include <type_traits>
+
+namespace LAMP::Mesh { class NativeTargetLevelField; }
 
 #include "Core/IO/ConsoleControl.h"
 
@@ -20,6 +26,63 @@ bool QuadtreeMesh::coarseningFamilyEligible(const Cell& parent, const Eligible& 
     for (int i=0; i<4; ++i)
         if (!eligible(parent.son[i])) result = false;
     return result;
+}
+
+template<typename LevelCellFieldT>
+std::size_t QuadtreeMesh::completeRefinementPrerequisites(LevelCellFieldT& targetLevel) const
+{
+    if (targetLevel.size() != cellIndexNum_)
+        throw std::invalid_argument("adaptation prerequisites require current target-cell storage");
+    const int minimum = minimumAdaptationLevel();
+    std::vector<int> aim(cellIndexNum_), originalAim(cellIndexNum_), queue;
+    std::vector<unsigned char> queued(cellIndexNum_, 0);
+    queue.reserve(cellIndexNum_);
+    // Validate the entire field first. No partially raised result is exposed
+    // when a later stale label or nonfinite target rejects.
+    for (int i=0; i<cellIndexNum_; ++i)
+    {
+        const int label = cellIndexToLabel[i];
+        if (label < 0 || label >= maxCellNum_ || cells_[label].label() != label
+            || cells_[label].index() != i || targetLevel.label(i) != label
+            || !std::isfinite(targetLevel.value[i])
+            || targetLevel.value[i] < std::numeric_limits<int>::min()
+            || targetLevel.value[i] > std::numeric_limits<int>::max())
+            throw std::invalid_argument("invalid or stale adaptation prerequisite target");
+        const auto& cell = cells_[label];
+        if (cell.level() < 0 || cell.level() > maxLevel_)
+            throw std::invalid_argument("invalid current level in adaptation prerequisites");
+        originalAim[i] = aim[i] = boundedTargetLevel(targetLevel.value[i], minimum);
+        if (cell.level() < aim[i]) { queue.push_back(i); queued[i] = 1; }
+    }
+    for (std::size_t head=0; head<queue.size(); ++head)
+    {
+        const auto& cell = cells_[cellIndexToLabel[queue[head]]];
+        // Each actual leaf needs this examination at most once: the condition
+        // depends on its CURRENT level, not on how far above it the desire is.
+        for (int side=0; side<4; ++side) for (int half=0; half<2; ++half)
+        {
+            const int label = cell.neiCell[side][half];
+            if (label == -1) continue;
+            if (label < 0 || label >= maxCellNum_ || cells_[label].label() != label)
+                throw std::invalid_argument("invalid actual face neighbor in adaptation prerequisites");
+            const auto& neighbor = cells_[label];
+            const int i = neighbor.index();
+            if (i < 0 || i >= cellIndexNum_ || cellIndexToLabel[i] != label
+                || targetLevel.label(i) != label)
+                throw std::invalid_argument("nonleaf or stale face neighbor in adaptation prerequisites");
+            if (neighbor.level() >= cell.level()) continue;
+            const int required = neighbor.level()+1;
+            if (aim[i] < required) aim[i] = required;
+            if (!queued[i]) { queue.push_back(i); queued[i] = 1; }
+        }
+    }
+    std::size_t raised = 0;
+    for (int i=0; i<cellIndexNum_; ++i) if (aim[i] > originalAim[i])
+    {
+        targetLevel.value[i] = static_cast<double>(aim[i]);
+        ++raised;
+    }
+    return raised;
 }
 
 template<typename LevelCellFieldT>
@@ -84,17 +147,79 @@ void QuadtreeMesh::adapt(std::vector<Field>& fields, CellFieldT& magGradU,
         std::cout << "[Mesh] adapt begin\n";
     }
 
-    for (int currentLevel = 0; currentLevel < nCellsPerLevel.size() - 1; currentLevel++)
-    {
-        prepareTransferIndices();
-        refineOrCoarsen0(fields, magGradU, currentLevel, targetLevel);
-
-        subdivideCell(currentLevel);
-
+    // A local receipt is safe only for the built-in nonvirtual target-field
+    // updates. Opaque/generic callbacks retain every original capacity scan.
+    // It never survives this adapt(), and its first use scans ALL pool slots.
+    struct LabelSpaceReceipt {std::vector<int> free;int ptr=0;bool valid=false;};
+    std::unique_ptr<std::array<LabelSpaceReceipt,4>> labelSpaces;
+    bool useLabelSpaces=std::is_same_v<CellFieldT,LAMP::Mesh::NativeTargetLevelField>
+        &&std::is_same_v<LevelCellFieldT,LAMP::Mesh::NativeTargetLevelField>
+        &&targetLevel!=nullptr&&fields.empty()&&vertFields.empty()
+        &&hEdgeFields.empty()&&vEdgeFields.empty();
+    auto nativeWorkspace=beginNativeAdaptationMaintenance(useLabelSpaces&&levelSetCount_==0);
+    const auto originalLabelSpaces=[&] {
         updateLabelSpace(verts_, vertLabelSpace_, vertPtr_, maxVertNum_);
         updateLabelSpace(hEdges_, hEdgeLabelSpace_, hEdgePtr_, maxHEdgeNum_);
         updateLabelSpace(vEdges_, vEdgeLabelSpace_, vEdgePtr_, maxVEdgeNum_);
         updateLabelSpace(cells_, cellLabelSpace_, cellPtr_, maxCellNum_);
+    };
+    const auto captureLabelSpace=[](const auto& list,int*& space,int& ptr,int maximum,LabelSpaceReceipt& receipt) {
+        receipt.valid=false;receipt.free.clear();receipt.free.reserve(static_cast<std::size_t>(maximum));
+        int nextPtr=ptr;
+        for(int i=0;i<maximum;++i) {
+            if(list.peek(i).label()!=-1)nextPtr=i+1;
+            else receipt.free.push_back(i);
+        }
+        // The entire original ascending free prefix, never its unused tail.
+        std::copy(receipt.free.begin(),receipt.free.end(),space);
+        ptr=nextPtr;receipt.ptr=nextPtr;receipt.valid=true;
+    };
+    const auto restoreLabelSpace=[](int*& space,int& ptr,const LabelSpaceReceipt& receipt) {
+        std::copy(receipt.free.begin(),receipt.free.end(),space);ptr=receipt.ptr;
+    };
+    const auto updateLabelSpaces=[&](bool noPoolWrites) {
+        if(updateNativeLabelSpaces(nativeWorkspace.get()))return;
+        if(!useLabelSpaces) {originalLabelSpaces();return;}
+        if(noPoolWrites&&labelSpaces&&std::all_of(labelSpaces->begin(),labelSpaces->end(),
+            [](const auto& receipt) {return receipt.valid;})) {
+            // subdivideCell's no-work path still overwrites part of the free
+            // prefix. Restore it; simply skipping maintenance is incorrect.
+            restoreLabelSpace(vertLabelSpace_,vertPtr_,(*labelSpaces)[0]);
+            restoreLabelSpace(hEdgeLabelSpace_,hEdgePtr_,(*labelSpaces)[1]);
+            restoreLabelSpace(vEdgeLabelSpace_,vEdgePtr_,(*labelSpaces)[2]);
+            restoreLabelSpace(cellLabelSpace_,cellPtr_,(*labelSpaces)[3]);return;
+        }
+        bool captured=false;
+        try {
+            if(!labelSpaces)labelSpaces=std::make_unique<std::array<LabelSpaceReceipt,4>>();
+            captureLabelSpace(verts_,vertLabelSpace_,vertPtr_,maxVertNum_,(*labelSpaces)[0]);
+            captureLabelSpace(hEdges_,hEdgeLabelSpace_,hEdgePtr_,maxHEdgeNum_,(*labelSpaces)[1]);
+            captureLabelSpace(vEdges_,vEdgeLabelSpace_,vEdgePtr_,maxVEdgeNum_,(*labelSpaces)[2]);
+            captureLabelSpace(cells_,cellLabelSpace_,cellPtr_,maxCellNum_,(*labelSpaces)[3]);
+            captured=true;
+        }catch(const std::bad_alloc&) {
+        }catch(const std::length_error&) {
+        }
+        if(captured)return;
+        // Extra receipt storage is optional execution state. On resource
+        // failure, release it and complete the original allocation-free scan.
+        useLabelSpaces=false;
+        labelSpaces.reset();
+        originalLabelSpaces();
+    };
+    for (int currentLevel = 0; currentLevel < nCellsPerLevel.size() - 1; currentLevel++)
+    {
+        prepareTransferIndices(nativeWorkspace.get());
+        refineOrCoarsen0(fields, magGradU, currentLevel, targetLevel);
+
+        // This is an exact branch-body proof, not a leaf-count/generation
+        // guess: with no needRefine, no subdivision mutation body is entered.
+        bool noPoolWrites=useLabelSpaces;
+        if(noPoolWrites)for(int i=0;i<cellIndexNum_;++i)
+            if(cells_[cellIndexToLabel[i]].needRefine) {noPoolWrites=false;break;}
+        subdivideCellWithWorkspace(currentLevel,nativeWorkspace.get());
+
+        updateLabelSpaces(noPoolWrites);
 
         for (Field& f : fields)
         {
@@ -122,15 +247,17 @@ void QuadtreeMesh::adapt(std::vector<Field>& fields, CellFieldT& magGradU,
 
     for (int currentLevel = static_cast<int>(nCellsPerLevel.size()) - 1; currentLevel > 0; currentLevel--)
     {
-        prepareTransferIndices();
+        prepareTransferIndices(nativeWorkspace.get());
         refineOrCoarsen0(fields, magGradU, currentLevel, targetLevel);
 
-        submergeCell(currentLevel);
+        // Keep even rejected coarsening-family work conservative: any
+        // needCoarsen triggers the full original pool-occupancy inspection.
+        bool noPoolWrites=useLabelSpaces;
+        if(noPoolWrites)for(int i=0;i<cellIndexNum_;++i)
+            if(cells_[cellIndexToLabel[i]].needCoarsen) {noPoolWrites=false;break;}
+        submergeCellWithWorkspace(currentLevel,nativeWorkspace.get());
 
-        updateLabelSpace(verts_, vertLabelSpace_, vertPtr_, maxVertNum_);
-        updateLabelSpace(hEdges_, hEdgeLabelSpace_, hEdgePtr_, maxHEdgeNum_);
-        updateLabelSpace(vEdges_, vEdgeLabelSpace_, vEdgePtr_, maxVEdgeNum_);
-        updateLabelSpace(cells_, cellLabelSpace_, cellPtr_, maxCellNum_);
+        updateLabelSpaces(noPoolWrites);
 
         for (Field& f : fields)
         {
@@ -380,40 +507,37 @@ void QuadtreeMesh::refineOrCoarsen0(std::vector<VertField>& LSs, CellFieldT& mag
 }
 
 template<typename T>
-void QuadtreeMesh::updateLabelSpace(T*& list, int*& space, int& ptr, const int maxNum)
+void QuadtreeMesh::updateLabelSpace(LAMP::Mesh::Detail::EntityPool<T>& list, int*& space, int& ptr, const int maxNum)
 {
     int _count = 0;
+    int _remainCount = 0;
+    // Preserve the complete ascending free-label prefix and last live ptr
+    // in one capacity scan. Leave the unused suffix of space untouched.
     for (int i = 0; i < maxNum; i++)
     {
-        T& t = list[i];
+        const T& t = list.peek(i);
         if (t.label() != -1)
         {
             _count++;
             ptr = i + 1;
         }
-    }
-
-    int _remainNum = maxNum - _count;
-
-    int _remainCount = 0;
-    for (int i = 0; i < maxNum; i++)
-    {
-        T& t = list[i];
-        if (t.label() == -1)
+        else
         {
             space[_remainCount] = i;
             _remainCount++;
         }
     }
+
+    int _remainNum = maxNum - _count;
 }
 
 template<typename T>
-void QuadtreeMesh::count(T*& list, const int ptr, int& indexNum, int*& indexToLabel)
+void QuadtreeMesh::count(LAMP::Mesh::Detail::EntityPool<T>& list, const int ptr, int& indexNum, int*& indexToLabel)
 {
     indexNum = 0;
     for (int i = 0; i < ptr; i++)
     {
-        T& t = list[i];
+        const T& t = list.peek(i);
         if (t.label() != -1 && t.son[0] == -1)
         {
             indexNum++;
@@ -424,11 +548,11 @@ void QuadtreeMesh::count(T*& list, const int ptr, int& indexNum, int*& indexToLa
     int count = 0;
     for (int i = 0; i < ptr; i++)
     {
-        T& t = list[i];
+        const T& t = list.peek(i);
         if (t.label() != -1 && t.son[0] == -1)
         {
             tempIndexToLabel[count] = i;
-            t.setIndex(count);
+            list[i].setIndex(count);
             count++;
         }
     }

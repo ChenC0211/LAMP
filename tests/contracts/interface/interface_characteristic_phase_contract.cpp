@@ -23,14 +23,14 @@
 
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 using Velocity=HermiteGalsTemporalVelocitySource;
 using Characteristic=HermiteGalsTemporalCharacteristicSource;
 using Interval=HermiteGalsPhaseFluxIntervalSource;
 using Coverage=HermiteGalsCharacteristicPhaseCoverage;
 using Phase=HermiteGalsCertifiedPhase;
 using Position=HermiteGalsTimeLayer::Position;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Jet=Patch::NodalDof;
 using Profile=std::function<Jet(Vector2D)>;
 using Inventory=std::function<double(int,Vector2D,Vector2D,double)>;
@@ -91,9 +91,9 @@ Profile shape(int kind,bool radial=false,int sign=1)
         return Jet{sign*(x*x+y*y-r*r),sign*2*x,sign*2*y,0};
     };
 }
-Quantum::Geometry::PolynomialVelocityData flowData(int kind)
+LAMP::Geometry::PolynomialVelocityData flowData(int kind)
 {
-    Quantum::Geometry::PolynomialVelocityData d;
+    LAMP::Geometry::PolynomialVelocityData d;
     if(kind==1 || kind==2 || kind==3){d.origin={.5,.5};
         if(kind<3){d.previous[1].x=-.8;d.previous[4].y=.8;}
         else{d.previous[9].x=-.8;d.previous[3].x=-.8;d.previous[12].y=.8;d.previous[6].y=.8;}}

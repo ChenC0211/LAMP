@@ -101,14 +101,14 @@ class Characteristic
         // midpoint with both velocity time levels. Only this call owns the
         // two scalar samples; velocity callbacks are still evaluated in their
         // original order. Exact coordinate bits, no near-point snapping.
-        std::array<Quantum::Geometry::ExactPointKey, 2> keys;
+        std::array<LAMP::Geometry::ExactPointKey, 2> keys;
         std::array<double, 2> values{};
         std::size_t count = 0;
         const auto scalarAt = [&](Vector2D p) {
             // A velocity callback can change the current floating mode.
             // Retained point validity is not permission to ignore that change.
-            Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
-            const auto key = Quantum::Geometry::exactPointKey(p);
+            LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
+            const auto key = LAMP::Geometry::exactPointKey(p);
             for (std::size_t index = 0; index < count; ++index)
                 if (keys[index] == key) return values[index];
             const double value = source_->value(p);
@@ -269,7 +269,7 @@ void validatePin(Vector2D point, const LevelSetBoundaryTrace::Velocity &current,
             "this pinned zero requires both actual no-slip velocity traces to vanish");
 }
 template<class MapJet>
-void pullbackNodalJet(Quantum::Geometry::ActiveHermitePatch::NodalDof& node,
+void pullbackNodalJet(LAMP::Geometry::ActiveHermitePatch::NodalDof& node,
     const LevelSetHermiteGeometry::Snapshot::ScalarJet2& jet,const MapJet& x,const MapJet& y)
 {
     const double xx=1+x.dx,xy=x.dy,yx=y.dx,yy=1+y.dy;
@@ -289,7 +289,7 @@ void finishCandidate(const QuadtreeMesh &mesh, const Options &options, const Mas
         require(extension.vertexIndex >= 0 && extension.vertexIndex < mesh.vertIndexNum() &&
                     masks.fixed[extension.vertexIndex],
                 "corner extension requires a declared fixed zero vertex");
-        Quantum::Geometry::ActiveHermitePatch::CornerSector sector;
+        LAMP::Geometry::ActiveHermitePatch::CornerSector sector;
         sector.cellIndex = extension.cellIndex;
         sector.vertexIndex = extension.vertexIndex;
         sector.phaseSign = extension.phaseSign;
@@ -306,7 +306,7 @@ void finishCandidate(const QuadtreeMesh &mesh, const Options &options, const Mas
             result.geometry = std::make_unique<LevelSetHermiteGeometry::Snapshot>(
                 LevelSetHermiteGeometry::Snapshot::fromNativeLeaves(mesh, result.patch,
                                                                     options.radialAxisSymmetry));
-        else if constexpr (std::is_same_v<typename CandidateType::Patch, Quantum::Geometry::ActiveHermitePatch>)
+        else if constexpr (std::is_same_v<typename CandidateType::Patch, LAMP::Geometry::ActiveHermitePatch>)
             result.geometry = std::make_unique<LevelSetHermiteGeometry::Snapshot>(
                 mesh, result.patch, options.radialAxisSymmetry, CartesianGridScope::UniformLeaves);
         else
@@ -408,14 +408,14 @@ class NativeStencil
     std::map<SampleKey, double> increments_;
     std::size_t sampleRequests_ = 0;
     struct AdmissionKey {
-        Quantum::Geometry::ExactPointKey lower,upper;
+        LAMP::Geometry::ExactPointKey lower,upper;
         const std::vector<std::uint8_t>* mask;
         bool operator==(const AdmissionKey& other) const noexcept
         {return lower==other.lower && upper==other.upper && mask==other.mask;}
     };
     struct AdmissionHash {
         std::size_t operator()(const AdmissionKey& key) const noexcept {
-            const Quantum::Geometry::ExactPointKeyHash hash;
+            const LAMP::Geometry::ExactPointKeyHash hash;
             return hash({static_cast<std::uint64_t>(hash(key.lower)),
                 static_cast<std::uint64_t>(hash(key.upper)^std::hash<const void*>{}(key.mask))});
         }
@@ -455,7 +455,7 @@ class NativeStencil
             lo.x < lower.x || lo.y < lower.y || hi.x > upper.x || hi.y > upper.y ||
             !(lo.x < hi.x && lo.y < hi.y))
             return false;
-        const AdmissionKey key{Quantum::Geometry::exactPointKey(lo),Quantum::Geometry::exactPointKey(hi),&mask};
+        const AdmissionKey key{LAMP::Geometry::exactPointKey(lo),LAMP::Geometry::exactPointKey(hi),&mask};
         const auto cached=admissions_.find(key);
         if(cached!=admissions_.end())return cached->second;
         const auto evaluate=[&]() {
@@ -482,7 +482,7 @@ class NativeStencil
 
 } // namespace
 
-Candidate advance(const QuadtreeMesh &mesh, const Quantum::Geometry::ActiveHermitePatch &previous, double dt,
+Candidate advance(const QuadtreeMesh &mesh, const LAMP::Geometry::ActiveHermitePatch &previous, double dt,
                   const LevelSetBoundaryTrace::Velocity &newVelocity,
                   const LevelSetBoundaryTrace::Velocity &oldVelocity, const Options &options)
 {
@@ -588,7 +588,7 @@ Candidate advance(const QuadtreeMesh &mesh, const Quantum::Geometry::ActiveHermi
     return result;
 }
 
-Candidate advanceNative(const QuadtreeMesh &mesh, const Quantum::Geometry::ActiveHermitePatch &previous,
+Candidate advanceNative(const QuadtreeMesh &mesh, const LAMP::Geometry::ActiveHermitePatch &previous,
                         double dt, const LevelSetBoundaryTrace::Velocity &newVelocity,
                         const LevelSetBoundaryTrace::Velocity &oldVelocity, const Options &options)
 {
@@ -673,7 +673,7 @@ Candidate advanceNative(const QuadtreeMesh &mesh, const Quantum::Geometry::Activ
     return result;
 }
 
-Candidate advanceNativeJet(const QuadtreeMesh& mesh,const Quantum::Geometry::ActiveHermitePatch& previous,
+Candidate advanceNativeJet(const QuadtreeMesh& mesh,const LAMP::Geometry::ActiveHermitePatch& previous,
     double dt,const LevelSetBoundaryTrace::Velocity& newVelocity,
     const LevelSetBoundaryTrace::Velocity& oldVelocity,const Options& options)
 {
@@ -738,11 +738,11 @@ Candidate advanceNativeJet(const QuadtreeMesh& mesh,const Quantum::Geometry::Act
     // Map components are not even scalar fields at the radial axis.
     NativeStencil stencil(mesh,*characteristic,false);
     struct Sample { Vector2D departure,displacement; double value; bool inflow; };
-    std::map<Quantum::Geometry::ExactPointKey,Sample> samples;
+    std::map<LAMP::Geometry::ExactPointKey,Sample> samples;
     Candidate result;result.patch=previous;
     const auto sample=[&](Vector2D point) -> const Sample& {
         ++result.nativeStencilSampleRequests;
-        const auto key=Quantum::Geometry::exactPointKey(point);
+        const auto key=LAMP::Geometry::exactPointKey(point);
         const auto found=samples.find(key);if (found!=samples.end()) return found->second;
         const auto traced=characteristic->backwardSample(point);
         const double value=traced.inflowValue?*traced.inflowValue:
@@ -792,7 +792,7 @@ Candidate advanceNativeJet(const QuadtreeMesh& mesh,const Quantum::Geometry::Act
 }
 
 static QuarticCandidate advanceQuarticImpl(const QuadtreeMesh &mesh,
-    const Quantum::Geometry::ActiveQuarticHermitePatch &previous, double dt,
+    const LAMP::Geometry::ActiveQuarticHermitePatch &previous, double dt,
     const LevelSetBoundaryTrace::Velocity &newVelocity,
     const LevelSetBoundaryTrace::Velocity &oldVelocity, const Options &options, bool pullbackJet)
 {
@@ -874,26 +874,26 @@ static QuarticCandidate advanceQuarticImpl(const QuadtreeMesh &mesh,
     // scalar increment. Reuse bitwise-identical coordinates only during this
     // advance; neither these values nor the callbacks enter the stencil cache
     // or the retained material trajectory. Never snap near-equal coordinates.
-    std::unordered_map<Quantum::Geometry::ExactPointKey, Increment, Quantum::Geometry::ExactPointKeyHash> increments;
+    std::unordered_map<LAMP::Geometry::ExactPointKey, Increment, LAMP::Geometry::ExactPointKeyHash> increments;
     increments.reserve(static_cast<std::size_t>(mesh.vertIndexNum())*4);
     for (std::size_t i=0; i<points.size(); ++i)
     {
         values[i] = sampled[i].value;
-        increments.emplace(Quantum::Geometry::exactPointKey(points[i]), sampled[i]);
+        increments.emplace(LAMP::Geometry::exactPointKey(points[i]), sampled[i]);
         result.maxTraceRatio = std::max(result.maxTraceRatio, sampled[i].traceRatio);
     }
     result.scalarIncrementRequests = result.scalarIncrementEvaluations = points.size();
     const auto scalarIncrement = [&](Vector2D point) {
         ++result.scalarIncrementRequests;
-        const auto key = Quantum::Geometry::exactPointKey(point);
+        const auto key = LAMP::Geometry::exactPointKey(point);
         const auto found = increments.find(key);
         require(found != increments.end(), "quartic point update lost its prepared scalar increment");
         return found->second.value;
     };
     result.timings.scalarSampling=elapsed();
-    Quantum::Geometry::ActiveQuarticHermitePatch increment,mapX,mapY;
-    std::optional<Quantum::Geometry::ActiveQuarticHermitePatch> boundaryFit;
-    const auto boundaryData=[&]() -> const Quantum::Geometry::ActiveQuarticHermitePatch& {
+    LAMP::Geometry::ActiveQuarticHermitePatch increment,mapX,mapY;
+    std::optional<LAMP::Geometry::ActiveQuarticHermitePatch> boundaryFit;
+    const auto boundaryData=[&]() -> const LAMP::Geometry::ActiveQuarticHermitePatch& {
         if (!boundaryFit) {
             std::vector<double> transported(points.size());
             for (std::size_t i=0;i<points.size();++i) transported[i]=sampled[i].transportedValue;
@@ -940,7 +940,7 @@ static QuarticCandidate advanceQuarticImpl(const QuadtreeMesh &mesh,
             add(node.value, pullbackJet?scalarIncrement(vertex.coord()):delta.value);
         }
         if (pullbackJet) {
-            const auto& traced=increments.at(Quantum::Geometry::exactPointKey(vertex.coord()));
+            const auto& traced=increments.at(LAMP::Geometry::exactPointKey(vertex.coord()));
             const auto& x=mapX.nodes[k]; const auto& y=mapY.nodes[k];
             if (hasInflowSamples && affected.nodes[k]) {
                 const auto& fit=boundaryData().nodes[k];
@@ -972,9 +972,9 @@ static QuarticCandidate advanceQuarticImpl(const QuadtreeMesh &mesh,
     // admission and publication remain serial; callbacks use the same explicit
     // concurrency contract as the stencil batch. No new physical sample.
     std::vector<Vector2D> additionalPoints;
-    std::unordered_set<Quantum::Geometry::ExactPointKey,Quantum::Geometry::ExactPointKeyHash> additionalKeys;
+    std::unordered_set<LAMP::Geometry::ExactPointKey,LAMP::Geometry::ExactPointKeyHash> additionalKeys;
     const auto requestAdditional = [&](Vector2D point) {
-        const auto key=Quantum::Geometry::exactPointKey(point);
+        const auto key=LAMP::Geometry::exactPointKey(point);
         if (increments.find(key)==increments.end() && additionalKeys.insert(key).second)
             additionalPoints.push_back(point);
     };
@@ -993,7 +993,7 @@ static QuarticCandidate advanceQuarticImpl(const QuadtreeMesh &mesh,
     const auto additionalValues=sampleBatch(additionalPoints);
     for (std::size_t i=0;i<additionalPoints.size();++i)
     {
-        increments.emplace(Quantum::Geometry::exactPointKey(additionalPoints[i]),additionalValues[i]);
+        increments.emplace(LAMP::Geometry::exactPointKey(additionalPoints[i]),additionalValues[i]);
         result.maxTraceRatio=std::max(result.maxTraceRatio,additionalValues[i].traceRatio);
     }
     result.scalarIncrementEvaluations+=additionalPoints.size();
@@ -1013,7 +1013,7 @@ static QuarticCandidate advanceQuarticImpl(const QuadtreeMesh &mesh,
         const auto b = mesh.verts(mesh.vertIndexToLabel[edge.vertices[1]]).coord();
         add(edge.value, scalarIncrement((a + b) * 0.5));
         if (pullbackJet) {
-            const auto& traced=increments.at(Quantum::Geometry::exactPointKey((a+b)*0.5));
+            const auto& traced=increments.at(LAMP::Geometry::exactPointKey((a+b)*0.5));
             const bool horizontal=a.y==b.y;
             const double x=mapX.edgeMidpoints[edgeIndex].normalDerivative;
             const double y=mapY.edgeMidpoints[edgeIndex].normalDerivative;
@@ -1043,12 +1043,12 @@ static QuarticCandidate advanceQuarticImpl(const QuadtreeMesh &mesh,
     return result;
 }
 QuarticCandidate advanceQuarticNative(const QuadtreeMesh& mesh,
-    const Quantum::Geometry::ActiveQuarticHermitePatch& previous,double dt,
+    const LAMP::Geometry::ActiveQuarticHermitePatch& previous,double dt,
     const LevelSetBoundaryTrace::Velocity& newVelocity,
     const LevelSetBoundaryTrace::Velocity& oldVelocity,const Options& options)
 { return advanceQuarticImpl(mesh,previous,dt,newVelocity,oldVelocity,options,false); }
 QuarticCandidate advanceQuarticNativeJet(const QuadtreeMesh& mesh,
-    const Quantum::Geometry::ActiveQuarticHermitePatch& previous,double dt,
+    const LAMP::Geometry::ActiveQuarticHermitePatch& previous,double dt,
     const LevelSetBoundaryTrace::Velocity& newVelocity,
     const LevelSetBoundaryTrace::Velocity& oldVelocity,const Options& options)
 { return advanceQuarticImpl(mesh,previous,dt,newVelocity,oldVelocity,options,true); }

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Runtime/IApp.h"
-#include "Runtime/RunConfig.h"
+#include "IApp.h"
+#include "RunConfig.h"
 
 // Independent Interface runner. The same numerical services are used by
 // Electrospray; prescribed data replace the external Hydro input provider.

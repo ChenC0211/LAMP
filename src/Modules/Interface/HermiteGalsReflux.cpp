@@ -9,7 +9,7 @@
 #include <utility>
 #include <type_traits>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {

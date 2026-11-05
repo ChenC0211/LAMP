@@ -1,4 +1,5 @@
 #include "Modules/Interface/InterfaceCellMeasure.h"
+#include "Modules/Interface/HermiteGalsPhaseVolume.h"
 #include "Modules/Interface/Detail/InterfaceNativeMeasure.h"
 #include "Modules/Interface/Detail/HermiteGalsRegionMeasure.h"
 #include "Core/Mesh/NativeLeafDomain.h"
@@ -12,11 +13,13 @@
 #include "Core/Mesh/UniformLeafGrid.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <exception>
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -26,10 +29,15 @@ namespace InterfaceCellMeasure
 {
 namespace
 {
-namespace Exact = Quantum::Geometry::Detail::ExactExpansion;
+namespace Exact = LAMP::Geometry::Detail::ExactExpansion;
 using Snapshot = LevelSetHermiteGeometry::Snapshot;
 using Root = LevelSetHermiteGeometry::SegmentRootIncidence;
 using Quad = std::array<Vector2D, 4>;
+using TraceClock = std::chrono::steady_clock;
+TraceClock::time_point traceTimingStart(const NativeTraceTimings* timings)
+{ return timings ? TraceClock::now() : TraceClock::time_point{}; }
+double traceTimingElapsed(const NativeTraceTimings* timings, TraceClock::time_point start)
+{ return timings ? std::chrono::duration<double>(TraceClock::now()-start).count() : 0.0; }
 void require(bool ok, const char* reason)
 { if (!ok) throw std::runtime_error(std::string("[InterfaceCellMeasure] ")+reason); }
 struct FaceResolutionError : std::runtime_error
@@ -352,8 +360,11 @@ static auto evaluateNative(const QuadtreeMesh& mesh, const NativeLeafDomain& dom
     const std::vector<LevelSetMappedInterface::Graph>& nativeGraphs,
     const std::vector<int>* certifiedPhase = nullptr,
     const std::shared_ptr<const Snapshot>& localVolumeSource = {},
-    const InterfacePhaseGeometry::BoundaryMoments* traceFixedBoundary = nullptr)
+    const InterfacePhaseGeometry::BoundaryMoments* traceFixedBoundary = nullptr,
+    std::vector<LevelSetMappedInterface::GraphMoments>* graphMoments = nullptr,
+    NativeTraceTimings* timings = nullptr)
 {
+    const auto setupStart=traceTimingStart(timings);
     partitions.validate(mesh,domain);
     const auto& source=partitions.source();
     require(!localVolumeSource || (Quartic && MomentsOnly && certifiedPhase && localVolumeSource.get()==&source),
@@ -362,12 +373,15 @@ static auto evaluateNative(const QuadtreeMesh& mesh, const NativeLeafDomain& dom
         "native XY volume requires a complete state topology; legacy entries retain RZ scope");
     require(!certifiedPhase || certifiedPhase->size()==static_cast<std::size_t>(mesh.cellIndexNum()),
         "complete topology phase certificate has the wrong mesh size");
-    require((source.reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic)==Quartic,
+    require((source.reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic||source.usesC2Macro())==Quartic,
         "native volume sensitivity port does not match scalar data layout");
     std::conditional_t<MomentsOnly,Volumes,std::conditional_t<Quartic,QuarticMeasure,Measure>> result;
     result.fixedBoundary=traceFixedBoundary ? *traceFixedBoundary : InterfacePhaseGeometry::boundaryMoments(mesh,domain,partitions);
     const auto nan=std::numeric_limits<long double>::quiet_NaN();
-    if constexpr(MomentsOnly) result.momentErrorEstimateByCell.assign(mesh.cellIndexNum(),nan);
+    if constexpr(MomentsOnly) {
+        result.momentErrorEstimateByCell.assign(mesh.cellIndexNum(),nan);
+        if(graphMoments)graphMoments->assign(nativeGraphs.size(),{});
+    }
     result.freeBoundaryMomentByCell.assign(mesh.cellIndexNum(),nan);
     result.negativeVolumeByCell.assign(mesh.cellIndexNum(),nan);
     std::vector<std::vector<int>> graphByCell(mesh.cellIndexNum());
@@ -399,13 +413,23 @@ static auto evaluateNative(const QuadtreeMesh& mesh, const NativeLeafDomain& dom
         std::vector<NativeArc> arcs;
         std::vector<long double> momentErrors;
         int crossedPanels=0;
+        double graphMomentsWorker=0, localRegionsWorker=0, cutSetupWorker=0, pureCellsWorker=0;
+        LevelSetMappedInterface::NativeMomentWorkProfile coreWork;
+        bool cutCell=false;
         std::exception_ptr failure;
     };
     const auto& cells=domain.cellIndexByRow();
     std::vector<CellResult> prepared(cells.size());
+    if(timings) {
+        timings->ordinarySetup+=traceTimingElapsed(timings,setupStart);
+        timings->activeCells+=cells.size();
+        timings->ordinaryGraphs+=nativeGraphs.size();
+    }
     const auto prepare=[&](std::size_t row) {
       auto& local=prepared[row];
+      const auto cellStart=traceTimingStart(timings);
       try {
+        Exact::validateActualEnvironment();
         const int cell=cells[row];
         const auto& native=mesh.cells(mesh.cellIndexToLabel[cell]);
         const auto bounds=source.nativeCellBounds(cell);
@@ -413,6 +437,9 @@ static auto evaluateNative(const QuadtreeMesh& mesh, const NativeLeafDomain& dom
         auto& moment=result.freeBoundaryMomentByCell[cell];
         moment=0.0L;
         const auto& graphIds=graphByCell[cell];
+        LAMP::Interface::Detail::RegionMeasure::CellMeasure jointCellMeasure;
+        std::vector<LevelSetMappedInterface::GraphMoments> jointGraphMoments;
+        bool jointPrepared=false;
         if(graphIds.empty())
         {
             // The same exact Bernstein certificate excludes all interior and
@@ -424,6 +451,8 @@ static auto evaluateNative(const QuadtreeMesh& mesh, const NativeLeafDomain& dom
         }
         else
         {
+            local.cutCell=true;
+            const auto cutSetupStart=traceTimingStart(timings);
             std::set<int> rows;
             for(int direction=0;direction<2;++direction)
                 for(int part=0;part<2;++part)
@@ -446,17 +475,36 @@ static auto evaluateNative(const QuadtreeMesh& mesh, const NativeLeafDomain& dom
                 for(int half=0;half<2;++half) cuts.push_back(&partitions.halfFace(row,half));
             }
             const LevelSetMappedInterface::Region region{cell,{{lo,{hi.x,lo.y},hi,{lo.x,hi.y}}}};
+            if(timings)local.cutSetupWorker+=traceTimingElapsed(timings,cutSetupStart);
+            if constexpr(Quartic && MomentsOnly) if(localVolumeSource) {
+                namespace Region=LAMP::Interface::Detail::RegionMeasure;
+                std::vector<LevelSetMappedInterface::Graph> graphs;
+                for(int graphId:graphIds)graphs.push_back(nativeGraphs[graphId]);
+                const auto regionStart=traceTimingStart(timings);
+                jointCellMeasure=Region::integrateCell(localVolumeSource,{lo,hi,cell},graphs,
+                    domain.axisymmetric(),&jointGraphMoments,timings?&local.coreWork:nullptr);
+                if(timings)local.localRegionsWorker+=traceTimingElapsed(timings,regionStart);
+                require(jointGraphMoments.size()==graphIds.size(),"joint native cell lost a global graph moment");
+                jointPrepared=true;
+            }
             long double compensation=0.0L;
-            for (int graphId:graphIds)
+            for (std::size_t graphInCell=0;graphInCell<graphIds.size();++graphInCell)
             {
+                const int graphId=graphIds[graphInCell];
                 if constexpr(MomentsOnly)
                 {
                     // Each graph lies in this actual native CV; artificial
                     // subchart boundaries are not additional control volumes.
                     // Fixed physical half-face moments still use partitions.
-                    const auto integrated=LevelSetMappedInterface::nativeMoments(source,nativeGraphs[graphId],domain.axisymmetric());
+                    const auto graphStart=jointPrepared?TraceClock::time_point{}:traceTimingStart(timings);
+                    const auto integrated=jointPrepared?jointGraphMoments[graphInCell]
+                        :LevelSetMappedInterface::nativeMoments(source,nativeGraphs[graphId],domain.axisymmetric());
+                    if(timings && !jointPrepared)local.graphMomentsWorker+=traceTimingElapsed(timings,graphStart);
                     require(std::isfinite(integrated.axial) && std::isfinite(integrated.errorEstimate),
                         "nonfinite native geometry-only moment");
+                    // One immutable graph already integrates both Green
+                    // moments. Each worker writes only its own graph slot.
+                    if(graphMoments)(*graphMoments)[graphId]=integrated;
                     const auto increment=integrated.axial-compensation,next=moment+increment;
                     compensation=(next-moment)-increment;moment=next;
                     local.momentErrors.push_back(integrated.errorEstimate);
@@ -490,11 +538,9 @@ static auto evaluateNative(const QuadtreeMesh& mesh, const NativeLeafDomain& dom
         auto& volume=result.negativeVolumeByCell[cell];
         volume=result.fixedBoundary.negativePhaseByCell[cell]+moment;
         if constexpr(Quartic && MomentsOnly) if(localVolumeSource && !graphIds.empty()) {
-            namespace Region=Quantum::Interface::Detail::RegionMeasure;
-            std::vector<LevelSetMappedInterface::Graph> graphs;
-            for(int graphId:graphIds)graphs.push_back(nativeGraphs[graphId]);
-            const Region::Box box{lo,hi,cell};
-            const auto measured=Region::integrateCell(localVolumeSource,box,graphs,domain.axisymmetric());
+            namespace Region=LAMP::Interface::Detail::RegionMeasure;
+            require(jointPrepared,"native local volume was not prepared with its global moments");
+            const auto& measured=jointCellMeasure;
             const auto capacity=Region::capacity(lo,hi,domain.axisymmetric());
             for(long double value:{measured.axialLiquid,measured.radialLiquid,measured.axialGas,measured.radialGas,measured.error})
                 require(std::isfinite(value),"nonfinite local native moment");
@@ -512,19 +558,31 @@ static auto evaluateNative(const QuadtreeMesh& mesh, const NativeLeafDomain& dom
             // ledger. Their rounded sum can differ from this local volume.
         }
         require(std::isfinite(volume),"nonfinite native negative-phase volume");
+        if(timings && !local.cutCell)local.pureCellsWorker+=traceTimingElapsed(timings,cellStart);
       } catch(...) {local.failure=std::current_exception();}
     };
+    const auto prepareStart=traceTimingStart(timings);
     Exact::validateEnvironment(); // Check the caller before entering an OpenMP team.
     if(!cells.empty())prepare(0);
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 8) if(nativeGraphs.size()>16)
+#pragma omp parallel for schedule(dynamic, 8) if(nativeGraphs.size()>1)
 #endif
     for(std::ptrdiff_t row=1;row<static_cast<std::ptrdiff_t>(cells.size());++row)
         prepare(static_cast<std::size_t>(row));
+    if(timings)timings->ordinaryPrepare+=traceTimingElapsed(timings,prepareStart);
+    const auto mergeStart=traceTimingStart(timings);
     long double totalCompensation=0.0L;
     for(std::size_t row=0;row<cells.size();++row) {
         auto& local=prepared[row];
         if(local.failure)std::rethrow_exception(local.failure);
+        if(timings) {
+            timings->graphMomentsWorker+=local.graphMomentsWorker;
+            timings->localRegionsWorker+=local.localRegionsWorker;
+            timings->cutSetupWorker+=local.cutSetupWorker;
+            timings->pureCellsWorker+=local.pureCellsWorker;
+            LAMP::Interface::Detail::RegionMeasure::accumulateCoreWorkProfile(timings->coreWork,local.coreWork);
+            if(local.cutCell)++timings->cutCells;else ++timings->pureCells;
+        }
         if constexpr(MomentsOnly) {
             for(long double error:local.momentErrors)result.momentErrorEstimate+=error;
             auto& cellError=result.momentErrorEstimateByCell[cells[row]];cellError=0;
@@ -538,6 +596,7 @@ static auto evaluateNative(const QuadtreeMesh& mesh, const NativeLeafDomain& dom
         totalCompensation=(next-result.summedNegativeVolume)-increment; result.summedNegativeVolume=next;
     }
     require(std::isfinite(result.summedNegativeVolume),"nonfinite total native negative-phase volume");
+    if(timings)timings->ordinaryMerge+=traceTimingElapsed(timings,mergeStart);
     return result;
 }
 
@@ -638,37 +697,48 @@ QuarticMeasure evaluateQuarticRefined(const QuadtreeMesh& mesh, const NativeLeaf
 Volumes evaluateVolumes(const QuadtreeMesh& mesh, const NativeLeafDomain& domain,
     const InterfacePhaseGeometry::MappedFacePartitions& partitions, const NativeInventory& inventory)
 {
-    if(partitions.source().reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic)
+    if(partitions.source().reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic||partitions.source().usesC2Macro())
         return evaluateNative<true,true>(mesh,domain,partitions,inventory.graphs,inventory.phase);
     return evaluateNative<false,true>(mesh,domain,partitions,inventory.graphs,inventory.phase);
 }
 }
-DiscoveredNativeTraceVolumes measureNativeTraceVolumes(const QuadtreeMesh& mesh, const NativeLeafDomain& domain,
+static DiscoveredNativeTraceVolumes measureNativeTraceVolumesImpl(const QuadtreeMesh& mesh, const NativeLeafDomain& domain,
     const InterfacePhaseGeometry::MappedFacePartitions& partitions,
     const LevelSetInterfacePanels::NativeComponents& topology,
     const std::vector<Vector2D>& boundaryContacts,
-    const std::vector<LevelSetInterfacePanels::SymmetryPlane>& symmetryPlanes)
+    const std::vector<LevelSetInterfacePanels::SymmetryPlane>& symmetryPlanes,
+    const ::LAMP::Interface::Detail::PublicationTracePermit* publicationPermit)
 {
+    const auto totalStart=TraceClock::now();
     partitions.validate(mesh,domain);
     const auto& source=partitions.source();
-    require(source.usesNativeLeaves() && source.reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic,
+    require(source.usesNativeLeaves() && (source.reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic||source.usesC2Macro()),
         "native trace volume requires original native Q4 source");
     // Synchronous borrowed alias only: the cache already owns this exact
     // immutable allocation. Re-discovery certifies completeness of the public
     // topology value; callers cannot supply a modified phase mask/arc list.
     const std::shared_ptr<const Snapshot> borrowed(&source,[](const Snapshot*){});
-    const auto certified=LevelSetInterfacePanels::discoverNativeTraceComponents(mesh,borrowed,domain.axisymmetric(),boundaryContacts,symmetryPlanes);
-    require(topology.cellPhase==certified.cellPhase && topology.curves.size()==certified.curves.size(),
-        "trace topology differs from complete same-source certificate");
+    std::optional<LevelSetInterfacePanels::NativeComponents> rediscovered;
+    if(!publicationPermit) {
+        rediscovered.emplace(LevelSetInterfacePanels::discoverNativeTraceComponents(mesh,borrowed,domain.axisymmetric(),boundaryContacts,symmetryPlanes));
+        require(topology.cellPhase==rediscovered->cellPhase && topology.curves.size()==rediscovered->curves.size(),
+            "trace topology differs from complete same-source certificate");
+    }
     std::vector<LevelSetMappedInterface::Graph> ordinary, sides;
     for(std::size_t c=0;c<topology.curves.size();++c) {
-        const auto& chain=topology.curves[c];const auto& reference=certified.curves[c];
-        require(chain.usesSource(source) && chain.axisymmetric()==domain.axisymmetric()
-            && chain.graphs().size()==reference.graphs().size() && chain.closed()==reference.closed()
-            && chain.beginEndpointKind()==reference.beginEndpointKind() && chain.endEndpointKind()==reference.endEndpointKind(),
+        const auto& chain=topology.curves[c];
+        require(chain.usesSource(source) && chain.axisymmetric()==domain.axisymmetric(),
             "native trace topology changed source/measure/component");
+        if(rediscovered) {
+            const auto& reference=rediscovered->curves[c];
+            require(chain.graphs().size()==reference.graphs().size() && chain.closed()==reference.closed()
+                && chain.beginEndpointKind()==reference.beginEndpointKind() && chain.endEndpointKind()==reference.endEndpointKind(),
+                "native trace topology changed source/measure/component");
+        }
         for(std::size_t g=0;g<chain.graphs().size();++g) {
-            const auto& a=chain.graphs()[g];const auto& b=reference.graphs()[g];
+            const auto& a=chain.graphs()[g];
+            if(rediscovered) {
+            const auto& b=rediscovered->curves[c].graphs()[g];
             require(a.nativeCellIndex==b.nativeCellIndex && a.cellI==b.cellI && a.cellJ==b.cellJ
                 && a.coordinateIsX==b.coordinateIsX && a.controlledIntegration==b.controlledIntegration
                 && a.localLower.x==b.localLower.x && a.localLower.y==b.localLower.y
@@ -686,11 +756,14 @@ DiscoveredNativeTraceVolumes measureNativeTraceVolumes(const QuadtreeMesh& mesh,
                     && s.minus().nativeCellIndex==r.minus().nativeCellIndex && s.minus().phase==r.minus().phase
                     && s.plus().nativeCellIndex==r.plus().nativeCellIndex && s.plus().phase==r.plus().phase,
                     "foreign native trace side support");
-                sides.push_back(a);
-            } else ordinary.push_back(a);
+            }
+            }
+            if(a.nativeSide)sides.push_back(a);else ordinary.push_back(a);
         }
     }
     DiscoveredNativeTraceVolumes result;auto& ledger=result.ledger;
+    ledger.timings.topologyValidation=traceTimingElapsed(&ledger.timings,totalStart);
+    const auto fixedStart=TraceClock::now();
     InterfacePhaseGeometry::BoundaryMoments fixed;
     const auto nan=std::numeric_limits<long double>::quiet_NaN();
     fixed.negativePhaseByNativeFace.assign(domain.faces(mesh).size(),nan);
@@ -706,6 +779,7 @@ DiscoveredNativeTraceVolumes measureNativeTraceVolumes(const QuadtreeMesh& mesh,
         const long double orientation=face.horizontal?-1:1;
         long double axial=0,radial=0,wholeAxial=0,wholeRadial=0;
         for(int half=0;half<2;++half) {
+            ++ledger.timings.faceHalves;
             const auto& trace=partitions.traceHalfFace(face.nativeRow,half);
             require(trace.usesSource(source) && trace.normalAxis()==(face.horizontal?1:0),"trace half changed source/normal");
             const auto a=trace.begin(),b=trace.end();
@@ -747,8 +821,17 @@ DiscoveredNativeTraceVolumes measureNativeTraceVolumes(const QuadtreeMesh& mesh,
         for(int cell:domain.cellIndexByRow())fixed.summedCellNegativeMoment+=fixed.negativePhaseByCell[cell];
         fixed.assemblyClosure=fixed.summedCellNegativeMoment-fixed.exteriorNegativeMoment;
     }
-    result.measure=evaluateNative<true,true>(mesh,domain,partitions,ordinary,&topology.cellPhase,borrowed,&fixed);
-    for(const auto& graph:ordinary)ledger.freeRadialByCell[graph.nativeCellIndex]+=LevelSetMappedInterface::nativeMoments(source,graph,domain.axisymmetric()).radial;
+    ledger.timings.fixedBoundary=traceTimingElapsed(&ledger.timings,fixedStart);
+    std::vector<LevelSetMappedInterface::GraphMoments> ordinaryMoments;
+    result.measure=evaluateNative<true,true>(mesh,domain,partitions,ordinary,&topology.cellPhase,borrowed,&fixed,&ordinaryMoments,&ledger.timings);
+    const auto sideStart=TraceClock::now();
+    // Retain the original ordinary graph addition order. The first actual
+    // nativeMoments call returned this radial value alongside its axial one;
+    // reuse only inside this same certified source/measure operation.
+    for(std::size_t k=0;k<ordinary.size();++k){
+        Exact::validateEnvironment();
+        ledger.freeRadialByCell[ordinary[k].nativeCellIndex]+=ordinaryMoments[k].radial;
+    }
     for(const auto& graph:sides) {
         ++ledger.sideGraphs;const auto& support=*graph.nativeSide;int liquid=-1;
         for(const auto* side:{&support.minus(),&support.plus()})if(side->available() && side->phase<0) {
@@ -765,6 +848,8 @@ DiscoveredNativeTraceVolumes measureNativeTraceVolumes(const QuadtreeMesh& mesh,
         result.measure.momentErrorEstimateByCell[liquid]+=moment.errorEstimate;result.measure.momentErrorEstimate+=moment.errorEstimate;
         ++ledger.sideLiquidOwners;
     }
+    ledger.timings.sideMoments=traceTimingElapsed(&ledger.timings,sideStart);
+    const auto finalStart=TraceClock::now();
     result.measure.summedNegativeVolume=0;long double radialFixedSum=0,totalCompensation=0;
     for(int cell:domain.cellIndexByRow()) {
         const long double cap=domain.cellVolumes()[domain.cellRowByIndex()[cell]];
@@ -787,7 +872,38 @@ DiscoveredNativeTraceVolumes measureNativeTraceVolumes(const QuadtreeMesh& mesh,
     }
     ledger.fixedRadialClosure=radialFixedSum-ledger.exteriorFixedRadial;
     result.cellPhase=topology.cellPhase;result.components=topology.curves.size();result.graphs=ordinary.size()+sides.size();
-    result.faceRootIncidences=partitions.rootIncidenceCount();return result;
+    result.faceRootIncidences=partitions.rootIncidenceCount();
+    ledger.timings.finalLedger=traceTimingElapsed(&ledger.timings,finalStart);
+    ledger.timings.total=traceTimingElapsed(&ledger.timings,totalStart);
+    return result;
+}
+
+DiscoveredNativeTraceVolumes measureNativeTraceVolumes(const QuadtreeMesh& mesh,const NativeLeafDomain& domain,
+    const InterfacePhaseGeometry::MappedFacePartitions& partitions,
+    const LevelSetInterfacePanels::NativeComponents& topology,const std::vector<Vector2D>& contacts,
+    const std::vector<LevelSetInterfacePanels::SymmetryPlane>& symmetry)
+{ return measureNativeTraceVolumesImpl(mesh,domain,partitions,topology,contacts,symmetry,nullptr); }
+
+DiscoveredNativeTraceVolumes Detail::PublicationTraceVolumeAccess::measure(const QuadtreeMesh& mesh,
+    const NativeLeafDomain& domain,const InterfacePhaseGeometry::MappedFacePartitions& partitions,
+    const LevelSetInterfacePanels::NativeComponents& topology,const std::vector<Vector2D>& contacts,
+    const std::vector<LevelSetInterfacePanels::SymmetryPlane>& symmetry,
+    const ::LAMP::Interface::Detail::PublicationTracePermit& permit)
+{
+    Exact::validateActualEnvironment();
+    require(permit.mesh_==&mesh && permit.domain_==&domain && permit.partitions_==&partitions
+        && permit.topology_==&topology && permit.config_ && &permit.config_->boundaryContacts==&contacts
+        && &permit.config_->symmetryPlanes==&symmetry && permit.source_,
+        "publication trace permit changed actual factory inputs");
+    permit.source_->validateMesh(mesh);
+    const auto clock=permit.source_->timeLayer();
+    require(permit.identity_==permit.source_->identity() && clock.step==permit.time_.step
+        && clock.begin==permit.time_.begin && clock.end==permit.time_.end && clock.position==permit.time_.position
+        && &permit.source_->geometry().snapshot()==permit.scalar_ && &partitions.source()==permit.scalar_,
+        "publication trace permit changed actual source/full clock");
+    require(domain.axisymmetric()==(permit.source_->primary().measure==::LAMP::Interface::HermiteGalsMeasure::AxisymmetricVolume)
+        && partitions.source().radialAxisSymmetry()==domain.axisymmetric(),"publication trace permit changed measure");
+    return measureNativeTraceVolumesImpl(mesh,domain,partitions,topology,contacts,symmetry,&permit);
 }
 
 DiscoveredNativeTraceVolumes discoverNativeTraceVolumes(const QuadtreeMesh& mesh, const NativeLeafDomain& domain,
@@ -827,14 +943,14 @@ static auto discoverCompleteVolumes(const QuadtreeMesh& mesh, const NativeLeafDo
         const auto sensitivity=evaluateRefinedImpl<true>(mesh,domain,partitions,inventory,256);
         result.centerDerivative.assign(mesh.cellIndexNum(),std::numeric_limits<long double>::quiet_NaN());
         for(int c:domain.cellIndexByRow())result.centerDerivative[c]=0;
-        using Sensitivity=Quantum::Geometry::ActiveQuarticHermiteSensitivity;
+        using Sensitivity=LAMP::Geometry::ActiveQuarticHermiteSensitivity;
         for(const auto& arc:sensitivity.arcs)for(const auto& entry:arc.independentSensitivity)
             if(entry.kind==Sensitivity::Kind::CellCenter) {
                 require(entry.index==arc.cellIndex && entry.component==0,"bubble derivative escaped its own cell");
                 result.centerDerivative[entry.index]+=entry.coefficient;
             }
     }
-    if(source->reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic)
+    if(source->reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic||source->usesC2Macro())
         result.measure=evaluateNative<true,true>(mesh,domain,partitions,graphs,&topology.cellPhase,source);
     else result.measure=evaluateNative<false,true>(mesh,domain,partitions,graphs,&topology.cellPhase);
     result.cellPhase=std::move(topology.cellPhase);

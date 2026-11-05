@@ -1,0 +1,9 @@
+Fields
+{
+    Constants
+    {
+        cx 0.5;
+        cy 0.5;
+        radius 0.16;
+    }
+}

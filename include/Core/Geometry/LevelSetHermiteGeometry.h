@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <limits>
 #include <vector>
 #include "Core/Base/Vector2D.h"
 #include "Core/Geometry/ActiveHermitePatch.h"
@@ -16,7 +17,10 @@ class LevelSetMappedSegment;
 class LevelSetMappedInterface;
 class LevelSetInterfacePanels;
 template<typename T> class VertField;
-namespace Quantum::Geometry {struct PolynomialAffineCoordinate;}
+namespace LAMP::Geometry {
+struct PolynomialAffineCoordinate;
+class ActiveQuarticHermiteCompletion;
+}
 
 // Shared geometry, independent of material, force, solver and reference shape.
 // Result structures contain no implementation types; Vector2D is not promised
@@ -24,7 +28,7 @@ namespace Quantum::Geometry {struct PolynomialAffineCoordinate;}
 namespace LevelSetHermiteGeometry
 {
 // Selects the retained scalar itself, not a separate curvature estimator.
-enum class Reconstruction { Cubic, EnrichedQuartic };
+enum class Reconstruction { Cubic, EnrichedQuartic, C2MacroQuartic };
 
 // Physical constant normal-speed transfer measure on an ascending axis-aligned
 // face over [begin,end]. Exact input algebra in the strict geometry TU, then
@@ -101,7 +105,7 @@ struct Frame
     // Explicit endpoint-relative queries use this alternative provenance.
     // The two flags are mutually exclusive; cellLocalPoint is not a rounded
     // replacement for a chart point whose upper-end tail would be lost.
-    Quantum::Geometry::CellChartPoint cellChartPoint;
+    LAMP::Geometry::CellChartPoint cellChartPoint;
     bool hasCellChartPoint = false;
     // Native provenance uses this actual leaf index, with i/j both -1.
     // Its chart is evaluated using that leaf's actual dimensions.
@@ -110,7 +114,7 @@ struct Frame
 
 // Read either explicit provenance representation, rejecting absent or
 // conflicting provenance. Does not reconstruct a chart from frame.point.
-Quantum::Geometry::CellChartPoint cellChartPoint(const Frame& frame);
+LAMP::Geometry::CellChartPoint cellChartPoint(const Frame& frame);
 
 struct BoundaryProjection
 {
@@ -135,7 +139,7 @@ struct PatchEndpoint
 // The legacy constructors support complete uniform Cartesian layouts with
 // regular-resolved active cells. The explicit native-leaf factory has the
 // narrower query support documented below. The
-// shared Hermite scalar is C1, not C2/C3, except explicitly declared pure-phase
+// legacy shared Hermite scalar is C1, not C2/C3, except explicitly declared pure-phase
 // corner-sector seams, which retain C0 traces and one-sided jets. Ambiguous
 // topology is rejected; such seams may not hide an interior zero.
 // Geometric computations require nearest rounding and gradual underflow;
@@ -173,7 +177,7 @@ public:
     // EXACT Cartesian edge/vertex an incident active cell may supply the jet.
     // Nearby points are never moved across an inactive boundary. No solid
     // extension, contact-angle law or internal endpoint projection is inferred.
-    Snapshot(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHermitePatch& patch,
+    Snapshot(const QuadtreeMesh& mesh, const LAMP::Geometry::ActiveHermitePatch& patch,
         bool radialAxisSymmetry = false, CartesianGridScope scope = CartesianGridScope::RootOnly);
     // Explicit native rectangular 2:1 layout. Uses the same Hermite scalar
     // with coarse-edge constraints at hanging vertices and declared sectors.
@@ -184,7 +188,7 @@ public:
     // spacing, global jet selection, projection and legacy full panels reject.
     // This factory does not select a new level-set PDE or enable App AMR.
     static Snapshot fromNativeLeaves(const QuadtreeMesh& mesh,
-        const Quantum::Geometry::ActiveHermitePatch& patch, bool radialAxisSymmetry = false);
+        const LAMP::Geometry::ActiveHermitePatch& patch, bool radialAxisSymmetry = false);
     // Same native geometry/chain/projection consumers, retaining the explicit
     // shared 25-DOF scalar instead. This factory does NOT generate Q4 data or
     // corner-sector extensions (declared replacements are validated).
@@ -193,19 +197,59 @@ public:
     // nativeQuarticCellSensitivity and nativeQuarticNegativePhaseVariation.
     // Old 16-column APIs reject this source instead of converting.
     static Snapshot fromNativeLeaves(const QuadtreeMesh& mesh,
-        const Quantum::Geometry::ActiveQuarticHermitePatch& patch, bool radialAxisSymmetry = false);
+        const LAMP::Geometry::ActiveQuarticHermitePatch& patch, bool radialAxisSymmetry = false);
+    // Retains the completion's shared immutable 49 physical data and a
+    // genuine four-piece tensor quartic scalar on each complete uniform
+    // native leaf. Its traces are C2 at native faces and half-cell knots;
+    // third derivatives need not agree. No geometry refit or single-Q4
+    // replacement is used, and later source/mesh changes cannot update it.
+    // Supports native metadata/activity/candidates, value, scalarJetNative,
+    // scalarJetInNativeCell, scalarJetAtNativeCellChart, the explicit piece
+    // query below, and native-chart normal/raw-curvature Frames.
+    // Native roots, mapped piece integration and phase/region measures use
+    // actual half-cell charts of this same source. Typed differential and
+    // mapped sensitivities pull back to the original formal source data.
+    // Whole-cell 16/25-column APIs and logical-grid operations remain
+    // unsupported; the macro requires complete nonhanging uniform XY leaves.
+    // This neutral rectangular Core source does not certify Interface
+    // primary identity, physical measure or the accepted time/clock.
+    static Snapshot fromUniformC2Completion(const QuadtreeMesh& mesh,
+        const LAMP::Geometry::ActiveQuarticHermiteCompletion& completion);
+    bool usesC2Macro() const;
+    // Axis order: V0,Vmid,V1,D10,D11,D20,D21; tensor index 7*y+x.
+    // Data have physical derivative units, before the native-cell scaling.
+    std::array<double,49> nativeC2MacroPhysicalDofs(int index) const;
+    // piece=xHalf+2*yHalf. local is that actual piece's own [0,1]^2 chart;
+    // closed endpoints retain the requested side. All returned derivatives
+    // are physical, permitting independent left/right seam checks without a
+    // global display-coordinate round trip. Invalid index/piece/chart rejects.
+    ScalarJet2 scalarJetAtNativeC2MacroPieceLocal(int index,int piece,Vector2D local) const;
     // Pure refinement of the SAME retained Q4 scalar, including cut cells.
     // Full active coverage, unchanged domain, no sectors or coarsening. Every
     // target leaf must lie inside one source leaf; all 25 restricted Hermite
     // data are checked by exact identity. Owns its data after source destruction.
     // No M transfer, Interface state/publication, transport or accepted regrid.
     static Snapshot refineNativeQuartic(const QuadtreeMesh& targetMesh,const Snapshot& source);
+    // Compact data in the immutable native index space of meshSource.
+    // Cells/vertices are strictly ascending; payloads follow those orders.
+    // Only actual active support is allocated. Native vertex/cell IDs and
+    // recursive coarse-trace ownership are retained; edge independent IDs
+    // remain payload-list ordinals as in fromNativeLeaves. Missing support
+    // rejects. The caller validates its live mesh against the source owner.
+    struct NativeLeafSubset
+    {
+        std::vector<int> nativeCells,nativeVertices;
+        std::vector<LAMP::Geometry::ActiveQuarticHermitePatch::NodalDof> nodes;
+        std::vector<LAMP::Geometry::ActiveQuarticHermitePatch::EdgeMidpoint> edgeMidpoints;
+        std::vector<double> cellCenters;
+    };
+    static Snapshot fromNativeLeafSubset(const Snapshot& meshSource,const NativeLeafSubset& payload);
     // Temporary local-query source. Includes requested cells and recursive
     // coarse constraint owners, preserving the ORIGINAL vertex/edge/center
     // independent IDs. Unselected leaves are inactive; this is not a complete
     // transported state. No corner-sector subsets or extrapolation.
     static Snapshot fromNativeQuarticQueryCells(const QuadtreeMesh& mesh,
-        const Quantum::Geometry::ActiveQuarticHermitePatch& patch,const std::vector<int>& cells,
+        const LAMP::Geometry::ActiveQuarticHermitePatch& patch,const std::vector<int>& cells,
         bool radialAxisSymmetry = false);
     bool usesNativeLeaves() const;
     std::size_t nativeCellCount() const;
@@ -227,8 +271,8 @@ public:
     // physical forms. Outside this leaf it bounds only that polynomial's
     // mathematical extension: the caller must prove actual donor membership.
     // Full coordinate type/API: Core/Geometry/PolynomialVelocitySlab.h.
-    Quantum::Geometry::PolynomialAffineCoordinate nativeQuarticAffineEnclosure(int index,
-        const std::array<Quantum::Geometry::PolynomialAffineCoordinate,2>& physicalCoordinates) const;
+    LAMP::Geometry::PolynomialAffineCoordinate nativeQuarticAffineEnclosure(int index,
+        const std::array<LAMP::Geometry::PolynomialAffineCoordinate,2>& physicalCoordinates) const;
     struct AffineFaceTimeMeasure
     {
         long double total=0, liquidFraction=0;
@@ -310,36 +354,79 @@ public:
     // averaging across a cell boundary. Native scalar derivatives, including
     // at non-interface points where a normalized geometric frame is undefined.
     ScalarJet2 scalarJetNative(Vector2D point) const;
+    // A separate numerical transport-point contract, not phase/root authority.
+    // Bounds cover the original homogeneous Q4 at the physical point for
+    // value/dx/dy only; second derivatives retain the original numeric cache.
+    struct TransportScalarJet2
+    {
+        ScalarJet2 jet;
+        std::array<double,3> absoluteErrorBounds{{
+            std::numeric_limits<double>::infinity(),std::numeric_limits<double>::infinity(),
+            std::numeric_limits<double>::infinity()}};
+        bool boundsResolved=false, exactValueFallback=false, exactGradientFallback=false;
+    };
+    // The scalar-only transport contract has no derivative channels or
+    // derivative permission. It uses the same physical Q4 and value budget.
+    struct TransportScalarValue
+    {
+        double value=0;
+        double absoluteErrorBound=std::numeric_limits<double>::infinity();
+        bool boundsResolved=false, exactValueFallback=false;
+    };
+    TransportScalarValue numericalScalarValueNative(Vector2D point,
+        double maximumValueAbsoluteError=std::numeric_limits<double>::infinity()) const;
+    // Native Q4 only, same deterministic active leaf and reflected chart.
+    // Positive finite or +infinity budgets are independent absolute targets.
+    // Near-zero/unresolved or over-budget channels use original exact physical
+    // restrictions. Callers still check returned bounds against their targets.
+    TransportScalarJet2 numericalScalarJetNative(Vector2D point,
+        double maximumValueAbsoluteError=std::numeric_limits<double>::infinity(),
+        double maximumGradientAbsoluteError=std::numeric_limits<double>::infinity()) const;
     // Floating cell-cache jet; homogeneous value/phase/root queries remain
     // the scalar authority, just as in the original uniform chart evaluator.
-    ScalarJet2 scalarJetAtNativeCellChart(int index,const Quantum::Geometry::CellChartPoint& point) const;
+    ScalarJet2 scalarJetAtNativeCellChart(int index,const LAMP::Geometry::CellChartPoint& point) const;
     // Same scaled cell evaluation and original differential formulas as the
     // uniform engine. Curvature is meridional div(n), not RZ pole completion.
-    // At a shared face D2/D3 need not agree: retain the caller's actual leaf.
+    // Legacy C1 scalars may have different face D2/D3; C2 macro uses its
+    // actual selected piece and agrees through D2. Retain the caller's leaf.
     // This is a jet at a given point, NOT projection or a curvature fit.
-    Frame jetAtNativeCellChart(int index,const Quantum::Geometry::CellChartPoint& point) const;
+    Frame jetAtNativeCellChart(int index,const LAMP::Geometry::CellChartPoint& point) const;
     double curvatureTangentialDerivativeAtNativeCellChart(int index,
-        const Quantum::Geometry::CellChartPoint& point) const;
+        const LAMP::Geometry::CellChartPoint& point) const;
     // C^T times the 16 formal physical corner-jet sensitivities (SW/SE/NE/NW).
     // Returns unique regular native vertices in ascending order, all four
     // physical components retained. Pin/axis/free-gradient constraints remain
     // the caller's responsibility. Corner-sector cells reject by default;
     // HoldFixed omits ONLY the substituted corner jet, not the whole cell.
     // Sector data must not masquerade as shared regular-vertex unknowns.
-    std::vector<Quantum::Geometry::ActiveHermiteNodalSensitivity> nativeCellSensitivity(
+    std::vector<LAMP::Geometry::ActiveHermiteNodalSensitivity> nativeCellSensitivity(
         int index, const std::array<long double, 16>& coefficients,
-        Quantum::Geometry::CornerSectorVariation sectors =
-            Quantum::Geometry::CornerSectorVariation::RequireAbsent) const;
-    std::vector<Quantum::Geometry::ActiveQuarticHermiteSensitivity> nativeQuarticCellSensitivity(
+        LAMP::Geometry::CornerSectorVariation sectors =
+            LAMP::Geometry::CornerSectorVariation::RequireAbsent) const;
+    std::vector<LAMP::Geometry::ActiveQuarticHermiteSensitivity> nativeQuarticCellSensitivity(
         int index,const std::array<long double,25>& coefficients,
-        Quantum::Geometry::CornerSectorVariation sectors =
-            Quantum::Geometry::CornerSectorVariation::RequireAbsent) const;
+        LAMP::Geometry::CornerSectorVariation sectors =
+            LAMP::Geometry::CornerSectorVariation::RequireAbsent) const;
     // Independent-data derivative of w.[phi,phi_x,phi_y,phi_xx,phi_xy,phi_yy]
     // at a retained native chart. Physical derivatives and the same Q4 basis;
     // no fitting, curvature model or regularization is introduced here.
-    std::vector<Quantum::Geometry::ActiveQuarticHermiteSensitivity> nativeQuarticDifferentialSensitivity(
-        int index,const Quantum::Geometry::CellChartPoint& point,
+    std::vector<LAMP::Geometry::ActiveQuarticHermiteSensitivity> nativeQuarticDifferentialSensitivity(
+        int index,const LAMP::Geometry::CellChartPoint& point,
         const std::array<long double,6>& weights) const;
+    // Same six physical point-jet channels on the completed four-piece
+    // scalar. The full A/E transpose reaches ORIGINAL formal vertex, edge
+    // and center source identities, including neighboring-cell support.
+    // point is the native-cell chart; no piece or 49-slot ID escapes.
+    // Compact mixed L and physical Interface identity/clock are certified
+    // separately by the consuming typed owner. Nonmacro sources reject.
+    std::vector<LAMP::Geometry::ActiveQuarticHermiteSensitivity> nativeC2MacroDifferentialSensitivity(
+        int index,const LAMP::Geometry::CellChartPoint& point,
+        const std::array<long double,6>& weights) const;
+    // Outward [lower,upper] of physical Dx^dx Dy^dy phi on the retained
+    // actual native [0,1]^2 subbox. Intersects all real macro pieces; no
+    // polynomial extension, samples or scalar surrogate are used.
+    std::array<double,2> nativeC2MacroScalarBounds(int index,Vector2D localLower,Vector2D localUpper,
+        unsigned dx=0,unsigned dy=0) const;
     ~Snapshot();
     Snapshot(Snapshot&&) noexcept;
     Snapshot& operator=(Snapshot&&) noexcept;
@@ -351,6 +438,8 @@ public:
     int nx() const;
     int ny() const;
     bool radialAxisSymmetry() const;
+    // Native sources (including complete-active C2 macro) report restricted
+    // query support here. Inspect native activity to determine scalar support.
     bool restrictedDomain() const;
     bool hasCornerSectors() const;
     bool cellActive(int i, int j) const; // Cartesian cell coordinates, not native indices; bounds checked.
@@ -456,7 +545,7 @@ public:
     // Same raw, one-sided CellData D3 as the local API, evaluated with
     // endpoint-reflected Hermite bases. This is not reconstructed C3 data.
     double curvatureTangentialDerivativeAtCellChart(int i, int j,
-        const Quantum::Geometry::CellChartPoint& point) const;
+        const LAMP::Geometry::CellChartPoint& point) const;
     // Same-point gradient/Hessian as jet, with D3(phi) reconstructed from
     // five-point nodal differences and bilinear interpolation. Avoids the
     // one-sided C1 polynomial's third-derivative jump; second-order consistent
@@ -521,14 +610,14 @@ public:
     // No round-trip through global coordinates; coincident segments reject.
     std::vector<Vector2D> intersectCellSegment(int i, int j, Vector2D localA, Vector2D localB) const;
     Frame jetAtCellLocal(int i, int j, Vector2D localPoint) const;
-    Frame jetAtCellChart(int i, int j, const Quantum::Geometry::CellChartPoint& point) const;
+    Frame jetAtCellChart(int i, int j, const LAMP::Geometry::CellChartPoint& point) const;
     // All roots of a complete Cartesian cell section, ordered along the
     // unfixed coordinate. Each half is isolated from its nearest endpoint;
     // only the identical exact midpoint root is shared between halves.
     // fixedCoordinate is retained verbatim. Coincident/unresolved sections
     // reject; no positive tail or root identity is rounded away.
-    std::vector<Quantum::Geometry::CellChartPoint> intersectCellSection(int i, int j,
-        bool coordinateIsX, Quantum::Geometry::CellChartCoordinate fixedCoordinate) const;
+    std::vector<LAMP::Geometry::CellChartPoint> intersectCellSection(int i, int j,
+        bool coordinateIsX, LAMP::Geometry::CellChartCoordinate fixedCoordinate) const;
     // Raw value and physical derivatives from the SAME retained cell
     // evaluation as jetAtCellLocal, including its one-sided corner sector.
     // No projection, global-coordinate round trip, Q4 refit or averaging.
@@ -537,7 +626,7 @@ public:
     // are retained; this floating evaluation is not an exact sign certificate.
     ScalarJet2 scalarJetAtCellLocal(int i, int j, Vector2D localPoint) const;
     ScalarJet2 scalarJetAtCellChart(int i, int j,
-        const Quantum::Geometry::CellChartPoint& point) const;
+        const LAMP::Geometry::CellChartPoint& point) const;
     double negativeFraction(Vector2D a, Vector2D b) const;
 
 private:

@@ -1,0 +1,11 @@
+Run { app Hydrodynamics; }
+Parallel { threads 8; }
+Time
+{
+    units code;
+    dt 0.00020000000000000001;
+    endTime 0.02;
+    StepRetry { minDt 1.2500000000000001e-05; maxRetries 4; recoverAfter 0; }
+}
+Output { Fields { enabled true; writeEverySteps 10; } }
+Log { everySteps 1; level summary; }

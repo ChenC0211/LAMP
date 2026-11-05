@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // Explicit scalar authority on a subset of a complete Cartesian leaf layout.
 // Entries use the mesh's native indices, not labels or Cartesian positions.
@@ -45,4 +45,4 @@ struct ActiveHermitePatch
     // the original shared-DOF scalar. This is not a contact-angle condition.
     std::vector<CornerSector> cornerSectors;
 };
-} // namespace Quantum::Geometry
+} // namespace LAMP::Geometry

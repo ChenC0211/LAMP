@@ -20,7 +20,7 @@
 #endif
 namespace
 {
-using namespace Quantum::Geometry;
+using namespace LAMP::Geometry;
 using Snapshot=LevelSetHermiteGeometry::Snapshot;
 using Patch=ActiveQuarticHermitePatch;
 using Jet=Patch::NodalDof;

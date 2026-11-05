@@ -1179,7 +1179,7 @@ void CouplingWeightsCache::build(const BackgroundMesh& mesh,
             }
             catch (...)
             {
-                #pragma omp critical(quantum_cwcache_build_error)
+                #pragma omp critical(lamp_cwcache_build_error)
                 {
                     if (!firstError)
                         firstError = std::current_exception();
@@ -1278,7 +1278,7 @@ void CouplingWeightsCache::build(const BackgroundMesh& mesh,
             }
             catch (...)
             {
-                #pragma omp critical(quantum_cwcache_copy_error)
+                #pragma omp critical(lamp_cwcache_copy_error)
                 {
                     if (!copyError)
                         copyError = std::current_exception();

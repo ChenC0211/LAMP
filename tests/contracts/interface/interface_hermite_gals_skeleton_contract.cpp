@@ -17,9 +17,9 @@
 
 namespace
 {
-using Skeleton=Quantum::Geometry::ActiveQuarticHermiteSkeleton;
-using Input=Quantum::Geometry::ActiveQuarticHermiteSkeletonInput;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Skeleton=LAMP::Geometry::ActiveQuarticHermiteSkeleton;
+using Input=LAMP::Geometry::ActiveQuarticHermiteSkeletonInput;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Key=Skeleton::EdgeKey;
 using Jet=Skeleton::Jet;
 constexpr Key none{{-1,-1}};

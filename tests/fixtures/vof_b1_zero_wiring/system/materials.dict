@@ -1,0 +1,4 @@
+Materials { Phases {
+Liquid { phaseId 1; density 2; dynamicViscosity 0; permittivity 2.3; conductivity .7; }
+Gas { phaseId 2; density 1; dynamicViscosity 0; permittivity .9; conductivity 2.1; }
+} Interfaces { Shared { phases (1 2); surfaceTension 0; } } }

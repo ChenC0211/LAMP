@@ -14,7 +14,7 @@
 // A persistent owner publishes these only through const access. Phase integrals
 // require the effective liquid boundary, not overlapping raw component curves.
 // Polynomial roots are numerical subdivision roots, not topology certificates.
-namespace Quantum::Geometry::Parametric {
+namespace LAMP::Geometry::Parametric {
 inline void check(bool ok,const char* message){if(!ok)throw std::runtime_error(message);}
 constexpr std::array<double,5> gx{{-.9061798459386639928,-.5384693101056830910,0,.5384693101056830910,.9061798459386639928}};
 constexpr std::array<double,5> gw{{.2369268850561890875,.4786286704993664680,.5688888888888888889,.4786286704993664680,.2369268850561890875}};
@@ -512,4 +512,4 @@ std::vector<double> unitGridKnots(const PolynomialCurve<N>& curve,int cells) {
     }
     std::sort(out.begin(),out.end());out.erase(std::unique(out.begin(),out.end()),out.end());return out;
 }
-} // namespace Quantum::Geometry::Parametric
+} // namespace LAMP::Geometry::Parametric

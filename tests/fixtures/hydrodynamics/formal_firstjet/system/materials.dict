@@ -1,0 +1,9 @@
+Materials
+{
+    Phases
+    {
+        Negative { phaseId 1; density 100; dynamicViscosity 0; }
+        Positive { phaseId 2; density 1; dynamicViscosity 0; }
+    }
+    Interfaces { Shared { phases (1 2); surfaceTension 341.642; } }
+}

@@ -1,21 +1,30 @@
 #include "Modules/Interface/HermiteGalsPublication.h"
 
 #include "Core/Geometry/ActiveQuarticHermitePatch.h"
+#include "Core/Geometry/ActiveQuarticHermiteCompletion.h"
 #include "Core/Geometry/CellChartPoint.h"
 #include "Core/Geometry/LevelSetMappedSegment.h"
 #include "Core/Mesh/FaceSegmentGraph.h"
 #include "Core/Mesh/QuadtreeMesh.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
+using PublicationClock = std::chrono::steady_clock;
+double publicationSecondsSince(PublicationClock::time_point begin)
+{
+    return std::chrono::duration<double>(PublicationClock::now() - begin).count();
+}
 void require(bool ok, const char* message) { if (!ok) throw std::invalid_argument(message); }
 bool tolerance(double x) { return std::isfinite(x) && x > 0 && x < 1; }
 using Chain = LevelSetInterfacePanels::NativeGraphChain;
@@ -33,8 +42,15 @@ HermiteGalsSurfaceSample checkedSample(const HermiteGalsState& state,
     const auto bounds = scalar.nativeCellBounds(frame.nativeCellIndex);
     const auto widths = bounds[1] - bounds[0];
     const double h = std::min(widths.x, widths.y);
-    require(std::isfinite(frame.levelSetResidual) && frame.levelSetResidual >= 0
-        && frame.levelSetResidual <= config.relativeInterfaceResidualTolerance * h, "interface residual exceeds tolerance");
+    if(!(std::isfinite(frame.levelSetResidual) && frame.levelSetResidual >= 0
+        && frame.levelSetResidual <= config.relativeInterfaceResidualTolerance * h)){
+        std::ostringstream message;message<<std::setprecision(17)<<"interface residual exceeds tolerance"
+            <<" nativeCell="<<frame.nativeCellIndex<<" point=("<<frame.point.x<<','<<frame.point.y<<')'
+            <<" chart=(("<<frame.cellChartPoint.x.offset<<','<<frame.cellChartPoint.x.fromUpper<<"),("
+            <<frame.cellChartPoint.y.offset<<','<<frame.cellChartPoint.y.fromUpper<<"))"
+            <<" levelSetResidual="<<frame.levelSetResidual<<" allowedTolerance="<<config.relativeInterfaceResidualTolerance*h;
+        throw std::invalid_argument(message.str());
+    }
     const double norm = std::hypot(frame.normal.x, frame.normal.y);
     require(std::isfinite(norm) && std::abs(norm - 1) <= config.unitNormalTolerance, "nonunit/nonfinite interface normal");
     require(std::isfinite(frame.curvature), "nonfinite meridional curvature");
@@ -42,7 +58,7 @@ HermiteGalsSurfaceSample checkedSample(const HermiteGalsState& state,
     if (state.primary().measure == HermiteGalsMeasure::AxisymmetricVolume) {
         const auto coordinate = result.frame.cellChartPoint.x;
         const bool chartAxis = bounds[0].x == 0
-            && Quantum::Geometry::compareCellChartCoordinate(coordinate, {0,false}) == 0;
+            && LAMP::Geometry::compareCellChartCoordinate(coordinate, {0,false}) == 0;
         if (chartAxis) {
             require(atAxis && result.frame.point.x == 0 && result.frame.normal.x == 0,
                 "RZ pole requires an exact retained axis endpoint and even normal");
@@ -64,21 +80,69 @@ HermiteGalsSurfaceSample checkedSample(const HermiteGalsState& state,
     return result;
 }
 }
+LevelSetHermiteGeometry::Snapshot prepareHermiteGalsFirstJetScalar(const QuadtreeMesh& mesh,
+    const HermiteGalsCandidate& candidate,const HermiteGalsAmrClosureResult& mixed,
+    const HermiteGalsCenterPrediction& centers,const HermiteGalsPublicationConfig& config)
+{
+    candidate.validateMesh(mesh);
+    const auto id=candidate.identity();
+    const auto& primary=candidate.primary();
+    require(primary.transport==HermiteGalsTransport::FirstJet&&primary.phaseVolumes.empty(),
+        "FirstJet scalar requires a state without inventory");
+    require(!candidate.hasGeometry(),"FirstJet scalar requires an unpublished candidate");
+    require(mixed.primaryIdentity()==id&&centers.primaryIdentity==id,"FirstJet scalar revision mismatch");
+    mixed.skeleton().validateMesh(mesh);
+    const auto t=candidate.timeLayer(),mt=mixed.timeLayer();
+    require(t.step==mt.step&&t.begin==mt.begin&&t.end==mt.end&&t.position==mt.position,
+        "FirstJet scalar full clock mismatch");
+    require(mixed.vertexMixedDerivatives().size()==primary.vertices.size()
+        &&centers.values.size()==primary.geometryCells.size(),"FirstJet scalar closure layout mismatch");
+    LAMP::Geometry::ActiveQuarticHermitePatch patch;
+    const double nan=std::numeric_limits<double>::quiet_NaN();
+    patch.activeCells.assign(mesh.cellIndexNum(),0);
+    patch.nodes.assign(mesh.vertIndexNum(),{nan,nan,nan,nan});
+    patch.cellCenters.assign(mesh.cellIndexNum(),nan);
+    for(std::size_t k=0;k<primary.vertices.size();++k) {
+        const auto& v=primary.vertices[k];
+        patch.nodes[v.vertex]={v.phi,v.dx,v.dy,mixed.vertexMixedDerivatives()[k]};
+    }
+    for(const auto& e:primary.edges)patch.edgeMidpoints.push_back({e.vertices,e.phi,e.dn});
+    for(std::size_t k=0;k<primary.geometryCells.size();++k) {
+        require(std::isfinite(centers.values[k]),"FirstJet scalar nonfinite actual center");
+        const int c=primary.geometryCells[k];patch.activeCells[c]=1;patch.cellCenters[c]=centers.values[k];
+    }
+    if(config.scalarRepresentation==HermiteGalsScalarRepresentation::C2MacroQuartic) {
+        require(primary.measure==HermiteGalsMeasure::CartesianArea,"C2 macro requires XY measure");
+        const auto completion=LAMP::Geometry::ActiveQuarticHermiteCompletion::fromUniformPatch(
+            mesh,patch,config.volume.symmetryPlanes);
+        return LevelSetHermiteGeometry::Snapshot::fromUniformC2Completion(mesh,completion);
+    }
+    require(config.scalarRepresentation==HermiteGalsScalarRepresentation::SingleQuartic,
+        "unknown FirstJet scalar representation");
+    return LevelSetHermiteGeometry::Snapshot::fromNativeLeaves(mesh,patch,
+        primary.measure==HermiteGalsMeasure::AxisymmetricVolume);
+}
+
 struct HermiteGalsPublication::Data
 {
     Data(const QuadtreeMesh& mesh, HermiteGalsState input, NativeLeafDomain leaves,
         LevelSetInterfacePanels::NativeComponents curves, std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> scalar,
-        HermiteGalsPublicationConfig controls)
-        : state(std::move(input)),domain(std::move(leaves)),topology(std::move(curves)),
-          partitions(state.primary().transport==HermiteGalsTransport::FirstJet
+        HermiteGalsPublicationConfig controls, HermiteGalsPublicationTimings inputTimings,
+        PublicationClock::time_point& stageStamp)
+        : state(std::move(input)),domain(std::move(leaves)),topology(std::move(curves)),timings(inputTimings),
+          partitions((stageStamp=PublicationClock::now(),state.primary().transport==HermiteGalsTransport::FirstJet
               ? InterfacePhaseGeometry::MappedFacePartitions::prepareNativeTrace(mesh,domain,scalar)
-              : InterfacePhaseGeometry::MappedFacePartitions(mesh,domain,scalar)),
-          volumes(state.primary().transport==HermiteGalsTransport::FirstJet
-              ? integrateHermiteGalsNativeTracePhaseVolumes(mesh,state,domain,partitions,topology,controls.volume)
-              : integrateHermiteGalsPhaseVolumes(mesh,state,controls.volume)),config(std::move(controls)) {}
+              : InterfacePhaseGeometry::MappedFacePartitions(mesh,domain,scalar))),
+          volumes((timings.topologyCuts+=publicationSecondsSince(stageStamp),stageStamp=PublicationClock::now(),
+              state.primary().transport==HermiteGalsTransport::FirstJet
+              ? HermiteGalsPhaseVolumeResult::integratePublicationTrace(mesh,state,domain,partitions,topology,controls.volume,
+                  Detail::PublicationTracePermit(mesh,state,domain,partitions,topology,controls.volume))
+              : integrateHermiteGalsPhaseVolumes(mesh,state,controls.volume))),
+          config((timings.phaseVolumes+=publicationSecondsSince(stageStamp),std::move(controls))) {}
     HermiteGalsState state;
     NativeLeafDomain domain;
     LevelSetInterfacePanels::NativeComponents topology;
+    HermiteGalsPublicationTimings timings;
     InterfacePhaseGeometry::MappedFacePartitions partitions;
     HermiteGalsPhaseVolumeResult volumes;
     HermiteGalsPublicationConfig config;
@@ -98,6 +162,36 @@ const LevelSetInterfacePanels::NativeComponents& HermiteGalsPublication::topolog
 const InterfacePhaseGeometry::MappedFacePartitions& HermiteGalsPublication::facePartitions() const { return checked().partitions; }
 const std::vector<HermiteGalsSurfaceQuadrature>& HermiteGalsPublication::quadrature(std::size_t component, std::size_t graph) const
 { return checked().quadrature.at(component).at(graph); }
+std::vector<HermiteGalsSurfaceQuadrature> HermiteGalsPublication::quadrature(
+    std::size_t component, std::size_t graph, double begin, double end) const
+{
+    const auto& d = checked();
+    try {
+        require(std::isfinite(begin) && std::isfinite(end) && begin >= 0 && end <= 1 && begin <= end,
+            "invalid original graph-fraction interval");
+        const auto& chain = d.topology.curves.at(component);
+        require(graph < chain.graphs().size() && graph <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
+            "graph index out of range");
+        if (begin == 0 && end == 1) return d.quadrature.at(component).at(graph);
+        auto raw = chain.quadrature(static_cast<int>(graph), begin, end);
+        std::vector<HermiteGalsSurfaceQuadrature> result;
+        result.reserve(raw.size());
+        for (auto& q : raw) {
+            require(std::isfinite(q.weight) && q.weight > 0 && std::isfinite(q.physicalWeight)
+                && q.physicalWeight > 0, "invalid interface subarc quadrature weight");
+            auto sample = checkedSample(d.state, std::move(q.frame), false, d.config);
+            result.push_back({std::move(sample),q.weight,q.physicalWeight});
+        }
+        return result;
+    } catch (const std::exception& e) {
+        std::ostringstream message;
+        message.precision(std::numeric_limits<double>::max_digits10);
+        message << "[Interface/HermiteGalsPublication geometry=" << d.state.identity().value()
+            << " quadrature component=" << component << " graph=" << graph
+            << " interval=[" << begin << ',' << end << "]] " << e.what();
+        throw std::invalid_argument(message.str());
+    }
+}
 HermiteGalsSurfaceSample HermiteGalsPublication::sample(std::size_t component, std::size_t graph, double fraction) const
 {
     const auto& d = checked();
@@ -111,9 +205,16 @@ HermiteGalsSurfaceSample HermiteGalsPublication::sample(std::size_t component, s
     }
 }
 const HermiteGalsPublicationReport& HermiteGalsPublication::report() const { return checked().report; }
+const HermiteGalsPublicationTimings& HermiteGalsPublication::timings() const { return checked().timings; }
 void HermiteGalsPublication::validateMesh(const QuadtreeMesh& mesh) const
 {
-    const auto& d = checked(); d.state.validateMesh(mesh); d.partitions.validate(mesh, d.domain);
+    const auto& d = checked();
+    // Data's domain and unique scalar have no writable published aliases.
+    // Their full bounds/activity proof was made at partition construction.
+    // Keep the actual exact mesh-word check on every consumer call; reuse
+    // only that immutable layout proof instead of scanning it a second time.
+    d.state.validateMesh(mesh);
+    d.partitions.validatePublicationBinding(d.domain,d.state.geometry().snapshot());
 }
 
 HermiteGalsPublication publishHermiteGalsGeometry(const QuadtreeMesh& mesh,
@@ -130,6 +231,7 @@ HermiteGalsPublication HermiteGalsPublication::publish(const QuadtreeMesh& mesh,
     const HermiteGalsAmrClosureResult* mixed, const HermiteGalsCenterPrediction* centers,
     const HermiteGalsPublicationConfig& config)
 {
+    const auto publicationStart = PublicationClock::now();
     HermiteGalsIdentity id;
     const char* stage = "input";
     bool delegated = false;
@@ -160,25 +262,31 @@ HermiteGalsPublication HermiteGalsPublication::publish(const QuadtreeMesh& mesh,
         require((!conservative || tolerance(config.relativeInventoryTolerance)) && tolerance(config.relativeInterfaceResidualTolerance)
             && tolerance(config.unitNormalTolerance), "invalid publication tolerance");
         const auto& primary = candidate.primary(); const auto& closure = conservative ? bubble->closure() : direct;
-        Quantum::Geometry::ActiveQuarticHermitePatch patch;
-        const double nan = std::numeric_limits<double>::quiet_NaN();
-        patch.activeCells.assign(mesh.cellIndexNum(), 0);
-        patch.nodes.assign(mesh.vertIndexNum(), {nan,nan,nan,nan});
-        patch.cellCenters.assign(mesh.cellIndexNum(), nan);
-        for (std::size_t k = 0; k < primary.vertices.size(); ++k) {
-            const auto& v = primary.vertices[k];
-            patch.nodes[v.vertex] = {v.phi,v.dx,v.dy,closure.vertexMixedDerivatives.at(k)};
-        }
-        for (const auto& e : primary.edges) patch.edgeMidpoints.push_back({e.vertices,e.phi,e.dn});
-        for (std::size_t k = 0; k < primary.geometryCells.size(); ++k) {
-            const int c = primary.geometryCells[k]; patch.activeCells[c] = 1;
-            patch.cellCenters[c] = closure.cellBubbleCoefficients.at(k);
-        }
-        const bool radial = primary.measure == HermiteGalsMeasure::AxisymmetricVolume;
         stage = "private snapshot";
-        auto scalar = LevelSetHermiteGeometry::Snapshot::fromNativeLeaves(mesh, patch, radial);
+        auto scalar = [&] {
+            if(!conservative)return prepareHermiteGalsFirstJetScalar(mesh,candidate,*mixed,*centers,config);
+            require(config.scalarRepresentation==HermiteGalsScalarRepresentation::SingleQuartic,
+                "C2 macro requires pure FirstJet scalar");
+            LAMP::Geometry::ActiveQuarticHermitePatch patch;
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            patch.activeCells.assign(mesh.cellIndexNum(), 0);
+            patch.nodes.assign(mesh.vertIndexNum(), {nan,nan,nan,nan});
+            patch.cellCenters.assign(mesh.cellIndexNum(), nan);
+            for (std::size_t k = 0; k < primary.vertices.size(); ++k) {
+                const auto& v = primary.vertices[k];
+                patch.nodes[v.vertex] = {v.phi,v.dx,v.dy,closure.vertexMixedDerivatives.at(k)};
+            }
+            for (const auto& e : primary.edges) patch.edgeMidpoints.push_back({e.vertices,e.phi,e.dn});
+            for (std::size_t k = 0; k < primary.geometryCells.size(); ++k) {
+                const int c = primary.geometryCells[k]; patch.activeCells[c] = 1;
+                patch.cellCenters[c] = closure.cellBubbleCoefficients.at(k);
+            }
+            const bool radial = primary.measure == HermiteGalsMeasure::AxisymmetricVolume;
+            return LevelSetHermiteGeometry::Snapshot::fromNativeLeaves(mesh,patch,radial);
+        }();
+        const double precedingPrivateSeconds = publicationSecondsSince(publicationStart);
         delegated = true;
-        return publishScalar(mesh,std::move(candidate),closure,std::move(scalar),config);
+        return publishScalar(mesh,std::move(candidate),closure,std::move(scalar),config,precedingPrivateSeconds);
     } catch (const std::exception& e) {
         if (delegated) throw;
         throw std::invalid_argument("[Interface/HermiteGalsPublication geometry=" + std::to_string(id.value())
@@ -188,8 +296,13 @@ HermiteGalsPublication HermiteGalsPublication::publish(const QuadtreeMesh& mesh,
 
 HermiteGalsPublication HermiteGalsPublication::publishScalar(const QuadtreeMesh& mesh,
     HermiteGalsCandidate&& candidate, const HermiteGalsClosure& closure,
-    LevelSetHermiteGeometry::Snapshot&& snapshot, const HermiteGalsPublicationConfig& config)
+    LevelSetHermiteGeometry::Snapshot&& snapshot, const HermiteGalsPublicationConfig& config,
+    double precedingPrivateSeconds)
 {
+    const auto publicationStart = PublicationClock::now();
+    auto stageStamp = publicationStart;
+    HermiteGalsPublicationTimings timings;
+    timings.privateSnapshot = precedingPrivateSeconds;
     HermiteGalsIdentity id;
     const char* stage = "private snapshot";
     try {
@@ -206,6 +319,8 @@ HermiteGalsPublication HermiteGalsPublication::publishScalar(const QuadtreeMesh&
         // clone followed by a different 'equivalent' publication snapshot.
         auto owner = std::make_shared<const HermiteGalsGeometryView>(state.geometry());
         const std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> scalar(owner, &owner->snapshot());
+        timings.privateSnapshot += publicationSecondsSince(stageStamp);
+        stageStamp = PublicationClock::now();
         stage = "geometric inventory";
         stage = "same-source topology and cuts";
         FaceSegmentGraph graph;
@@ -215,10 +330,12 @@ HermiteGalsPublication HermiteGalsPublication::publishScalar(const QuadtreeMesh&
         auto topology = conservative ? LevelSetInterfacePanels::discoverNativeComponents(mesh, scalar, radial,
             config.volume.boundaryContacts, config.volume.symmetryPlanes)
             : LevelSetInterfacePanels::discoverNativeTraceComponents(mesh, scalar, radial,config.volume.boundaryContacts,config.volume.symmetryPlanes);
+        timings.topologyCuts += publicationSecondsSince(stageStamp);
         // The cut cache retains the domain's address: bind only after domain
         // reaches its final immutable allocation, never to a movable local.
         auto data = std::make_shared<HermiteGalsPublication::Data>(mesh, state, std::move(domain),
-            std::move(topology), scalar, config);
+            std::move(topology), scalar, config, timings, stageStamp);
+        stageStamp = PublicationClock::now();
         require(&data->partitions.source() == scalar.get() && &data->volumes.geometry().snapshot() == scalar.get(), "derived geometry changed scalar owner");
         const auto& measured=data->volumes;
         require(!conservative || measured.cells().size() == primary.phaseVolumes.size(), "inventory support mismatch");
@@ -230,6 +347,8 @@ HermiteGalsPublication HermiteGalsPublication::publishScalar(const QuadtreeMesh&
             require(std::isfinite(residual) && residual <= config.relativeInventoryTolerance, "geometric inventory residual exceeds tolerance");
             maxInventoryResidual = std::max(maxInventoryResidual, residual);
         }
+        data->timings.phaseVolumes += publicationSecondsSince(stageStamp);
+        stageStamp = PublicationClock::now();
         stage = "normal/curvature and quadrature";
         std::size_t graphCount = 0, nodeCount = 0, axisCount = 0, halfFaces = 0;
         double maxResidual = 0, maxNormalDefect = 0, maxCurvature = 0;
@@ -260,14 +379,18 @@ HermiteGalsPublication HermiteGalsPublication::publishScalar(const QuadtreeMesh&
             }
             data->quadrature.push_back(std::move(component));
         }
+        data->timings.surfaceCertification += publicationSecondsSince(stageStamp);
+        stageStamp = PublicationClock::now();
         for (const auto f : data->domain.faces(mesh)) if (f.negativeCell >= 0 || f.positiveCell >= 0)
             for (int half = 0; half < 2; ++half) {
                 require(conservative ? data->partitions.halfFace(f.nativeRow,half).usesSource(*scalar)
                     : data->partitions.traceHalfFace(f.nativeRow,half).usesSource(*scalar), "half-face cut changed scalar owner");
                 ++halfFaces;
             }
+        data->timings.topologyCuts += publicationSecondsSince(stageStamp);
         data->report = {data->topology.curves.size(),graphCount,nodeCount,halfFaces,axisCount,
             maxInventoryResidual,maxResidual,maxNormalDefect,maxCurvature};
+        data->timings.total = precedingPrivateSeconds + publicationSecondsSince(publicationStart);
         HermiteGalsPublication result(std::move(data));
         // Everything that can fail is complete. No caller-visible candidate
         // mutation or acceptance occurred before this no-throw consumption.

@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -772,4 +772,4 @@ class LeafSnapshot
 };
 } // namespace LevelSetHermiteScalar
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

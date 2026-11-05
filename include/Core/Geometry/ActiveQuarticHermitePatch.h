@@ -4,7 +4,7 @@
 #include <array>
 #include <vector>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // Explicit shared data on actual rectangular leaves. This is not a fit,
 // contact condition or AMR transfer algorithm. A snapshot owns its copy.
@@ -41,4 +41,4 @@ struct ActiveQuarticHermitePatch
     // are explicit input, not a generated wall/contact-angle condition.
 };
 
-} // namespace Quantum::Geometry
+} // namespace LAMP::Geometry

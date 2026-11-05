@@ -1,6 +1,7 @@
 #include "Modules/Interface/InterfacePhaseGeometry.h"
 #include "Core/Mesh/NativeLeafDomain.h"
 #include "Core/Geometry/LevelSetHermiteGeometry.h"
+#include "Core/Geometry/Detail/ExactExpansion.h"
 #include "Core/Geometry/LevelSetMappedSegment.h"
 #include "Core/Geometry/LevelSetInterfacePanels.h"
 #include "Core/Geometry/AxisymmetricBoundaryIntegral.h"
@@ -95,7 +96,7 @@ MappedFacePartitions::MappedFacePartitions(const QuadtreeMesh& mesh,const Native
 {
     require(static_cast<bool>(source), "null mapped partition source");
     InterfacePhaseGeometry::validate(mesh,domain,*source);
-    require(!nativeTrace || (source->usesNativeLeaves() && source->reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic),
+    require(!nativeTrace || (source->usesNativeLeaves() && (source->reconstruction()==LevelSetHermiteGeometry::Reconstruction::EnrichedQuartic||source->usesC2Macro())),
         "native trace cache requires a native Q4 source");
     auto result = std::make_unique<Impl>();
     result->source = std::move(source); result->domain = &domain;result->nativeTrace=nativeTrace;
@@ -103,6 +104,7 @@ MappedFacePartitions::MappedFacePartitions(const QuadtreeMesh& mesh,const Native
     if(nativeTrace)result->traceHalfFaces.resize(faces.size());else result->halfFaces.resize(faces.size());
     const auto buildFace = [&](std::size_t index)
     {
+        LAMP::Geometry::Detail::ExactExpansion::validateActualEnvironment();
         const auto& face = faces[static_cast<int>(index)];
         if (face.negativeCell < 0 && face.positiveCell < 0) return;
         const auto& edge = face.horizontal ? mesh.hEdges(face.edgeLabel) : mesh.vEdges(face.edgeLabel);
@@ -174,6 +176,15 @@ void MappedFacePartitions::validate(const QuadtreeMesh& mesh, const NativeLeafDo
     const auto& data = checked();
     require(data.domain == &domain, "mapped partition cache belongs to a different fitted domain");
     InterfacePhaseGeometry::validate(mesh,domain,*data.source);
+}
+void MappedFacePartitions::validatePublicationBinding(const NativeLeafDomain& domain,
+    const LevelSetHermiteGeometry::Snapshot& snapshot) const
+{
+    const auto& data=checked();
+    require(data.domain==&domain && data.source.get()==&snapshot,
+        "publication partition cache changed its certified domain or scalar binding");
+    require(domain.axisymmetric()==snapshot.radialAxisSymmetry(),
+        "publication partition cache changed its certified XY/RZ measure");
 }
 const LevelSetHermiteGeometry::Snapshot& MappedFacePartitions::source() const { return *checked().source; }
 const LevelSetMappedSegment& MappedFacePartitions::halfFace(int nativeRow, int half) const

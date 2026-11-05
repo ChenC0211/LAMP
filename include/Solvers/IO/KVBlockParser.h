@@ -28,7 +28,7 @@ struct KVBlock
 // ----------------------------------------------------------------------------
 // KVBlockParser
 //
-// A small, reusable helper for parsing QUANTUM-style dictionary files:
+// A small, reusable helper for parsing LAMP-style dictionary files:
 //   BlockName { key value ... }
 //
 // Responsibilities:

@@ -46,7 +46,7 @@ inline double safeCellArea(const QuadtreeMesh& mesh, int cellIndex)
     return mesh.cells(lab).area();
 }
 
-// Coarse-fine composite band predicate (mirrors CouplingWeightsCache.cpp and PicVerificationApp.cpp).
+// Coarse-fine composite band predicate, kept consistent with CouplingWeightsCache.cpp.
 inline bool isCompositeBandCell(const QuadtreeMesh& mesh, const Cell& c)
 {
     // Non-leaf treated as in-band.

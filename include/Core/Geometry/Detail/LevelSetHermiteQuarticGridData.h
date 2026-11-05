@@ -13,7 +13,7 @@
 #include "Core/Mesh/QuadtreeMesh.h"
 #include "Core/Mesh/UniformLeafGrid.h"
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -211,4 +211,4 @@ class QuarticGridData
 };
 } // namespace LevelSetHermiteScalar
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

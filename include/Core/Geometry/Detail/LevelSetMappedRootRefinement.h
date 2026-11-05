@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {

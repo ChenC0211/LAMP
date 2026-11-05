@@ -13,7 +13,7 @@
 
 namespace
 {
-namespace Q = Quantum::Geometry::Detail::InterfaceQuadrature;
+namespace Q = LAMP::Geometry::Detail::InterfaceQuadrature;
 std::array<double, 2> measures(const std::vector<LevelSetInterfacePanels::ArcSample> &samples)
 {
     long double length = 0, area = 0;
@@ -159,9 +159,9 @@ bool LevelSetInterfacePanels::NativeGraphChain::zeroSetPartialResolved(
         for(int depth=0;depth<52;++depth) {
             const double middle=left+(right-left)/2;
             if(!(middle>left && middle<right))break;
-            const Quantum::Geometry::CellChartCoordinate cut{middle,false};
-            const int aSide=Quantum::Geometry::compareCellChartCoordinate(ca,cut);
-            const int bSide=Quantum::Geometry::compareCellChartCoordinate(cb,cut);
+            const LAMP::Geometry::CellChartCoordinate cut{middle,false};
+            const int aSide=LAMP::Geometry::compareCellChartCoordinate(ca,cut);
+            const int bSide=LAMP::Geometry::compareCellChartCoordinate(cb,cut);
             if(lowerEnd) {
                 if(aSide>0 && bSide>0)left=middle;else right=middle;
             } else {
@@ -277,7 +277,7 @@ const LevelSetInterfacePanels::NativeGraphChain &LevelSetInterfacePanels::native
 LevelSetInterfacePanels LevelSetInterfacePanels::rebindNative(NativeGraphChain target,
     const std::vector<int>& cellMap) const
 {
-    namespace Exact = Quantum::Geometry::Detail::ExactExpansion;
+    namespace Exact = LAMP::Geometry::Detail::ExactExpansion;
     Exact::validateEnvironment();
     using Reconstruction = LevelSetHermiteGeometry::Reconstruction;
     Q::require(nativeChain_ && source_ && target.source() &&

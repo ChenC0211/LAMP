@@ -1,16 +1,18 @@
 # 应用层导航
 
-[代码组织规范](../../docs/QUANTUM_Code_Organization_Standard.md)是职责和依赖的唯一规则入口；[模块化主计划](../../docs/QUANTUM_Modular_Consolidation_Plan.md)维护进度，目录中不另抄历史待办。`include/Apps` 与本目录对应。
+独立模块与耦合工作流遵守同一 [App 组织合同](../../docs/api/App_Workflow_Contract.md)。头文件位于 `include/Apps`，本目录保存对应实现；数值算法归 Core / Solvers / Modules。
 
-| 入口 | 职责 |
+| 位置 | 职责 |
 | --- | --- |
-| `quantum_main.cpp`、`RunCase.cpp` | CLI、具体 App 注册、输入来源和共享服务绑定；不拥有物理时间循环 |
-| `Runtime` | 公共运行协议、注册/执行和运行控制 reader；不包含具体 App 或物理模块头文件 |
-| `SingleModule` | 独立模块注册及 PIC 会话循环；Plasma 模块接收物理输入，提供整步和检查点完成服务 |
-| `Hydrodynamics` | Hydro 主循环、Hydro/EHD 共用且无主循环的 `HydroCase`；绑定公共域、界面及载荷 |
-| `Electrohydrodynamics` | EHD 主循环、电学时层接线及跨模块诊断 |
-| `Electrospray` | 喷嘴主循环；Setup 绑定相/边界，Coupling 交换模块数据，IO 输出，Compatibility 单向读取旧输入 |
-| `Electricity`、`Interface` | 正式独立运行入口；使用与耦合运行相同的模块服务，明确各自支持范围 |
-| `Verification/Pic`、`Verification/Mesh` | 验证专有输入和基线处理，调用 Plasma/Solvers/Core 原服务；不把验证开关塞回物理模块 |
+| `lamp_main.cpp` / `RunCase.cpp` | CLI、case 目录、统一进程资源与工厂分派 |
+| 根目录 `AppRegistry`、`IApp`、`RunConfig`、`RunControls` | 所有 App 的入口合同与类型化调度值 |
+| `IO` | 通用字典设施、被动来源记录、纯流体输入/输出组件 |
+| `Electric` | 独立电场输入、运行、同源输出 |
+| `Hydrodynamics` | 纯流体七文件；流体事务、唯一接受时钟、调度及自身 Output |
+| `Electrohydrodynamics` | 独立八文件；电配置/Q/Maxwell、联合接受事务及自身 Output，组合纯流体运行服务 |
+| `Interface` | IO 读配置，Setup 准备类型化 provider/网格，App 拥有实际输运循环 |
+| `Pic` | IO 读文件和写报告，Setup 准备单位/规范化，RunAdapter 拥有 session 与 accepted bind；显式拒绝预检 |
 
-方程装配、界面输运/体积修正、电荷迭代、粒子推进和物理历史由所属模块负责。App 保留单位/几何身份绑定、唯一主时钟、模块间接受条件及输出调度。新增能力同时更新所属 reader、实际消费者和[字典参考](../../docs/QUANTUM_Dictionary_Reference.md)，并运行受影响的现有检查。
+仅保留五个同名 App 目录和共享 IO；不设 Runtime、Coupling、Verification 生产目录。短验证归 `tests/contracts`，完整研究归 `cases/benchmarks`。新增 App 同步注册工厂、目录/依赖检查与输入输出合同，不创建空职责文件。
+
+旧工作流与输入保持退役，见[清单](../../docs/task/App_Retired_Input_Inventory_20261014.md)。当前数值调度见[主线](../../docs/roadmap/LAMP_Two_Phase_Solver_Mainline.md)；结构整理不改变历史数值验收。

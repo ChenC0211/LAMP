@@ -1,4 +1,5 @@
 #include "Modules/Interface/HermiteGalsPublication.h"
+#include "Modules/Interface/HermiteGalsFirstJetStep.h"
 #include "Modules/Interface/HermiteGalsPhaseFlux.h"
 #include "Core/Geometry/LevelSetMappedSegment.h"
 
@@ -10,7 +11,9 @@
 #include "Core/Mesh/NativeLeafDomain.h"
 #include "Core/Mesh/QuadtreeMesh.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -23,8 +26,8 @@
 
 namespace
 {
-using namespace Quantum::Interface;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using namespace LAMP::Interface;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Jet=Patch::NodalDof;
 using Profile=std::function<Jet(Vector2D)>;
 using Key=std::array<int,2>;
@@ -105,9 +108,121 @@ HermiteGalsPublication publish(const QuadtreeMesh& mesh,const Profile& f,const H
     rejects([&]{publishHermiteGalsGeometry(mesh,std::move(candidate),bubble);},"consumed");
     return result;
 }
-void nativeSideTransactions()
+void macroScalarBinding()
+{
+    auto mesh=makeMesh(2);const Profile f=[](Vector2D p){return Jet{(p.x-.5)*(p.x-.5)+(p.y-.5)*(p.y-.5)-.13*.13,2*(p.x-.5),2*(p.y-.5),0};};
+    const auto seed=stateFor(*mesh,f,false,{},[](int,Vector2D,Vector2D){return 0.;},HermiteGalsTransport::FirstJet);
+    const HermiteGalsTimeLayer clock{1,0,.01,Position::Midpoint};
+    HermiteGalsCandidate candidate(*mesh,clock,seed.primary());
+    const auto mixed=closeHermiteGalsMixedAmr(*mesh,candidate);
+    HermiteGalsPublicationConfig cfg;cfg.scalarRepresentation=HermiteGalsScalarRepresentation::C2MacroQuartic;
+    HermiteGalsCenterPrediction predicted{candidate.identity(),centers(*mesh,f)};
+    predicted.values[0]+=.001;const auto expected=predicted.values;
+    HermiteGalsCandidate foreign(*mesh,clock,seed.primary());
+    rejects([&]{prepareHermiteGalsFirstJetScalar(*mesh,foreign,mixed,predicted,cfg);},"revision");
+    auto bad=predicted;bad.values.pop_back();
+    rejects([&]{prepareHermiteGalsFirstJetScalar(*mesh,candidate,mixed,bad,cfg);},"layout");
+    auto scalar=prepareHermiteGalsFirstJetScalar(*mesh,candidate,mixed,predicted,cfg);
+    check(!candidate.hasGeometry(),"scalar preparation consumed/bound candidate prematurely");
+    predicted.values[0]+=1;
+    for(int c=0;c<mesh->cellIndexNum();++c)
+        close(scalar.scalarJetAtNativeCellChart(c,{{.5,false},{.5,false}}).value,expected[c],2e-13,"macro actual immutable center");
+    candidate.bindGeometry(*mesh,candidate.identity(),{mixed.vertexMixedDerivatives(),expected},std::move(scalar));
+    const auto state=std::move(candidate).finish();
+    check(state.geometry().snapshot().usesC2Macro()&&state.timeLayer().step==clock.step
+        &&state.timeLayer().position==clock.position,"macro binding lost representation/full clock");
+    const Profile radialProfile=[](Vector2D p){return Jet{p.x*p.x+(p.y-.5)*(p.y-.5)-.13*.13,2*p.x,2*(p.y-.5),0};};
+    const auto radialSeed=stateFor(*mesh,radialProfile,true,{},[](int,Vector2D,Vector2D){return 0.;},HermiteGalsTransport::FirstJet);
+    HermiteGalsCandidate rz(*mesh,{},radialSeed.primary());const auto rzMixed=closeHermiteGalsMixedAmr(*mesh,rz);
+    rejects([&]{prepareHermiteGalsFirstJetScalar(*mesh,rz,rzMixed,{rz.identity(),centers(*mesh,radialProfile)},cfg);},"XY");
+    std::cout<<"C2_MACRO_SCALAR_BINDING,PASS\n";
+}
+void macroPublicationTransport()
+{
+    auto mesh=makeMesh(4);const Profile f=[](Vector2D p){return Jet{(p.x-.5)*(p.x-.5)+(p.y-.5)*(p.y-.5)-.19*.19,2*(p.x-.5),2*(p.y-.5),0};};
+    HermiteGalsPublicationConfig cfg;cfg.scalarRepresentation=HermiteGalsScalarRepresentation::C2MacroQuartic;
+    const auto seed=stateFor(*mesh,f,false,{},[](int,Vector2D,Vector2D){return 0.;},HermiteGalsTransport::FirstJet);
+    HermiteGalsCandidate candidate(*mesh,{},seed.primary());const auto mixed=closeHermiteGalsMixedAmr(*mesh,candidate);
+    const auto initialId=candidate.identity();
+    const auto initial=publishHermiteGalsFirstJetGeometry(*mesh,std::move(candidate),mixed,{initialId,centers(*mesh,f)},cfg);
+    const HermiteGalsTimeLayer clock{1,0,.01,Position::End};
+    const double factor=.99;
+    const HermiteGalsResolvedMotion motion(initial.state().identity(),initial.state().timeLayer(),initial.state().identity(),clock,
+        [=](Vector2D p){
+            const Vector2D source{.5+factor*(p.x-.5),.5+factor*(p.y-.5)};
+            const LevelSetBoundaryTrace::Jacobian jacobian{factor,0,0,factor};
+            return LevelSetBoundaryTrace::JetResult{{source,.01,{},false,false},jacobian,1};});
+    for(auto projection:{HermiteGalsTimeProjection::CharacteristicPullback,HermiteGalsTimeProjection::ClosedProjectionCompensated}) {
+        const auto step=prepareHermiteGalsFirstJetStep(*mesh,initial,motion,{},cfg,HermiteGalsBoundaryTreatment::InflowHistory,projection);
+        const auto sample=prepareHermiteGalsFirstJetSample(*mesh,initial,motion,{},cfg,HermiteGalsBoundaryTreatment::InflowHistory,projection);
+        check(step.publication().state().geometry().snapshot().usesC2Macro()&&sample.geometry().snapshot().usesC2Macro(),
+            "full macro transport rebuilt a different scalar family");
+        check(step.publication().state().primary().phaseVolumes.empty(),"macro added transported inventory");
+        for(int c=0;c<mesh->cellIndexNum();++c) {
+            const auto bounds=step.publication().state().geometry().snapshot().nativeCellBounds(c);
+            const Vector2D p=bounds[0]+(bounds[1]-bounds[0])*.37,departure{.5+factor*(p.x-.5),.5+factor*(p.y-.5)};
+            const auto actual=step.publication().state().geometry().snapshot().scalarJetInNativeCell(c,p);
+            const auto ref=f(departure);
+            close(actual.value,ref.value,2e-12,"macro analytic actual value transport");
+            close(actual.dx,factor*ref.dx,2e-11,"macro analytic actual dx transport");
+            close(actual.dy,factor*ref.dy,2e-11,"macro analytic actual dy transport");
+            const auto sampled=sample.geometry().snapshot().scalarJetInNativeCell(c,p);
+            close(sampled.value,actual.value,2e-13,"publication/rate macro scalar consistency");
+        }
+        check(step.publication().state().timeLayer().step==clock.step&&step.publication().state().timeLayer().position==clock.position,
+            "macro full transport lost target clock");
+    }
+    const auto old=initial.state().identity();auto wrong=cfg;wrong.scalarRepresentation=HermiteGalsScalarRepresentation::SingleQuartic;
+    rejects([&]{prepareHermiteGalsFirstJetStep(*mesh,initial,motion,{},wrong);},"representations differ");
+    check(initial.state().identity()==old&&initial.state().geometry().snapshot().usesC2Macro(),"failed macro transaction changed source");
+    std::cout<<"C2_MACRO_PUBLICATION_TRANSPORT,PASS\n";
+}
+void sameFactoryTraceVolumes(const QuadtreeMesh& mesh,const HermiteGalsPublication& pub,
+    const HermiteGalsPhaseVolumeConfig& config)
+{
+    // Public retained input remains independently rediscovered/certified.
+    const auto reference=integrateHermiteGalsNativeTracePhaseVolumes(mesh,pub.state(),pub.domain(),
+        pub.facePartitions(),pub.topology(),config);
+    const auto& actual=pub.volumes();const auto aTime=actual.timeLayer(),bTime=reference.timeLayer();
+    check(actual.sourceIdentity()==reference.sourceIdentity() && aTime.step==bTime.step
+        && aTime.begin==bTime.begin && aTime.end==bTime.end && aTime.position==bTime.position
+        && &actual.geometry().snapshot()==&reference.geometry().snapshot(),"factory/public trace source/full clock changed");
+    const auto same=[](auto a,auto b){using T=decltype(a);
+        if constexpr(sizeof(T)==sizeof(double))return std::memcmp(&a,&b,sizeof(T))==0;
+        else return a==b || (std::isnan(a)&&std::isnan(b));};
+    const auto vectors=[&](const auto& a,const auto& b){check(a.size()==b.size(),"factory/public trace vector size");
+        for(std::size_t k=0;k<a.size();++k)check(same(a[k],b[k]),"factory/public trace ledger component changed");};
+    const auto& av=actual.phaseVolumes();const auto& bv=reference.phaseVolumes();
+    check(av.size()==bv.size() && actual.cells().size()==reference.cells().size(),"factory/public trace volume inventory changed");
+    for(std::size_t k=0;k<av.size();++k){check(av[k].cell==bv[k].cell && same(av[k].liquid,bv[k].liquid),"factory/public phase volume changed");
+        const auto a=actual.cells()[k],b=reference.cells()[k];
+        check(a.cell==b.cell && a.certifiedPhase==b.certifiedPhase && same(a.capacity,b.capacity)
+            && same(a.rawLiquid,b.rawLiquid),"factory/public raw native cell changed");}
+    const auto& ar=actual.report();const auto& br=reference.report();
+    check(ar.liquidCells==br.liquidCells && ar.gasCells==br.gasCells && ar.cutCells==br.cutCells
+        && ar.components==br.components && ar.graphs==br.graphs && ar.faceRootIncidences==br.faceRootIncidences,
+        "factory/public graph/phase inventory changed");
+    const std::array<long double,10> ra{{ar.totalCapacity,ar.totalRawLiquid,ar.totalInitialLiquid,ar.relativeBoundaryClosure,
+        ar.relativeMomentEstimate,ar.maxRelativeCapacityDefect,ar.maxRelativePureDefect,ar.totalSourceInventory,
+        ar.geometricInventoryDifference,ar.maxCellRelativeInventoryDifference}},
+        rb{{br.totalCapacity,br.totalRawLiquid,br.totalInitialLiquid,br.relativeBoundaryClosure,
+        br.relativeMomentEstimate,br.maxRelativeCapacityDefect,br.maxRelativePureDefect,br.totalSourceInventory,
+        br.geometricInventoryDifference,br.maxCellRelativeInventoryDifference}};
+    vectors(ra,rb);
+    const auto& al=actual.nativeTraceLedger();const auto& bl=reference.nativeTraceLedger();
+    vectors(al.fixedRadialByCell,bl.fixedRadialByCell);vectors(al.freeRadialByCell,bl.freeRadialByCell);
+    vectors(al.axialVolumeByCell,bl.axialVolumeByCell);vectors(al.radialVolumeByCell,bl.radialVolumeByCell);
+    vectors(al.radialCapacityByCell,bl.radialCapacityByCell);
+    check(same(al.exteriorFixedRadial,bl.exteriorFixedRadial) && same(al.fixedRadialClosure,bl.fixedRadialClosure)
+        && same(al.maxRelativeGreenDefect,bl.maxRelativeGreenDefect) && same(al.maxRelativeCapacityDefect,bl.maxRelativeCapacityDefect)
+        && al.sideGraphs==bl.sideGraphs && al.sideLiquidOwners==bl.sideLiquidOwners && al.zeroHalfFaces==bl.zeroHalfFaces,
+        "factory/public complete trace ledger changed");
+    std::cout<<"FACTORY_TRACE_REUSE,SAME_SOURCE_FULL_CLOCK,EXACT_VOLUMES_LEDGER_GRAPHS,PASS\n";
+}
+void nativeSideTransactions(bool quickReuse=false)
 {
     for(bool radial:{false,true})for(bool amr:{false,true})for(int sign:{-1,1}){
+        if(quickReuse && (amr || sign<0))continue;
         auto mesh=makeMesh(4,amr?1:0);const double line=amr?.5:.25;
         const Profile f=[=](Vector2D p){const double normal=(radial?p.y:p.x)-line,t=radial?p.x:p.y;
             const double factor=radial?1+t*t:1+t+t*t,derivative=radial?2*t:1+2*t;
@@ -170,11 +285,14 @@ void nativeSideTransactions()
         check(peak<=1e-12L && ledger.maxRelativeGreenDefect<=1e-12L && ledger.maxRelativeCapacityDefect<=1e-12L,"actual trace publication closed reference");
         if(radial)check(pub.report().axisEndpoints==1,"trace publication lost retained axis endpoint");
         check(samples==3*pub.report().graphs,"trace sample coverage");
+        sameFactoryTraceVolumes(*mesh,pub,config.volume);
         const auto standalone=integrateHermiteGalsPhaseVolumes(*mesh,pub.state(),config.volume);
         close(standalone.report().totalRawLiquid,whole,1e-12,"standalone trace volume differs from retained publication cache");
         rejects([&]{integrateHermiteGalsNativeTracePhaseVolumes(*mesh,seed,pub.domain(),pub.facePartitions(),pub.topology(),config.volume);},"changed scalar owner");
         auto tampered=pub.topology();tampered.cellPhase[primary.geometryCells.front()]=0;
         rejects([&]{InterfaceCellMeasure::measureNativeTraceVolumes(*mesh,pub.domain(),pub.facePartitions(),tampered,contacts);},"complete same-source certificate");
+        auto missing=pub.topology();missing.curves.clear();
+        rejects([&]{InterfaceCellMeasure::measureNativeTraceVolumes(*mesh,pub.domain(),pub.facePartitions(),missing,contacts);},"complete same-source certificate");
         rejects([&]{pub.volumes().initializeCandidate(*mesh);},"step-0 time-0");
         rejects([&]{candidate.identity();},"consumed");
         std::cout<<"FIRST_JET_NATIVE_TRACE,"<<radial<<','<<amr<<','<<sign<<','<<pub.report().graphs<<','<<ledger.zeroHalfFaces<<','<<samples<<','<<gasOwners<<','<<hanging<<','<<peak<<",PASS\n";
@@ -324,6 +442,182 @@ long double tangentDiskVolume(Vector2D lo,Vector2D hi,Vector2D center,double rad
         if(cy-s>lo.y){constant-=cy;k+=1;}else constant-=lo.y;
         sum+=constant*(radial?(x1*x1-x0*x0)/2:x1-x0)+k*(primitive(x1)-primitive(x0));}
     return radial?2*pi*sum:sum;
+}
+// One full native-cell local gauge and the same complete graphs at global
+// origin. Reference calls keep their original independent quadrature paths.
+void nativeCellDualMoments()
+{
+    using I=LevelSetMappedInterface;
+    using Trace=LevelSetMappedSegment::NativeQuarticTrace;
+    for(int scene=0;scene<3;++scene) {
+        const bool radial=scene!=0,amr=scene==2;
+        auto mesh=makeMesh(4,amr?1:0);
+        const Vector2D center=radial?Vector2D{0,.51}:Vector2D{.47,.51};
+        constexpr double radius=.27;
+        const Profile f=[=](Vector2D p){const auto d=p-center;
+            return Jet{d.x*d.x+d.y*d.y-radius*radius,2*d.x,2*d.y,0};};
+        const HermiteGalsTimeLayer clock{7,.2,.3,Position::Midpoint};
+        const auto seed=stateFor(*mesh,f,radial,clock,[](int,Vector2D,Vector2D){return 0.;},HermiteGalsTransport::FirstJet);
+        HermiteGalsCandidate candidate(*mesh,clock,seed.primary());const auto id=candidate.identity();
+        const auto mixed=closeHermiteGalsMixedAmr(*mesh,candidate);
+        const auto predictedCenters=centers(*mesh,f);
+        // Same actual master/mixed/center data, independently reconstructed
+        // before the candidate is consumed. Old reference roots never share
+        // the publication source's initial-root cache or guarded policy.
+        const auto referenceSource=scalarFor(*mesh,patchFor(*mesh,candidate,mixed,predictedCenters),radial);
+        const auto pub=publishHermiteGalsFirstJetGeometry(*mesh,std::move(candidate),mixed,{id,predictedCenters});
+        sourceAndCuts(*mesh,pub);
+        // Reuse only this immutable publication's derived binding. Its
+        // actual live-mesh identity still rejects physical coordinate edits
+        // for both the original handle and an ordinary handle copy.
+        const auto copied=pub;const auto* boundScalar=&pub.state().geometry().snapshot();
+        pub.validateMesh(*mesh);copied.validateMesh(*mesh);
+        auto& actualCell=mesh->cells(mesh->cellIndexToLabel[pub.state().primary().geometryCells.front()]);
+        const auto savedCenter=actualCell.centerCoord();
+        actualCell.setCenterCoord(savedCenter+Vector2D{.001,0});
+        rejects([&]{pub.validateMesh(*mesh);},"NativeMeshIdentity");
+        rejects([&]{copied.validateMesh(*mesh);},"NativeMeshIdentity");
+        actualCell.setCenterCoord(savedCenter);
+        pub.validateMesh(*mesh);copied.validateMesh(*mesh);
+        const int actualVertexIndex=pub.state().primary().vertices.front().vertex;
+        auto& actualVertex=mesh->verts(mesh->vertIndexToLabel[actualVertexIndex]);
+        const auto savedCoordinate=actualVertex.coord();
+        actualVertex.setCoord(savedCoordinate+Vector2D{.001,0});
+        rejects([&]{pub.validateMesh(*mesh);},"NativeMeshIdentity");
+        rejects([&]{copied.validateMesh(*mesh);},"NativeMeshIdentity");
+        actualVertex.setCoord(savedCoordinate);
+        pub.validateMesh(*mesh);copied.validateMesh(*mesh);
+        check(&pub.state().geometry().snapshot()==boundScalar
+            && &copied.state().geometry().snapshot()==boundScalar,
+            "restored publication validation changed the actual immutable scalar owner");
+        auto view=std::make_shared<const HermiteGalsGeometryView>(pub.state().geometry());
+        const std::shared_ptr<const Snapshot> source(view,&view->snapshot());
+        const auto* originalScalar=&pub.state().geometry().snapshot();
+        std::vector<std::vector<I::Graph>> byCell(mesh->cellIndexNum());
+        std::array<bool,2> foundOrientation{{false,false}};
+        std::set<int> selected;
+        for(const auto& chain:pub.topology().curves) {
+            check(chain.usesSource(*source),"dual moments changed actual graph source");
+            for(const auto& graph:chain.graphs())if(!graph.nativeSide) {
+                byCell.at(graph.nativeCellIndex).push_back(graph);
+                const int orientation=graph.coordinateIsX?0:1;
+                if(!foundOrientation[orientation]) {
+                    foundOrientation[orientation]=true;selected.insert(graph.nativeCellIndex);
+                }
+            }
+        }
+        check(foundOrientation[0] && foundOrientation[1],"dual moment fixture missed a coordinate orientation");
+        bool hangingCut=false;
+        if(amr)for(int cell:pub.state().primary().geometryCells)if(!byCell[cell].empty()) {
+            const auto& native=mesh->cells(mesh->cellIndexToLabel[cell]);bool hanging=false;
+            for(int vertex:native.cellToVert)hanging|=mesh->verts(vertex).supCell>=0;
+            for(int direction=0;direction<2;++direction)
+                hanging|=native.cellToVEdge[direction][1]>=0 || native.cellToHEdge[direction][1]>=0;
+            if(hanging){selected.insert(cell);hangingCut=true;break;}
+        }
+        check(!amr || hangingCut,"dual moment AMR fixture missed actual hanging cut support");
+        std::size_t graphsChecked=0;std::array<std::size_t,2> orientationChecks{{0,0}};
+        long double peakGlobal=0,peakLocal=0,peakGreen=0,peakAnalytic=0;
+        for(int cell:selected) {
+            check(referenceSource.get()!=source.get() && referenceSource->identicalNativeQuarticCell(cell,*source,cell),
+                "dual moment independent reference changed the actual exact native Q4 cell");
+            const auto bounds=source->nativeCellBounds(cell);const auto lo=bounds[0],hi=bounds[1];
+            const Vector2D greenOrigin{hi.x,lo.y};
+            const long double capacity=(static_cast<long double>(hi.x)-lo.x)*(static_cast<long double>(hi.y)-lo.y)
+                *(radial?pi*(static_cast<long double>(lo.x)+hi.x):1);
+            const I::Region region{0,{{lo,{hi.x,lo.y},hi,{lo.x,hi.y}}}};
+            const std::vector<I::NativeMomentTarget> targets{{{region},greenOrigin}};
+            const auto makeCuts=[&](const std::shared_ptr<const Snapshot>& owner) {
+                std::vector<Trace> cuts;cuts.reserve(4);
+                for(int edge=0;edge<4;++edge) {
+                    auto a=region.vertices[edge],b=region.vertices[(edge+1)%4];
+                    if(a.x>b.x || (a.x==b.x && a.y>b.y))std::swap(a,b);
+                    cuts.push_back(LevelSetMappedSegment::nativeQuarticTrace(owner,a,b,a.x==b.x?0:1));
+                    check(cuts.back().usesSource(*owner),"dual moment face cut changed actual source");
+                }
+                return cuts;
+            };
+            // Rebuild independent move-only traces from identical actual inputs.
+            // Each consumer performs its own mandatory face-root refinements.
+            const auto retry=[&](const std::shared_ptr<const Snapshot>& owner,auto invoke) {
+                auto working=makeCuts(owner);
+                for(int attempt=0;attempt<=256;++attempt) {
+                    std::vector<const Trace*> refs;for(const auto& cut:working)refs.push_back(&cut);
+                    try{return invoke(refs);}
+                    catch(const I::RootResolutionError& failure) {
+                        check(attempt<256 && !failure.requests.empty(),"dual moment face-root refinement limit");
+                        std::set<std::size_t> replaced;
+                        for(const auto& request:failure.requests) {
+                            check(request.segmentIndex<working.size(),"dual moment foreign refinement segment");
+                            if(replaced.insert(request.segmentIndex).second) {
+                                auto& cut=working[request.segmentIndex];
+                                check(request.rootIndex<cut.events().size(),"dual moment foreign refinement root");
+                                cut=cut.refined(request.rootIndex);
+                            }
+                        }
+                    }
+                }
+                throw std::runtime_error("unreachable dual moment refinement exhaustion");
+            };
+            std::vector<I::GraphMoments> global;
+            const auto actual=retry(source,[&](const auto& refs){return I::integrateNativeQuarticRegionMomentsBatch(
+                *source,cell,byCell[cell],refs,targets,radial,&global);});
+            const auto reference=retry(referenceSource,[&](const auto& refs){return I::integrateNativeQuarticRegionMoments(
+                *referenceSource,cell,byCell[cell],refs,{region},radial,greenOrigin);});
+            check(actual.size()==1 && actual[0].regions.size()==1 && reference.regions.size()==1
+                && global.size()==byCell[cell].size(),"dual moment full-cell/global inventory changed");
+            for(std::size_t g=0;g<global.size();++g) {
+                const auto old=I::nativeMoments(*referenceSource,byCell[cell][g],radial);const auto fresh=global[g];
+                peakGlobal=std::max({peakGlobal,
+                    close(fresh.axial,old.axial,2e-12L*capacity,"dual global axial moment")/capacity,
+                    close(fresh.radial,old.radial,2e-12L*capacity,"dual global radial moment")/capacity,
+                    close(fresh.errorEstimate,old.errorEstimate,2e-12L*capacity,"dual global moment estimate")/capacity});
+                check(std::isfinite(fresh.errorEstimate) && fresh.errorEstimate>=0 && fresh.errorEstimate<=2e-12L*capacity
+                    && old.errorEstimate>=0 && old.errorEstimate<=2e-12L*capacity,"dual global original controlled-moment budget");
+                ++orientationChecks[byCell[cell][g].coordinateIsX?0:1];++graphsChecked;
+            }
+            const auto& a=actual[0].regions[0];const auto& b=reference.regions[0];
+            check(a.regionId==0 && b.regionId==0 && a.freeArcs>0 && b.freeArcs>0,"dual local free-arc owner lost");
+            const std::array<long double,10> av{{a.capacity,a.axialLiquid,a.radialLiquid,a.axialGas,a.radialGas,
+                a.fixedAxialLiquid,a.fixedRadialLiquid,a.freeAxialLiquid,a.freeRadialLiquid,a.errorEstimate}},
+                bv{{b.capacity,b.axialLiquid,b.radialLiquid,b.axialGas,b.radialGas,
+                b.fixedAxialLiquid,b.fixedRadialLiquid,b.freeAxialLiquid,b.freeRadialLiquid,b.errorEstimate}};
+            for(std::size_t k=0;k<av.size();++k)
+                peakLocal=std::max(peakLocal,close(av[k],bv[k],1e-10L*capacity,"dual local original moment")/capacity);
+            const auto disk=tangentDiskVolume(lo,hi,center,radius,radial);
+            for(const auto* r:{&a,&b}) {
+                check(std::isfinite(r->capacity) && r->capacity>0 && r->axialLiquid>=0 && r->radialLiquid>=0
+                    && r->axialGas>=0 && r->radialGas>=0 && r->axialLiquid<=r->capacity && r->radialLiquid<=r->capacity
+                    && r->axialGas<=r->capacity && r->radialGas<=r->capacity,"dual local strict capacity; no clipping");
+                check(std::isfinite(r->errorEstimate) && r->errorEstimate>=0 && r->errorEstimate<=1e-10L*capacity,
+                    "dual local original moment estimate budget");
+                peakGreen=std::max({peakGreen,
+                    close(r->capacity,capacity,1e-10L*capacity,"dual local physical capacity")/capacity,
+                    close(r->axialLiquid,r->radialLiquid,1e-10L*capacity,"dual local liquid Green ledger")/capacity,
+                    close(r->axialGas,r->radialGas,1e-10L*capacity,"dual local gas Green ledger")/capacity,
+                    close(r->axialLiquid+r->axialGas,capacity,1e-10L*capacity,"dual local axial closure")/capacity,
+                    close(r->radialLiquid+r->radialGas,capacity,1e-10L*capacity,"dual local radial closure")/capacity});
+                peakAnalytic=std::max({peakAnalytic,
+                    close(r->axialLiquid,disk,1e-10L*capacity,"dual local analytic liquid")/capacity,
+                    close(r->axialGas,capacity-disk,1e-10L*capacity,"dual local analytic gas")/capacity});
+            }
+            close(a.fixedAxialLiquid,actual[0].exteriorFixedAxialLiquid+actual[0].coincidentAxialLiquid,
+                1e-10L*capacity,"dual local fixed axial assembly");
+            close(a.fixedRadialLiquid,actual[0].exteriorFixedRadialLiquid+actual[0].coincidentRadialLiquid,
+                1e-10L*capacity,"dual local fixed radial assembly");
+        }
+        const auto retainedClock=pub.state().timeLayer();
+        check(pub.state().identity()==id && &pub.state().geometry().snapshot()==originalScalar && pub.state().primary().phaseVolumes.empty()
+            && retainedClock.step==clock.step && retainedClock.begin==clock.begin && retainedClock.end==clock.end
+            && retainedClock.position==clock.position && pub.volumes().sourceIdentity()==id
+            && pub.volumes().timeLayer().step==clock.step && pub.volumes().timeLayer().begin==clock.begin
+            && pub.volumes().timeLayer().end==clock.end && pub.volumes().timeLayer().position==clock.position,
+            "dual moment test changed actual source/full clock");
+        check(orientationChecks[0]>0 && orientationChecks[1]>0,"dual moments missed retained endpoint recovery orientation");
+        std::cout<<"NATIVE_CELL_DUAL_MOMENTS,"<<(radial?"RZ":"XY")<<','<<amr<<','<<selected.size()<<','<<graphsChecked
+            <<','<<orientationChecks[0]<<','<<orientationChecks[1]<<','<<hangingCut<<','<<peakGlobal<<','<<peakLocal
+            <<','<<peakGreen<<','<<peakAnalytic<<",PASS\n";
+    }
 }
 void isolatedContacts()
 {
@@ -483,11 +777,15 @@ void transactions()
     std::cout<<"TRANSACTION,"<<bubble.report().correctedCells<<','<<pub.report().maxRelativeInventoryResidual<<",PASS\n";
 }
 }
-int main() try
+int main(int argc,char** argv) try
 {
     std::cout<<std::scientific<<std::setprecision(16);
+    if(argc==2 && std::string(argv[1])=="--macro-scalar-only"){macroScalarBinding();return 0;}
+    if(argc==2 && std::string(argv[1])=="--macro-only"){macroScalarBinding();macroPublicationTransport();return 0;}
+    if(argc==2 && std::string(argv[1])=="--native-trace-reuse"){
+        nativeSideTransactions(true);nativeCellDualMoments();std::cout<<"I11 factory trace reuse contract: PASS\n";return 0;}
     for(bool radial:{false,true})for(bool amr:{false,true})for(int sign:{-1,1})analytic(radial,amr,sign,false);
     for(bool radial:{false,true})analytic(radial,true,1,true);
-    pureAndLifetime();transactions();isolatedContacts();nonbinaryContacts();nativeSideTransactions();nativeTraceExtended();std::cout<<"I11 authoritative geometry publication contract: PASS\n";return 0;
+    macroScalarBinding();macroPublicationTransport();pureAndLifetime();transactions();isolatedContacts();nonbinaryContacts();nativeSideTransactions();nativeCellDualMoments();nativeTraceExtended();std::cout<<"I11 authoritative geometry publication contract: PASS\n";return 0;
 }
 catch(const std::exception& e){std::cerr<<"I11 authoritative geometry publication contract: FAIL: "<<e.what()<<'\n';return 1;}

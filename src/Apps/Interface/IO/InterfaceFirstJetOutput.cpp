@@ -1,8 +1,10 @@
 #include "Interface/IO/InterfaceFirstJetOutput.h"
-#include "Interface/InterfaceTransport.h"
+#include "Interface/IO/InterfaceTransportInput.h"
 #include "Modules/Interface/HermiteGalsMeshTransfer.h"
 #include "Modules/Interface/HermiteGalsFirstJetStep.h"
 #include "Core/Mesh/QuadtreeMesh.h"
+#include "Core/IO/OutputProvenance.h"
+#include "Core/IO/TecplotWriter.h"
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -21,7 +23,7 @@
 
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 namespace fs=std::filesystem;
 std::ostringstream stream(){std::ostringstream s;s.imbue(std::locale::classic());s<<std::scientific<<std::setprecision(16);return s;}
 void write(const fs::path& path,const std::string& text,bool append=false)
@@ -51,70 +53,13 @@ void replace(const fs::path& path,const std::string& text)
 std::string read(const fs::path& path)
 {std::ifstream f(path,std::ios::binary);if(!f)throw std::runtime_error("cannot read FirstJet input provenance: "+path.string());
  std::string s{std::istreambuf_iterator<char>(f),{}};if(f.bad())throw std::runtime_error("FirstJet input provenance read failed");return s;}
-std::string quoted(const std::string& text)
-{
-    std::ostringstream s;s<<'"';for(unsigned char c:text){if(c=='"'||c=='\\')s<<'\\'<<c;
-        else if(c<32)s<<"\\u00"<<std::hex<<std::setw(2)<<std::setfill('0')<<static_cast<unsigned>(c);else s<<c;}s<<'"';return s.str();
-}
-std::string csv(const std::string& text)
-{std::string s="\"";for(char c:text){if(c=='"')s+='"';s+=c;}return s+'"';}
-std::string value(const DictionaryInput::ConfigurationValue& v)
-{
-    auto s=stream();std::visit([&](const auto& x){using T=std::decay_t<decltype(x)>;
-        if constexpr(std::is_same_v<T,bool>)s<<(x?"true":"false");
-        else if constexpr(std::is_same_v<T,std::vector<int>>){s<<'(';for(std::size_t i=0;i<x.size();++i)s<<(i?" ":"")<<x[i];s<<')';}
-        else s<<x;},v);return s.str();
-}
-std::uint32_t rotate(std::uint32_t v,unsigned n){return (v>>n)|(v<<(32-n));}
-// Standard SHA-256 over the exact file bytes. Independently checked against
-// the platform SHA-256 in the App output contract, not used numerically.
-std::string sha256(const std::string& text)
-{
-    constexpr std::uint32_t k[64]={0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,
-        0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,
-        0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2};
-    std::array<std::uint32_t,8> h{0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
-    std::vector<unsigned char> bytes(text.begin(),text.end());const auto bits=static_cast<std::uint64_t>(bytes.size())*8;
-    bytes.push_back(0x80);while(bytes.size()%64!=56)bytes.push_back(0);
-    for(int i=7;i>=0;--i)bytes.push_back(static_cast<unsigned char>(bits>>(8*i)));
-    for(std::size_t p=0;p<bytes.size();p+=64){std::array<std::uint32_t,64> w{};
-        for(int i=0;i<16;++i)for(int j=0;j<4;++j)w[i]=(w[i]<<8)|bytes[p+4*i+j];
-        for(int i=16;i<64;++i){const auto a=w[i-15],b=w[i-2];w[i]=w[i-16]+(rotate(a,7)^rotate(a,18)^(a>>3))+w[i-7]+(rotate(b,17)^rotate(b,19)^(b>>10));}
-        auto a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],v=h[7];
-        for(int i=0;i<64;++i){const auto t1=v+(rotate(e,6)^rotate(e,11)^rotate(e,25))+((e&f)^(~e&g))+k[i]+w[i];
-            const auto t2=(rotate(a,2)^rotate(a,13)^rotate(a,22))+((a&b)^(a&c)^(b&c));
-            v=g;g=f;f=e;e=d+t1;d=c;c=b;b=a;a=t1+t2;}
-        const std::array<std::uint32_t,8> out{a,b,c,d,e,f,g,v};for(int i=0;i<8;++i)h[i]+=out[i];
-    }
-    std::ostringstream s;s<<std::hex<<std::setfill('0');for(auto v:h)s<<std::setw(8)<<v;return s.str();
-}
-std::string utc()
-{const auto t=std::time(nullptr);std::tm tm{};
-#ifdef _WIN32
- gmtime_s(&tm,&t);
-#else
- gmtime_r(&t,&tm);
-#endif
- std::ostringstream s;s<<std::put_time(&tm,"%Y-%m-%dT%H:%M:%SZ");return s.str();}
-std::string compiler()
-{
-#ifdef _MSC_VER
- return "MSVC "+std::to_string(_MSC_VER);
-#else
- return __VERSION__;
-#endif
-}
-const char* buildType()
-{
-#ifdef NDEBUG
- return "Release";
-#else
- return "Debug";
-#endif
-}
+using LAMP::IO::quoted;
+using LAMP::IO::csv;
+using LAMP::IO::value;
+using LAMP::IO::sha256;
+using LAMP::IO::utc;
+using LAMP::IO::compiler;
+using LAMP::IO::buildType;
 void array(std::ostream& s,const char* name,const char* type,const std::string& values,int components=1)
 {s<<"<DataArray type=\""<<type<<"\" Name=\""<<name<<"\" NumberOfComponents=\""<<components<<"\" format=\"ascii\">\n"<<values<<"\n</DataArray>\n";}
 void fieldData(std::ostream& s,const HermiteGalsPublication& pub,int meshRevision)
@@ -152,26 +97,31 @@ std::string volumeXml(const QuadtreeMesh& mesh,const HermiteGalsPublication& pub
     array(s,"geometric_liquid_volume","Float64",volume.str());array(s,"cell_capacity","Float64",capacity.str());array(s,"phi_center","Float64",phi.str());
     s<<"</CellData>\n</Piece>\n</UnstructuredGrid>\n</VTKFile>\n";return s.str();
 }
-std::string interfaceXml(const HermiteGalsPublication& pub,int meshRevision)
+TecplotWriter::Zone interfaceZone(const HermiteGalsPublication& pub,bool radial,int meshRevision)
 {
-    constexpr int samples=9;auto s=stream(),points=stream(),normal=stream(),curvature=stream(),meridional=stream(),azimuthal=stream(),residual=stream();
-    auto connectivity=stream(),offsets=stream(),components=stream(),cells=stream();std::size_t count=0,graphs=0;
+    TecplotWriter::Zone zone;zone.title="accepted interface";zone.element=TecplotWriter::Element::Line;
+    zone.coordinateNames=radial?std::array<std::string,2>{"R","Z"}:std::array<std::string,2>{"X","Y"};
+    zone.fields={{radial?"NR":"NX",TecplotWriter::Location::Nodal,{}},
+                 {radial?"NZ":"NY",TecplotWriter::Location::Nodal,{}},
+                 {"Kappa",TecplotWriter::Location::Nodal,{}}};
+    zone.solutionTime=pub.state().timeLayer().time();zone.strandId=1;
+    zone.auxiliary={{"AcceptedStep",std::to_string(pub.state().timeLayer().step)},
+                    {"GeometryIdentity",std::to_string(pub.state().identity().value())},
+                    {"MeshRevision",std::to_string(meshRevision)}};
+    std::size_t graphs=0;
     for(std::size_t c=0;c<pub.topology().curves.size();++c)for(std::size_t g=0;g<pub.topology().curves[c].graphs().size();++g){
-        for(int i=0;i<samples;++i){const auto q=pub.sample(c,g,double(i)/(samples-1));const auto& f=q.frame;
-            if(q.geometryIdentity!=pub.state().identity() || !std::isfinite(q.curvature))throw std::runtime_error("FirstJet output sample identity/curvature invalid");
-            points<<f.point.x<<' '<<f.point.y<<" 0\n";normal<<f.normal.x<<' '<<f.normal.y<<" 0\n";
-            curvature<<q.curvature<<' ';meridional<<f.curvature<<' ';azimuthal<<q.azimuthalCurvature<<' ';residual<<f.levelSetResidual<<' ';
-            connectivity<<count++<<' ';cells<<f.nativeCellIndex<<' ';}
-        offsets<<count<<' ';components<<c<<' ';++graphs;
+        const int base=static_cast<int>(zone.points.size());
+        for(int i=0;i<9;++i){const auto q=pub.sample(c,g,double(i)/8);const auto& f=q.frame;
+            if(q.geometryIdentity!=pub.state().identity() || !std::isfinite(q.curvature))
+                throw std::runtime_error("FirstJet output sample identity/curvature invalid");
+            zone.points.push_back(f.point);zone.fields[0].values.push_back(f.normal.x);
+            zone.fields[1].values.push_back(f.normal.y);zone.fields[2].values.push_back(q.curvature);
+            if(i)zone.connectivity.push_back({base+i-1,base+i});
+        }++graphs;
     }
-    s<<"<?xml version=\"1.0\"?>\n<VTKFile type=\"PolyData\" version=\"1.0\" byte_order=\"LittleEndian\">\n<PolyData>\n";
-    fieldData(s,pub,meshRevision);s<<"<Piece NumberOfPoints=\""<<count<<"\" NumberOfVerts=\"0\" NumberOfLines=\""<<graphs<<"\" NumberOfStrips=\"0\" NumberOfPolys=\"0\">\n<Points>\n";
-    array(s,"Points","Float64",points.str(),3);s<<"</Points>\n<Lines>\n";array(s,"connectivity","Int32",connectivity.str());array(s,"offsets","Int32",offsets.str());
-    s<<"</Lines>\n<PointData Normals=\"normal\" Scalars=\"curvature\">\n";array(s,"normal","Float64",normal.str(),3);
-    array(s,"curvature","Float64",curvature.str());array(s,"meridional_curvature","Float64",meridional.str());array(s,"azimuthal_curvature","Float64",azimuthal.str());
-    array(s,"level_set_residual","Float64",residual.str());array(s,"native_cell_id","Int32",cells.str());s<<"</PointData>\n<CellData>\n";
-    array(s,"component_id","Int32",components.str());s<<"</CellData>\n</Piece>\n</PolyData>\n</VTKFile>\n";return s.str();
+    zone.auxiliary["GraphCount"]=std::to_string(graphs);return zone;
 }
+
 }
 
 struct InterfaceFirstJetOutput::Data
@@ -185,7 +135,7 @@ struct InterfaceFirstJetOutput::Data
     {
         auto s=stream();s<<"{\n\"run_id\":"<<quoted(runId)<<",\n\"case_path\":"<<quoted(casePath)<<",\n\"start_time\":"<<quoted(startTime)
             <<",\n\"git_commit\":\"unavailable\",\n\"program_version\":\"LAMP G04\",\n\"build_type\":"<<quoted(buildType())<<",\n\"compiler\":"<<quoted(compiler())
-            <<",\n\"selected_methods\":{\"Interface\":\"hermiteGals\",\"transport\":\"FirstJet\"},\n\"scope\":\"standalone prescribed velocity; no Hydro/Electricity\","
+            <<",\n\"selected_methods\":{\"Interface\":\"hermiteGals\",\"transport\":\"FirstJet\"},\n\"scope\":\"standalone prescribed velocity; no Hydro/Electric\","
             <<"\n\"volume_measure\":"<<quoted(input.config.radial?"2*pi*r*dr*dz":"dx*dy")
             <<",\n\"inventory\":null,\n\"phase_flux_ledger\":null,\n\"mesh_identity\":"<<(meshHash.empty()?"null":quoted("sha256:"+meshHash))
             <<",\n\"mesh_revision\":"<<meshRevision<<",\n\"leaf_cells\":"<<leafCells<<",\n\"initial_geometry_identity\":"<<(initial?std::to_string(initialGeometry):"null")
@@ -279,18 +229,18 @@ void InterfaceFirstJetOutput::accepted(const QuadtreeMesh& mesh,const HermiteGal
     if(transfer){row=stream();row<<"regrid,"<<d.step<<','<<d.time<<','<<d.geometry<<','<<(transfer->kind==HermiteGalsMeshTransferKind::ExactRefinement?"exact":"project")<<','
         <<transfer->refinedCells<<','<<transfer->coarsenedCells<<','<<transfer->unchangedCells<<','<<transfer->relativeDomainVolumeChange<<",\n";write("output/series/events.csv",row.str(),true);}
     if(d.input.config.writeFields && (d.step==0 || d.step==d.input.config.steps || d.step%d.input.config.writeEverySteps==0)){
-        std::ostringstream number;number<<std::setw(6)<<std::setfill('0')<<d.frames.size();const auto index=number.str();
-        Data::Frame frame{d.step,d.time,d.geometry,d.meshRevision,"volume/volume_"+index+".vtu","interface/interface_"+index+".vtp"};
+        std::ostringstream number;number<<std::setw(6)<<std::setfill('0')<<d.step;const auto index=number.str();
+        Data::Frame frame{d.step,d.time,d.geometry,d.meshRevision,"volume/volume_"+index+".vtu","interface/interface_"+index+".dat"};
         write(fs::path("output/fields")/frame.volume,volumeXml(mesh,pub,d.meshRevision));
-        write(fs::path("output/fields")/frame.surface,interfaceXml(pub,d.meshRevision));
+        const auto surface=interfaceZone(pub,d.input.config.radial,d.meshRevision);
+        if(surface.points.empty())frame.surface.clear();else TecplotWriter::write(fs::path("output/fields")/frame.surface,surface);
         // Payload files must be complete before either accepted-frame list.
         auto frames=d.frames;frames.push_back(frame);auto pvd=stream(),list=stream();
         pvd<<"<?xml version=\"1.0\"?>\n<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">\n<Collection>\n";
         list<<"frame,step,time,geometry_identity,mesh_revision,volume,interface\n";
         for(std::size_t i=0;i<frames.size();++i){const auto& f=frames[i];
-            pvd<<"<DataSet timestep=\""<<f.time<<"\" group=\"volume\" part=\"0\" file=\""<<f.volume<<"\"/>\n"
-                <<"<DataSet timestep=\""<<f.time<<"\" group=\"interface\" part=\"1\" file=\""<<f.surface<<"\"/>\n";
-            list<<i<<','<<f.step<<','<<f.time<<','<<f.geometry<<','<<f.meshRevision<<",fields/"<<f.volume<<",fields/"<<f.surface<<'\n';}
+            pvd<<"<DataSet timestep=\""<<f.time<<"\" group=\"volume\" part=\"0\" file=\""<<f.volume<<"\"/>\n";
+            list<<i<<','<<f.step<<','<<f.time<<','<<f.geometry<<','<<f.meshRevision<<",fields/"<<f.volume<<','<<(f.surface.empty()?"":"fields/"+f.surface)<<'\n';}
         pvd<<"</Collection>\n</VTKFile>\n";
         replace("output/meta/frames.csv",list.str());replace("output/fields/solution.pvd",pvd.str());d.frames=std::move(frames);
     }
@@ -311,6 +261,7 @@ void InterfaceFirstJetOutput::complete(long double peakDrift)
     auto& d=*data_;auto s=stream();s<<"{\"step\":"<<d.step<<",\"time\":"<<d.time
         <<",\"reference\":null,\"position\":null,\"gradient\":null,\"curvature\":null,\"absolute_volume_error\":null,\"peak_relative_volume_drift\":"<<peakDrift<<"}\n";
     replace("output/meta/accuracy.json",s.str());d.status="success";d.manifest();
+    TecplotWriter::exportCsvHistories("output/series");
 }
 void InterfaceFirstJetOutput::rejected(int attempted,std::int64_t acceptedStep,double acceptedTime,const std::string& stage,const std::string& reason)
 {
@@ -321,4 +272,7 @@ void InterfaceFirstJetOutput::rejected(int attempted,std::int64_t acceptedStep,d
     replace("output/meta/failure.json",s.str());
     s=stream();s<<attempted<<','<<acceptedTime<<",Interface,"<<csv(stage)<<",rejected,NA,NA,NA,NA,"<<csv(reason)<<'\n';write("output/series/solver.csv",s.str(),true);
     s=stream();s<<"rejected,"<<attempted<<','<<acceptedTime<<','<<d.geometry<<",NA,NA,NA,NA,NA,"<<csv(reason)<<'\n';write("output/series/events.csv",s.str(),true);d.manifest();
+    try{TecplotWriter::exportCsvHistories("output/series");}
+    catch(const std::exception& e){std::cerr<<"[Interface FirstJet] series Tecplot export failed: "<<e.what()<<'\n';}
+    catch(...){std::cerr<<"[Interface FirstJet] series Tecplot export failed with an unknown error\n";}
 }

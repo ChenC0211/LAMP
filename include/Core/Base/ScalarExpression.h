@@ -3,7 +3,7 @@
 #include <map>
 #include <string>
 
-namespace Quantum {
+namespace LAMP {
 // Immutable arithmetic expression for analytic input data.
 // No scripting, assignments, files or runtime dictionary access. Derivatives
 // use the chain rule on the same expression as the value.

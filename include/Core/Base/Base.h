@@ -1,6 +1,5 @@
 #pragma once
 
-#define thread_num 12
 #define MINVAL 1e-8
 #define MAXVAL 1e8
 #define Pi 3.14159265358979323846

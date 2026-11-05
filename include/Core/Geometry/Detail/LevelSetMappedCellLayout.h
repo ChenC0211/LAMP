@@ -11,10 +11,11 @@
 #include <limits>
 #include <ostream>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -308,6 +309,15 @@ template<class Scalar> class BasicNativeCellLayout
             if (!intersects)
                 continue;
             clips_.push_back({index, lo, hi});
+            if constexpr(std::is_same_v<Source,LevelSetHermiteScalar::C2MacroQuarticLeafData>){
+                for(int axis=0;axis<2;++axis){const double first=axis?a.y:a.x,last=axis?b.y:b.x;
+                    if(first==last)continue;
+                    const double lower=axis?bounds[0].y:bounds[0].x,upper=axis?bounds[1].y:bounds[1].x;
+                    const auto line=Exact::scalePow2(Exact::add(number(lower),number(upper)),-1);
+                    const auto cut=ratio(Exact::subtract(line,number(first)),difference(last,first));
+                    if(compare(cut,lo)>0&&compare(cut,hi)<0)result.push_back(cut);
+                }
+            }
             result.push_back(std::move(lo));
             result.push_back(std::move(hi));
         }
@@ -430,6 +440,7 @@ template<class Scalar> class BasicNativeCellLayout
 };
 using NativeCellLayout=BasicNativeCellLayout<LevelSetHermiteScalar::LeafSnapshot>;
 using NativeQuarticCellLayout=BasicNativeCellLayout<LevelSetHermiteScalar::QuarticLeafData>;
+using NativeC2MacroCellLayout=BasicNativeCellLayout<LevelSetHermiteScalar::C2MacroQuarticLeafData>;
 } // namespace MappedHermiteSegment
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

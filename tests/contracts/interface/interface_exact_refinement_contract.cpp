@@ -17,7 +17,7 @@
 
 namespace {
 using Snapshot=LevelSetHermiteGeometry::Snapshot;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Key=std::array<int,2>;
 int cases=0,rejections=0;
 const char* stage="setup";
@@ -90,9 +90,9 @@ void scenario(bool radial,int sign,bool bubbles,int mode){
         const auto chart=LevelSetHermiteGeometry::cellChartPoint(q.frame);
         // Keep the retained curve chart. Its rounded global display position
         // loses sub-ULP offsets on translated domains and is not a reference.
-        const auto pullback=[](Quantum::Geometry::CellChartCoordinate t,double lo,double hi,double pLo,double pHi){
-            return Quantum::Geometry::CellChartCoordinate{std::fma(hi-lo,t.offset,t.fromUpper?pHi-hi:lo-pLo)/(pHi-pLo),t.fromUpper};};
-        const Quantum::Geometry::CellChartPoint parentChart{
+        const auto pullback=[](LAMP::Geometry::CellChartCoordinate t,double lo,double hi,double pLo,double pHi){
+            return LAMP::Geometry::CellChartCoordinate{std::fma(hi-lo,t.offset,t.fromUpper?pHi-hi:lo-pLo)/(pHi-pLo),t.fromUpper};};
+        const LAMP::Geometry::CellChartPoint parentChart{
             pullback(chart.x,childBox[0].x,childBox[1].x,parentBox[0].x,parentBox[1].x),
             pullback(chart.y,childBox[0].y,childBox[1].y,parentBox[0].y,parentBox[1].y)};
         const auto a=old->scalarJetAtNativeCellChart(parent,parentChart);
@@ -130,7 +130,7 @@ void rejectionCases(){
     rejects([&]{Snapshot::refineNativeQuartic(*foreign,source);},"changes domain");
     const auto partialSource=Snapshot::fromNativeQuarticQueryCells(*mesh,patch,{5},false);
     rejects([&]{Snapshot::refineNativeQuartic(*fine,partialSource);},"requires full active source");
-    Quantum::Geometry::ActiveHermitePatch cubic;cubic.activeCells=patch.activeCells;cubic.nodes=patch.nodes;
+    LAMP::Geometry::ActiveHermitePatch cubic;cubic.activeCells=patch.activeCells;cubic.nodes=patch.nodes;
     const auto cubicSource=Snapshot::fromNativeLeaves(*mesh,cubic,false);
     rejects([&]{Snapshot::refineNativeQuartic(*fine,cubicSource);},"requires a native Q4 source");
     const auto sector=sectorSource(*mesh);rejects([&]{Snapshot::refineNativeQuartic(*fine,sector);},"corner sectors");

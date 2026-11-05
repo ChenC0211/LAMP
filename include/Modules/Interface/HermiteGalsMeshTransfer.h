@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <memory>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 enum class HermiteGalsMeshTransferKind { ExactRefinement, FirstJetProjection };
 struct HermiteGalsMeshTransferReport

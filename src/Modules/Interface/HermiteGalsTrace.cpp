@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
@@ -76,4 +76,4 @@ HermiteGalsTraceResult traceHermiteGalsWithJacobian(
             + "trace: " + error.what());
     }
 }
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

@@ -14,9 +14,9 @@
 
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 using Snapshot = LevelSetHermiteGeometry::Snapshot;
-using Patch = Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch = LAMP::Geometry::ActiveQuarticHermitePatch;
 using Position = HermiteGalsTimeLayer::Position;
 
 template<class T, class = void> struct hasMixed : std::false_type {};
@@ -181,7 +181,7 @@ void revisionAndBinding()
     badClosure = f.closure; badClosure.vertexMixedDerivatives[0] = std::numeric_limits<double>::quiet_NaN();
     rejects([&] { a.bindGeometry(mesh, a.identity(), badClosure, std::move(another)); }, "non-finite mixed");
 
-    Quantum::Geometry::ActiveHermitePatch cubicPatch;
+    LAMP::Geometry::ActiveHermitePatch cubicPatch;
     cubicPatch.activeCells = f.patch.activeCells; cubicPatch.nodes = f.patch.nodes;
     auto cubic = Snapshot::fromNativeLeaves(mesh, cubicPatch);
     rejects([&] { a.bindGeometry(mesh, a.identity(), f.closure, std::move(cubic)); }, "enriched-quartic");

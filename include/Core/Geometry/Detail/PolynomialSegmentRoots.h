@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Core/Geometry/Detail/ExactExpansion.h"
+#include "Core/Geometry/NativeOutwardRounding.h"
 
 // Implementation-only engine. Bounded floating-point root isolation on [0,1], not
 // exact-rational certification. Uses outward-rounded arithmetic enclosures,
@@ -24,7 +25,7 @@
 // TU-local linkage. No type or inline definition here is a cross-TU public ABI.
 // Keep every include outside these namespaces; public callers use the opaque
 // out-of-line snapshot, while legacy tests may inspect this local engine.
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -32,6 +33,12 @@ namespace PolynomialSegmentRoots
 {
 using ExpandedPolynomial=std::array<ExactExpansion::Expansion,7>;
 using ExpandedQuarticPolynomial=std::array<ExactExpansion::Expansion,9>;
+// Query-private evidence for the explicitly selected engine port. Production
+// callers leave this null; no process-global counters or observer are used.
+struct GuardedNewtonWork
+{
+    std::size_t qualifiedRoots=0,suggestions=0,signedSteps=0,enclosedRoots=0,midpointFallbacks=0;
+};
 struct RootEnclosure {double lo=0.,hi=0.;};
 struct Result
 {
@@ -65,27 +72,7 @@ inline double checked(double value)
 inline double outwardNeighbor(double value,bool upward)
 {
     checked(value);
-    if constexpr(sizeof(double)==sizeof(std::uint64_t) && std::numeric_limits<double>::is_iec559
-        && std::numeric_limits<double>::radix==2 && std::numeric_limits<double>::digits==53)
-    {
-        std::uint64_t bits=0;
-        std::memcpy(&bits,&value,sizeof bits);
-        const unsigned exponent=static_cast<unsigned>((bits>>52)&0x7ffu);
-        // Both values are normal and finite here: nextafter changes exactly
-        // one encoding step and raises no underflow/overflow status. Leave
-        // zero/subnormal and extreme exponents to the library, retaining its
-        // signed-zero, errno and floating-exception behavior at the limits.
-        if(exponent>1 && exponent<0x7feu)
-        {
-            const bool negative=(bits>>63)!=0;
-            if(upward!=negative) ++bits; else --bits;
-            double result;
-            std::memcpy(&result,&bits,sizeof result);
-            return result;
-        }
-    }
-    return std::nextafter(value,upward?std::numeric_limits<double>::infinity()
-        :-std::numeric_limits<double>::infinity());
+    return LAMP::Geometry::nativeOutwardNeighbor(value,upward);
 }
 inline double down(double value) {return outwardNeighbor(value,false);}
 inline double up(double value) {return outwardNeighbor(value,true);}
@@ -156,10 +143,16 @@ public:
         }
         degree_=static_cast<int>(CoefficientCount)-1; while(degree_>0&&coefficients_[degree_]==0.) --degree_;
     }
-    explicit Isolator(const ExpandedInput& input,bool endpointRelative=false)
-        :usesExpansion_(true),endpointRelative_(endpointRelative)
+    explicit Isolator(const ExpandedInput& input,bool endpointRelative=false,
+        bool guardedNewton=false,GuardedNewtonWork* guardedWork=nullptr,
+        double absoluteResolution=64.*std::numeric_limits<double>::epsilon())
+        :usesExpansion_(true),endpointRelative_(endpointRelative),guardedNewton_(guardedNewton),guardedWork_(guardedWork),
+        absoluteResolution_(absoluteResolution)
     {
         namespace Exact=ExactExpansion;
+        if(absoluteResolution!=64.*std::numeric_limits<double>::epsilon())
+            require(std::isfinite(absoluteResolution)&&absoluteResolution>0.
+                &&absoluteResolution<=64.*std::numeric_limits<double>::epsilon(),"invalid explicit absolute root resolution");
         Exact::ExponentRange range;
         for(const auto& coefficient:input)range.include(coefficient);
         if(range.lowest==std::numeric_limits<int>::max()) {degree_=-1;return;}
@@ -213,6 +206,9 @@ private:
     ExpandedInput exactCoefficients_{};
     bool usesExpansion_=false;
     bool endpointRelative_=false;
+    bool guardedNewton_=false;
+    GuardedNewtonWork* guardedWork_=nullptr;
+    double absoluteResolution_=64.*std::numeric_limits<double>::epsilon();
     std::array<std::array<Interval,CoefficientCount>,CoefficientCount> expandedDerivativeCoefficients_{};
     std::array<std::array<int,2>,CoefficientCount> expandedEndpointSigns_{};
     int degree_=0;
@@ -305,11 +301,40 @@ private:
         const auto residual=evaluate(order,{middle,middle});
         const double bound=up(magnitude(slope)*up(hi-lo));
         require(residual.lo<=bound&&residual.hi>=-bound,"root enclosure fails its polynomial residual check");
+        constexpr double nativeResolution=64.*std::numeric_limits<double>::epsilon();
+        if(!endpointRelative_&&absoluteResolution_!=nativeResolution&&order==0&&up(hi-lo)>nativeResolution)
+        {
+            // The original MVT certificate can return before the requested
+            // absolute width. Preserve its actual interval and polynomial;
+            // do not inherit signs from the earlier monotonic interval.
+            const int left=exactPointSign(order,lo),right=exactPointSign(order,hi);
+            if(left==0)return checkedBracket(order,lo,lo);
+            if(right==0)return checkedBracket(order,hi,hi);
+            require(left!=right,"absolute root refinement lacks opposite exact endpoint signs");
+            for(int iteration=0;iteration<256;++iteration)
+            {
+                if(up(hi-lo)<=nativeResolution)return checkedBracket(order,lo,hi);
+                const double midpoint=.5*lo+.5*hi;
+                require(midpoint>lo&&midpoint<hi,"absolute root refinement stalled above native resolution");
+                const int current=exactPointSign(order,midpoint);
+                if(current==0)return checkedBracket(order,midpoint,midpoint);
+                if(current==left)lo=midpoint;else hi=midpoint;
+            }
+            require(up(hi-lo)<=nativeResolution,"absolute root refinement exceeded its iteration bound");
+            return checkedBracket(order,lo,hi);
+        }
         return {lo,hi};
     }
     Bracket simpleRoot(int order,double lo,double hi,int leftSign) const
     {
         const double initialLo=lo,initialHi=hi;
+        // The actual retained polynomial's strict Bernstein derivative hull
+        // proves this original signed interval monotone. Higher derivative
+        // inventories and all unqualified roots keep the original engine.
+        const bool guarded=guardedNewton_ && order==0 && endpointRelative_
+            && sign(range(order+1,initialLo,initialHi))!=0;
+        if(guarded && guardedWork_)++guardedWork_->qualifiedRoots;
+        double lastSignedPoint=guarded?.5*lo+.5*hi:0.;
         constexpr double resolution=64.*std::numeric_limits<double>::epsilon();
         for(int iteration=0;iteration<256;++iteration)
         {
@@ -327,11 +352,69 @@ private:
                     "endpoint-relative root resolution is unrepresentable");
                 if(hi-lo<=localResolution||middle==lo||middle==hi) return checkedBracket(order,lo,hi);
             }
-            else if(hi-lo<=resolution||middle==lo||middle==hi) return checkedBracket(order,lo,hi);
+            else if(hi-lo<=absoluteResolution_||middle==lo||middle==hi) return checkedBracket(order,lo,hi);
+            if(guarded)
+            {
+                // Newton supplies a query point only. The current bracket is
+                // changed exclusively by the SAME interval sign, or the
+                // original residual/slope containment and checkedBracket.
+                const auto previousValue=evaluate(order,{lastSignedPoint,lastSignedPoint});
+                const auto previousSlope=evaluate(order+1,{lastSignedPoint,lastSignedPoint});
+                const double residual=.5*previousValue.lo+.5*previousValue.hi;
+                const double derivative=.5*previousSlope.lo+.5*previousSlope.hi;
+                const double suggestion=sign(previousSlope)!=0 && derivative!=0
+                    ?lastSignedPoint-residual/derivative:middle;
+                if(std::isfinite(suggestion) && suggestion>lo && suggestion<hi && suggestion!=middle)
+                {
+                    if(guardedWork_)++guardedWork_->suggestions;
+                    const auto proposedValue=evaluate(order,{suggestion,suggestion});
+                    const int proposedSign=sign(proposedValue);
+                    if(proposedSign!=0)
+                    {
+                        if(proposedSign==leftSign)lo=suggestion;else hi=suggestion;
+                        lastSignedPoint=suggestion;
+                        if(guardedWork_)++guardedWork_->signedSteps;
+                        continue;
+                    }
+                    // This is the original MVT certificate's first local
+                    // interval, not a Newton residual stopping criterion.
+                    const auto slope=range(order+1,initialLo,initialHi);
+                    const double lowerSlope=std::min(std::abs(slope.lo),std::abs(slope.hi));
+                    const double rawRadius=lowerSlope>0?magnitude(proposedValue)/lowerSlope
+                        :std::numeric_limits<double>::infinity();
+                    if(sign(slope)!=0 && std::isfinite(rawRadius))
+                    {
+                        const double radius=up(rawRadius);
+                        const double rawLo=suggestion-radius,rawHi=suggestion+radius;
+                        if(std::isfinite(rawLo) && std::isfinite(rawHi))
+                        {
+                            const double nextLo=down(rawLo),nextHi=up(rawHi);
+                            if(nextLo>initialLo && nextHi<initialHi)
+                            {
+                                const double enclosedLo=std::max(lo,nextLo),enclosedHi=std::min(hi,nextHi);
+                                if(enclosedLo<enclosedHi)
+                                {
+                                    // A rejected candidate certificate falls
+                                    // straight through to the old midpoint.
+                                    // This checker has no source/FP operations;
+                                    // their validation is outside this scope.
+                                    try {
+                                        const auto bracket=checkedBracket(order,enclosedLo,enclosedHi);
+                                        if(guardedWork_)++guardedWork_->enclosedRoots;
+                                        return bracket;
+                                    } catch(const std::runtime_error&) {}
+                                }
+                            }
+                        }
+                    }
+                }
+                if(guardedWork_)++guardedWork_->midpointFallbacks;
+            }
             const auto value=evaluate(order,{middle,middle}); const int current=sign(value);
             if(current!=0)
             {
                 if(current==leftSign) lo=middle;else hi=middle;
+                if(guarded)lastSignedPoint=middle;
                 continue;
             }
             // An entire monotonic interval can touch a derivative-root
@@ -384,6 +467,7 @@ private:
             const int exact=exactPointSign(order,middle);
             if(exact!=0) {
                 if(exact==leftSign)lo=middle;else hi=middle;
+                if(guarded)lastSignedPoint=middle;
                 continue;
             }
             if(sign(range(order+1,middle,middle))!=0)return checkedBracket(order,middle,middle);
@@ -466,6 +550,15 @@ inline Result isolateEndpointRelative(const ExpandedQuarticPolynomial& coefficie
     ExactExpansion::validateEnvironment();
     return Detail::Isolator<9>(coefficients,true).run();
 }
+// Explicit native-transverse candidate. Complete inventories, coefficient
+// normalization, interval/exact signs, MVT checks and all work/FP gates remain
+// those of the original engine; default public ports never select this policy.
+inline Result isolateEndpointRelativeGuardedNewton(const ExpandedQuarticPolynomial& coefficients,
+    GuardedNewtonWork* work=nullptr)
+{
+    ExactExpansion::validateEnvironment();
+    return Detail::Isolator<9>(coefficients,true,true,work).run();
+}
 inline Result isolateEndpointRelative(const std::array<ExactExpansion::Expansion,12>& coefficients)
 {
     ExactExpansion::validateEnvironment();
@@ -473,4 +566,4 @@ inline Result isolateEndpointRelative(const std::array<ExactExpansion::Expansion
 }
 }
 } // TU-local engine
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

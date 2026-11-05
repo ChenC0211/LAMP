@@ -25,8 +25,8 @@ namespace Orbit
 {
 namespace
 {
-#if defined(QUANTUM_ORBITAVG_FINE_TIMING)
-constexpr bool kOrbitAvgFineTimingEnabled = (QUANTUM_ORBITAVG_FINE_TIMING != 0);
+#if defined(LAMP_ORBITAVG_FINE_TIMING)
+constexpr bool kOrbitAvgFineTimingEnabled = (LAMP_ORBITAVG_FINE_TIMING != 0);
 #else
 constexpr bool kOrbitAvgFineTimingEnabled = false;
 #endif
@@ -999,7 +999,7 @@ bool buildOrbitAveragedCacheAdaptiveGauss24(const BackgroundMesh& mesh,
             }
             catch (...)
             {
-                #pragma omp critical(quantum_orbitavg_adapt_error)
+                #pragma omp critical(lamp_orbitavg_adapt_error)
                 {
                     if (!firstError)
                         firstError = std::current_exception();
@@ -1161,7 +1161,7 @@ bool buildOrbitAveragedCacheAdaptiveGauss24(const BackgroundMesh& mesh,
             }
             catch (...)
             {
-                #pragma omp critical(quantum_orbitavg_adapt_copy_error)
+                #pragma omp critical(lamp_orbitavg_adapt_copy_error)
                 {
                     if (!firstError)
                         firstError = std::current_exception();
@@ -1795,7 +1795,7 @@ bool buildOrbitAveragedCacheGauss2(const BackgroundMesh& mesh,
                 }
                 catch (...)
                 {
-                    #pragma omp critical(quantum_orbitavg_fused_error)
+                    #pragma omp critical(lamp_orbitavg_fused_error)
                     {
                         if (!firstError)
                             firstError = std::current_exception();
@@ -1939,7 +1939,7 @@ bool buildOrbitAveragedCacheGauss2(const BackgroundMesh& mesh,
                 }
                 catch (...)
                 {
-                    #pragma omp critical(quantum_orbitavg_fused_copy_error)
+                    #pragma omp critical(lamp_orbitavg_fused_copy_error)
                     {
                         if (!firstError)
                             firstError = std::current_exception();
@@ -2091,7 +2091,7 @@ bool buildOrbitAveragedCacheGauss2(const BackgroundMesh& mesh,
             }
             catch (...)
             {
-                #pragma omp critical(quantum_orbitavg_fill_error)
+                #pragma omp critical(lamp_orbitavg_fill_error)
                 {
                     if (!firstError)
                         firstError = std::current_exception();
@@ -2343,7 +2343,7 @@ bool buildOrbitAveragedCacheGauss2(const BackgroundMesh& mesh,
             }
             catch (...)
             {
-                #pragma omp critical(quantum_orbitavg_reduce_chunk_error)
+                #pragma omp critical(lamp_orbitavg_reduce_chunk_error)
                 {
                     if (!firstError)
                         firstError = std::current_exception();
@@ -2429,7 +2429,7 @@ bool buildOrbitAveragedCacheGauss2(const BackgroundMesh& mesh,
             }
             catch (...)
             {
-                #pragma omp critical(quantum_orbitavg_chunk_copy_error)
+                #pragma omp critical(lamp_orbitavg_chunk_copy_error)
                 {
                     if (!firstError)
                         firstError = std::current_exception();

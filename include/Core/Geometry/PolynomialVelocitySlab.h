@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // Immutable reconstruction input after copying into a slab, not global DOFs.
 // coefficient[4*i+j] multiplies xi^i eta^j; each entry contains (u_x,u_y).

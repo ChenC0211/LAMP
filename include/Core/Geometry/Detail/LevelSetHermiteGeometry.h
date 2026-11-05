@@ -42,7 +42,7 @@
 // TU-local linkage. No type or inline definition here is a cross-TU public ABI.
 // Keep every include outside these namespaces; public callers use the opaque
 // out-of-line snapshot, while legacy tests may inspect this local engine.
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -130,7 +130,7 @@ public:
           lower_(scalar_.minCoord()), upper_(scalar_.maxCoord()), h_(scalar_.cellSize())
     { buildSeeds(); }
 
-    BasicSnapshot(const QuadtreeMesh& mesh, const Quantum::Geometry::ActiveHermitePatch& patch,
+    BasicSnapshot(const QuadtreeMesh& mesh, const LAMP::Geometry::ActiveHermitePatch& patch,
         bool radialAxisSymmetry = false, CartesianGridScope scope = CartesianGridScope::RootOnly)
         : scalar_(mesh, patch, radialAxisSymmetry, scope), nx_(scalar_.nx()), ny_(scalar_.ny()),
           lower_(scalar_.minCoord()), upper_(scalar_.maxCoord()), h_(scalar_.cellSize())
@@ -1778,4 +1778,4 @@ inline double BasicSnapshot<ScalarSnapshot>::negativeFraction(Vector2D a, Vector
 }
 }
 } // TU-local engine
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 namespace
 {

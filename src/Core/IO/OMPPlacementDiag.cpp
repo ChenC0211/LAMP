@@ -23,7 +23,7 @@ void PrintOMPPlacementOnce(const char* tag)
     const char* safeTag = (tag && tag[0] != '\0') ? tag : "omp";
     char* enabled = nullptr;
     std::size_t enabledLen = 0;
-    if (_dupenv_s(&enabled, &enabledLen, "QUANTUM_OMP_PLACEMENT_DIAG") != 0 || enabled == nullptr)
+    if (_dupenv_s(&enabled, &enabledLen, "LAMP_OMP_PLACEMENT_DIAG") != 0 || enabled == nullptr)
         return;
     std::string flag(enabled);
     std::free(enabled);

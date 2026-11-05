@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // Identity of a physical query, not geometric proximity. Preserve signed
 // zeros and every mantissa bit; never merge adjacent representable points.

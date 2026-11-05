@@ -19,7 +19,7 @@ public:
     std::array<int,2> extent(unsigned level) const;
     Vector2D spacing(unsigned level) const { return coordinates_.cellSize(level); }
 private:
-    Quantum::Mesh::DyadicGridCoordinates coordinates_;
+    LAMP::Mesh::DyadicGridCoordinates coordinates_;
     int nx_,ny_;
     std::vector<Address> addresses_;
     std::map<std::array<int,3>,int> cells_;

@@ -14,7 +14,7 @@
 namespace
 {
 namespace Trace=LevelSetBoundaryTrace;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Jet=LevelSetHermiteGeometry::Snapshot::ScalarJet2;
 void require(bool valid,const char* message) {if(!valid) throw std::runtime_error(message);}
 void close(double actual,double expected,const char* message,double tolerance=2e-11)

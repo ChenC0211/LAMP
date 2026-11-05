@@ -1,0 +1,1 @@
+Interface { method vof; Boundary { type none; } Initialization { subcellsPerAxis 8; } }

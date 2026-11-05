@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -58,4 +58,4 @@ inline std::vector<InterfaceChainVisit> orderInterfaceChain(
     return result;
 }
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

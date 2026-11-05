@@ -18,7 +18,7 @@ HEdgeField<T>::HEdgeField(Mesh& mesh, const T& value) : Field<T>()
     this->size_ = mesh.hEdgeIndexNum();
     this->value = std::make_unique<T[]>(this->size_);
     this->label_ = std::make_unique<int[]>(this->size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < this->size_; i++)
     {
         Edge& hEdge = mesh.hEdges(mesh.hEdgeIndexToLabel[i]);
@@ -38,7 +38,7 @@ void HEdgeField<T>::initialize(const Mesh& mesh, const T& value)
     this->size_ = mesh.hEdgeIndexNum();
     this->value = std::make_unique<T[]>(this->size_);
     this->label_ = std::make_unique<int[]>(this->size_);
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < this->size_; i++)
     {
         Edge& hEdge = mesh.hEdges(mesh.hEdgeIndexToLabel[i]);
@@ -89,9 +89,9 @@ void HEdgeField<T>::updateWithMesh(const Mesh& mesh)
     for (int i = 0; i < mesh.hEdgeIndexNum(); ++i)
     {
         const Edge& edge = mesh.hEdges(mesh.hEdgeIndexToLabel[i]);
-        if (edge.needUpdate()) Quantum::FieldTransfer::validateSources(edge, this->size_, "horizontal edge");
+        if (edge.needUpdate()) LAMP::FieldTransfer::validateSources(edge, this->size_, "horizontal edge");
     }
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.hEdgeIndexNum(); i++)
     {
         Edge& hEdge = mesh.hEdges(mesh.hEdgeIndexToLabel[i]);
@@ -169,7 +169,7 @@ unique_ptr<VertField<T>> HEdgeField<T>::toVertField(const Mesh& mesh) const
     auto vertField = make_unique<VertField<T>>();
     vertField->initialize(mesh, 0.0);
 
-#pragma omp parallel for num_threads(thread_num)
+#pragma omp parallel for
     for (int i = 0; i < mesh.vertIndexNum(); i++)
     {
         Vert& vert = mesh.verts(mesh.vertIndexToLabel[i]);

@@ -12,7 +12,7 @@
 
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 using Velocity=HermiteGalsTemporalVelocitySource;
 using Characteristic=HermiteGalsTemporalCharacteristicSource;
 using Interval=HermiteGalsPhaseFluxIntervalSource;
@@ -40,7 +40,7 @@ std::unique_ptr<QuadtreeMesh> meshFor()
 HermiteGalsState stateFor(const QuadtreeMesh& mesh,bool radial,double gx,double gy,double c,
     bool perturb=false,HermiteGalsTimeLayer time={})
 {
-    Quantum::Geometry::ActiveQuarticHermitePatch patch;
+    LAMP::Geometry::ActiveQuarticHermitePatch patch;
     HermiteGalsPrimaryState p;HermiteGalsClosure closure;
     p.measure=radial?HermiteGalsMeasure::AxisymmetricVolume:HermiteGalsMeasure::CartesianArea;
     patch.activeCells.assign(mesh.cellIndexNum(),1);patch.cellCenters.resize(mesh.cellIndexNum());

@@ -31,7 +31,7 @@ struct Prepared::Impl
         std::size_t target, nodeValue=0;
         std::vector<std::size_t> samples;
     };
-    Quantum::Geometry::ActiveQuarticHermitePatch layout;
+    LAMP::Geometry::ActiveQuarticHermitePatch layout;
     std::vector<Vector2D> points;
     std::vector<Datum> data;
     Report report;
@@ -70,7 +70,7 @@ Prepared::AffectedData Prepared::affectedBy(const std::vector<std::uint8_t>& mar
 
 namespace
 {
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using EdgeKey=std::array<int,2>;
 void require(bool valid,const char* reason)
 {if(!valid)throw std::runtime_error(std::string("[ActiveQuarticHermiteReconstruction] ")+reason);}
@@ -154,7 +154,7 @@ class PlanBuilder
     {
         ++report_.scalarRequests;
         require(std::isfinite(point.x) && std::isfinite(point.y),"nonfinite sample coordinate");
-        const auto key=Quantum::Geometry::exactPointKey(point);
+        const auto key=LAMP::Geometry::exactPointKey(point);
         const auto found=indices_.find(key);
         if(found!=indices_.end())return found->second;
         const auto incident=locator_.incident(point);
@@ -213,7 +213,7 @@ class PlanBuilder
     LevelSetPolynomial::QueryReconstruction reconstruction_;
     std::vector<std::array<Vector2D,2>> bounds_;
     // Exact-key lookup only; hash-table iteration never determines ordering.
-    std::unordered_map<Quantum::Geometry::ExactPointKey,std::size_t,Quantum::Geometry::ExactPointKeyHash> indices_;
+    std::unordered_map<LAMP::Geometry::ExactPointKey,std::size_t,LAMP::Geometry::ExactPointKeyHash> indices_;
     std::map<std::array<std::uint64_t,7>,Prepared::Impl::Stencil> stencils_;
     Prepared::Impl& plan_;
     Report& report_;
@@ -240,7 +240,7 @@ class PlanBuilder
 Prepared prepare(const QuadtreeMesh& mesh,const std::vector<std::uint8_t>& activeCells,
     const Options& options, StencilCache* cache, Report* report)
 {
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     require(activeCells.size()==static_cast<std::size_t>(mesh.cellIndexNum()),"active mask must use full native cell indices");
     require(!options.radialAxisSymmetry || mesh.minCoord.x==0,"radial extension requires actual r=0 boundary");
     for(auto bit:activeCells)require(bit<=1,"active mask must be binary");
@@ -368,14 +368,14 @@ Prepared prepare(const QuadtreeMesh& mesh,const std::vector<std::uint8_t>& activ
 
 Patch reconstruct(const Prepared& prepared, const std::vector<double>& values)
 {
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     require(prepared.impl_ && values.size()==prepared.impl_->points.size(),"prepared scalar array size mismatch");
     for (double value:values) require(std::isfinite(value),"nonfinite supplied scalar");
     const auto& plan=*prepared.impl_;
     const LevelSetPolynomial::QueryReconstruction reconstruction(plan.radial);
     Patch result=plan.layout;
     const auto evaluate=[&](std::size_t index) {
-        Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+        LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
         const auto& datum=plan.data[index];
         const auto jet=reconstruction.evaluateHermiteDataSamples(datum.stencil,
             [&](std::size_t i){return values[datum.samples[i]];});
@@ -425,7 +425,7 @@ Patch reconstruct(const QuadtreeMesh& mesh,const std::vector<std::uint8_t>& acti
     values.reserve(prepared.samplePoints().size());
     for (Vector2D point:prepared.samplePoints())
     {
-        Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+        LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
         const double value=scalar(point);
         require(std::isfinite(value),"nonfinite supplied scalar");
         values.push_back(value);

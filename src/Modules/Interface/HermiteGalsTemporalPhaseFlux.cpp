@@ -17,7 +17,7 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
@@ -70,9 +70,9 @@ struct HermiteGalsTemporalVelocitySource::Data
 {
     HermiteGalsVelocityView previous, arrival;
     std::optional<Vector2D> constant;
-    std::shared_ptr<const Quantum::Geometry::PolynomialVelocitySlab> polynomial;
+    std::shared_ptr<const LAMP::Geometry::PolynomialVelocitySlab> polynomial;
     Data(const HermiteGalsVelocityView& a, const HermiteGalsVelocityView& b,
-        std::optional<Vector2D> value = {},std::shared_ptr<const Quantum::Geometry::PolynomialVelocitySlab> field = {})
+        std::optional<Vector2D> value = {},std::shared_ptr<const LAMP::Geometry::PolynomialVelocitySlab> field = {})
         : previous(a), arrival(b), constant(value),polynomial(std::move(field)) {}
 };
 HermiteGalsTemporalVelocitySource::HermiteGalsTemporalVelocitySource(
@@ -106,15 +106,15 @@ HermiteGalsTemporalVelocitySource HermiteGalsTemporalVelocitySource::constant(
 std::optional<Vector2D> HermiteGalsTemporalVelocitySource::constantValue() const { return checked().constant; }
 HermiteGalsTemporalVelocitySource HermiteGalsTemporalVelocitySource::polynomial(
     const HermiteGalsState& accepted,HermiteGalsIdentity arrivalGeometry,
-    HermiteGalsTimeLayer arrivalTime,const Quantum::Geometry::PolynomialVelocityData& data)
+    HermiteGalsTimeLayer arrivalTime,const LAMP::Geometry::PolynomialVelocityData& data)
 {
-    const auto field=std::make_shared<const Quantum::Geometry::PolynomialVelocitySlab>(accepted.timeLayer().time(),arrivalTime.time(),data);
+    const auto field=std::make_shared<const LAMP::Geometry::PolynomialVelocitySlab>(accepted.timeLayer().time(),arrivalTime.time(),data);
     HermiteGalsTemporalVelocitySource result(accepted,arrivalGeometry,arrivalTime,
         [field](Vector2D point){return field->evaluate(point,field->timeBegin());},
         [field](Vector2D point){return field->evaluate(point,field->timeEnd());});
     result.data_=std::make_shared<const Data>(result.previous(),result.arrival(),std::nullopt,field);return result;
 }
-const Quantum::Geometry::PolynomialVelocitySlab* HermiteGalsTemporalVelocitySource::polynomialVelocity() const
+const LAMP::Geometry::PolynomialVelocitySlab* HermiteGalsTemporalVelocitySource::polynomialVelocity() const
 {return checked().polynomial.get();}
 HermiteGalsVelocityView HermiteGalsTemporalVelocitySource::polynomialArrivalView(
     HermiteGalsIdentity actualCandidate,HermiteGalsTimeLayer actualArrival) const
@@ -263,14 +263,14 @@ NativeLeafFace HermiteGalsPhaseFluxIntervalSource::face(const QuadtreeMesh& mesh
 struct HermiteGalsCharacteristicEnclosure::Data
 {
     HermiteGalsPhaseFluxIntervalSource interval;
-    Quantum::Geometry::PolynomialRk2Bounds bounds;
-    Data(const HermiteGalsPhaseFluxIntervalSource& source,const Quantum::Geometry::PolynomialRk2Bounds& value):interval(source),bounds(value){}
+    LAMP::Geometry::PolynomialRk2Bounds bounds;
+    Data(const HermiteGalsPhaseFluxIntervalSource& source,const LAMP::Geometry::PolynomialRk2Bounds& value):interval(source),bounds(value){}
 };
 HermiteGalsCharacteristicEnclosure::HermiteGalsCharacteristicEnclosure(std::shared_ptr<const Data> data):data_(std::move(data)){}
 const HermiteGalsCharacteristicEnclosure::Data& HermiteGalsCharacteristicEnclosure::checked() const
 {require(bool(data_),"moved-from characteristic enclosure");return *data_;}
 const HermiteGalsPhaseFluxIntervalSource& HermiteGalsCharacteristicEnclosure::interval() const{return checked().interval;}
-const Quantum::Geometry::PolynomialRk2Bounds& HermiteGalsCharacteristicEnclosure::bounds() const{return checked().bounds;}
+const LAMP::Geometry::PolynomialRk2Bounds& HermiteGalsCharacteristicEnclosure::bounds() const{return checked().bounds;}
 void HermiteGalsCharacteristicEnclosure::validateMesh(const QuadtreeMesh& mesh) const{checked().interval.validateMesh(mesh);}
 HermiteGalsCharacteristicEnclosure encloseHermiteGalsCharacteristic(const QuadtreeMesh& mesh,
     const HermiteGalsPhaseFluxIntervalSource& interval,Vector2D lower,Vector2D upper)
@@ -348,7 +348,7 @@ ClosedPhaseBox coverPhaseBox(const LevelSetHermiteGeometry::Snapshot& scalar,
     return result;
 }
 ClosedPhaseBox coverDepartureBox(const LevelSetHermiteGeometry::Snapshot& scalar,
-    const Quantum::Geometry::PolynomialRk2Bounds& box,const HermiteGalsInventoryRegionSource* inventory)
+    const LAMP::Geometry::PolynomialRk2Bounds& box,const HermiteGalsInventoryRegionSource* inventory)
 {return coverPhaseBox(scalar,box.departureLower,box.departureUpper,inventory);}
 }
 struct HermiteGalsCharacteristicPhaseCoverage::Data
@@ -531,7 +531,7 @@ HermiteGalsIntegratedFaceTransfer HermiteGalsIntegratedFaceTransfer::appended(
 
 namespace
 {
-using IntegralBounds=Quantum::Geometry::PolynomialFaceIntegralBounds;
+using IntegralBounds=LAMP::Geometry::PolynomialFaceIntegralBounds;
 constexpr std::size_t noIntegralNode=std::numeric_limits<std::size_t>::max();
 struct IntegralTile
 {
@@ -563,10 +563,10 @@ IntegralComputation boundedPolynomialFace(const QuadtreeMesh& mesh,const Hermite
     if(radial && a.x==0 && b.x==0){const auto axis=field->enclose(a,b,interval.timeBegin(),interval.timeEnd());
         require(axis.value[0].lower==0 && axis.value[0].upper==0 && axis.derivative[1].lower==0 && axis.derivative[1].upper==0,
             "polynomial integral requires exact axis normal velocity/derivative");}
-    std::optional<Quantum::Geometry::PolynomialRk2Reachability> reachable;
+    std::optional<LAMP::Geometry::PolynomialRk2Reachability> reachable;
     if(boundary && boundary->baseExtent().timeBegin()==field->timeBegin()){
         try{reachable=field->encloseRk2Reachability(domain,interval.timeEnd());}
-        catch(const Quantum::Geometry::PolynomialRk2EnclosureUnresolved&){/* original branch proofs remain available */}
+        catch(const LAMP::Geometry::PolynomialRk2EnclosureUnresolved&){/* original branch proofs remain available */}
     }
     IntegralComputation result;std::string lastBranchRefusal;
     const auto position=[&](double s){return face.horizontal?Vector2D{s,a.y}:Vector2D{a.x,s};};
@@ -580,7 +580,7 @@ IntegralComputation boundedPolynomialFace(const QuadtreeMesh& mesh,const Hermite
                 const auto side=field->encloseInitialBoundaryHit(domain,p,q,begin,end);
                 const long double content=boundary->phaseFor(side)==HermiteGalsInflowPhase::Liquid?1:0;
                 tile.bounds=tile.bounds.withContentRange(content,content);++result.report.initialBoundaryQueries;return tile;
-            }catch(const Quantum::Geometry::PolynomialRk2EnclosureUnresolved&){
+            }catch(const LAMP::Geometry::PolynomialRk2EnclosureUnresolved&){
                 // Lack of this certificate is NOT a boundary/old phase
                 // fallback. The original complete no-hit proof remains next.
             }
@@ -606,7 +606,7 @@ IntegralComputation boundedPolynomialFace(const QuadtreeMesh& mesh,const Hermite
             tile.unresolvedPhase=phase.phase==HermiteGalsCertifiedPhase::Unresolved?1:0;
             if(tile.unresolvedPhase){
                 const auto affine=field->encloseAffineFaceRk2(domain,p,q,begin,end);
-                std::vector<Quantum::Geometry::PolynomialAffineCoordinate> forms;forms.reserve(phase.cells.size());
+                std::vector<LAMP::Geometry::PolynomialAffineCoordinate> forms;forms.reserve(phase.cells.size());
                 long double wl0=1,wl1=0,wg0=1,wg1=0;
                 for(const auto& c:phase.cells){
                     forms.push_back(scalar.nativeQuarticAffineEnclosure(c.cell,affine.departure));
@@ -624,7 +624,7 @@ IntegralComputation boundedPolynomialFace(const QuadtreeMesh& mesh,const Hermite
                     smallest=std::min(smallest,value);largest=std::max(largest,value);}
                 tile.phaseSpread=largest-smallest;
             }
-        }catch(const Quantum::Geometry::PolynomialRk2EnclosureUnresolved& error){
+        }catch(const LAMP::Geometry::PolynomialRk2EnclosureUnresolved& error){
             // Conditional [0,1] content guides refinement only. A pending
             // branch can never escape into the successful result.
             tile.pending=1;++result.report.branchRefusals;lastBranchRefusal=error.what();
@@ -659,8 +659,8 @@ IntegralComputation boundedPolynomialFace(const QuadtreeMesh& mesh,const Hermite
             return Split{std::move(left),std::move(right),bounds,pending};
         };
         std::optional<Split> spatial,temporal;
-        if(const auto middle=Quantum::Geometry::polynomialFaceMidpoint(parent.lower,parent.upper))spatial=split(false,*middle);
-        if(const auto middle=Quantum::Geometry::polynomialFaceMidpoint(parent.begin,parent.end))temporal=split(true,*middle);
+        if(const auto middle=LAMP::Geometry::polynomialFaceMidpoint(parent.lower,parent.upper))spatial=split(false,*middle);
+        if(const auto middle=LAMP::Geometry::polynomialFaceMidpoint(parent.begin,parent.end))temporal=split(true,*middle);
         if(!spatial && !temporal)fail("space-time subdivision has no represented interior point");
         // Both complete partitions enclose the SAME parent integral. Retain
         // their common certificate even though only one partition becomes
@@ -717,7 +717,7 @@ const HermiteGalsBoundedFaceIntegral::Data& HermiteGalsBoundedFaceIntegral::chec
 {require(bool(data_),"moved-from bounded face integral");return *data_;}
 const HermiteGalsIntegratedFaceTransfer& HermiteGalsBoundedFaceIntegral::transfer() const{return checked().transfer;}
 const HermiteGalsSpaceTimeIntegralConfig& HermiteGalsBoundedFaceIntegral::config() const{return checked().config;}
-const Quantum::Geometry::PolynomialFaceIntegralBounds& HermiteGalsBoundedFaceIntegral::bounds() const{return checked().bounds;}
+const LAMP::Geometry::PolynomialFaceIntegralBounds& HermiteGalsBoundedFaceIntegral::bounds() const{return checked().bounds;}
 const HermiteGalsSpaceTimeIntegralReport& HermiteGalsBoundedFaceIntegral::report() const{return checked().report;}
 const HermiteGalsInventoryRegionSource* HermiteGalsBoundedFaceIntegral::inventorySource() const
 {const auto& d=checked();return d.inventory?&*d.inventory:nullptr;}
@@ -1003,7 +1003,7 @@ HermiteGalsCertifiedInventoryResult assembleHermiteGalsCertifiedInventory(const 
     }
     report.selected=needsSelection;
     if(needsSelection){
-        using Arc=Quantum::Discrete::BoundedCirculationArc;
+        using Arc=LAMP::Discrete::BoundedCirculationArc;
         const auto reservoir=p.phaseVolumes.size();std::vector<Arc> arcs;arcs.reserve(2*input.size()+2*reservoir);
         const auto binary64=[](long double value){const double represented=static_cast<double>(value);
             require(std::isfinite(represented) && static_cast<long double>(represented)==value,"certified circulation requires binary64 inputs");return represented;};
@@ -1025,7 +1025,7 @@ HermiteGalsCertifiedInventoryResult assembleHermiteGalsCertifiedInventory(const 
             require(before>=0 && before<=capacity,"certified source inventory outside capacity");
             arcs.push_back({reservoir,cell,before,before,before});arcs.push_back({cell,reservoir,0,capacity,before});
         }
-        const auto selected=Quantum::Discrete::solveBoundedCirculation(reservoir+1,arcs);report.augmentations=selected.augmentations;
+        const auto selected=LAMP::Discrete::solveBoundedCirculation(reservoir+1,arcs);report.augmentations=selected.augmentations;
         for(std::size_t k=0;k<transfers.size();++k){const auto& transfer=transfers[k];const auto& face=transfer.face();
             auto v=transfer.integratedVolumes();const long double a=selected.flows[2*k],b=selected.flows[2*k+1];
             if(a==v.integratedLiquidPositiveVolume && b==v.integratedLiquidNegativeVolume)continue;

@@ -138,7 +138,7 @@ inline void readVector(std::istream& is, std::vector<T>& values)
 
 inline void writeVert(std::ostream& os, const Vert& v, int levelSetCount)
 {
-    const std::size_t n = static_cast<std::size_t>(std::max(1, levelSetCount));
+    const std::size_t n = static_cast<std::size_t>(levelSetCount == 0 ? 0 : std::max(1, levelSetCount));
 
     const int label = v.label();
     const int index = v.index();
@@ -186,7 +186,7 @@ inline void writeVert(std::ostream& os, const Vert& v, int levelSetCount)
 
 inline void readVert(std::istream& is, Vert& v, int levelSetCount)
 {
-    const std::size_t n = static_cast<std::size_t>(std::max(1, levelSetCount));
+    const std::size_t n = static_cast<std::size_t>(levelSetCount == 0 ? 0 : std::max(1, levelSetCount));
 
     int label = -1;
     int index = -1;
@@ -243,7 +243,7 @@ inline void readVert(std::istream& is, Vert& v, int levelSetCount)
 
 inline void writeEdge(std::ostream& os, const Edge& e, int levelSetCount)
 {
-    const std::size_t n = static_cast<std::size_t>(std::max(1, levelSetCount));
+    const std::size_t n = static_cast<std::size_t>(levelSetCount == 0 ? 0 : std::max(1, levelSetCount));
 
     const int label = e.label();
     const int index = e.index();
@@ -279,7 +279,7 @@ inline void writeEdge(std::ostream& os, const Edge& e, int levelSetCount)
 
 inline void readEdge(std::istream& is, Edge& e, int levelSetCount)
 {
-    const std::size_t n = static_cast<std::size_t>(std::max(1, levelSetCount));
+    const std::size_t n = static_cast<std::size_t>(levelSetCount == 0 ? 0 : std::max(1, levelSetCount));
 
     e.ensureLevelSetSize(n);
     readRawArray(is, e.isCut.data(), n);
@@ -327,7 +327,7 @@ inline void readEdge(std::istream& is, Edge& e, int levelSetCount)
 
 inline void writeCell(std::ostream& os, const Cell& c, int levelSetCount)
 {
-    const std::size_t n = static_cast<std::size_t>(std::max(1, levelSetCount));
+    const std::size_t n = static_cast<std::size_t>(levelSetCount == 0 ? 0 : std::max(1, levelSetCount));
 
     const int label = c.label();
     const int index = c.index();
@@ -365,7 +365,7 @@ inline void writeCell(std::ostream& os, const Cell& c, int levelSetCount)
 
 inline void readCell(std::istream& is, Cell& c, int levelSetCount)
 {
-    const std::size_t n = static_cast<std::size_t>(std::max(1, levelSetCount));
+    const std::size_t n = static_cast<std::size_t>(levelSetCount == 0 ? 0 : std::max(1, levelSetCount));
 
     c.ensureLevelSetSize(n);
     readRawArray(is, c.isCut.data(), n);

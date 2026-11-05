@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -245,4 +245,4 @@ template <class Context, class Layout> auto search(const Context &context, const
 }
 } // namespace LocalInterfaceProjection
 } // namespace
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

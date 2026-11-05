@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace Quantum::Mesh
+namespace LAMP::Mesh
 {
 namespace
 {

@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 namespace
 {
@@ -63,4 +63,4 @@ std::array<double,2> ActiveQuarticHermiteSkeleton::edgeMidpoint(EdgeKey edge) co
 {return query(edgeName(edge)+" midpoint",[&]{return implementation().scalar.skeletonMidpoint(edge);});}
 ActiveQuarticHermiteSkeleton::Jet ActiveQuarticHermiteSkeleton::edgeJet(EdgeKey edge,double coordinate) const
 {return query(edgeName(edge)+" trace",[&]{return implementation().scalar.skeletonTrace(edge,coordinate);});}
-} // namespace Quantum::Geometry
+} // namespace LAMP::Geometry

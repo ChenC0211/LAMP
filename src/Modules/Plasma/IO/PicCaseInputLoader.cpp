@@ -338,7 +338,7 @@ ImplicitPicAmrSetup resolveImplicitPicAmr(const PicCaseInput& input,
 void ImplicitPicAmrSetup::writeReport(std::ostream& output, std::ostream& errors, bool consoleInfo) const
 {
     if (fastRemap)
-        output << "[ImplicitPIC][AMR] fast remap enabled (QUANTUM_IMPLICIT_AMR_FAST_REMAP=1)" << std::endl;
+        output << "[ImplicitPIC][AMR] fast remap enabled (LAMP_IMPLICIT_AMR_FAST_REMAP=1)" << std::endl;
     if (consoleInfo && picRefreshPresent)
     {
         if (meshRefreshPresent)
@@ -353,7 +353,7 @@ void ImplicitPicAmrSetup::writeReport(std::ostream& output, std::ostream& errors
                   "with different values; runtime is using mesh.dict/GeometryRefresh.\n";
     if (exactMovingRequested && !exactMovingAllowed)
         errors << "[ImplicitPIC][AMR] WARNING: movingEbRefreshMode=exact_refresh is experimental and "
-                  "now requires QUANTUM_IMPLICIT_AMR_ALLOW_EXACT_MOVINGEB_REFRESH=1. Falling back to full.\n";
+                  "now requires LAMP_IMPLICIT_AMR_ALLOW_EXACT_MOVINGEB_REFRESH=1. Falling back to full.\n";
     if (consoleInfo)
         output << "[ImplicitPIC][AMR] geometry refresh mode="
                << (geometry.mode == PicAmrGeometry::RefreshMode::Skip ? "skip" : geometry.mode == PicAmrGeometry::RefreshMode::Adaptive ? "adaptive" : "full")
@@ -371,71 +371,71 @@ void ImplicitPicAmrSetup::writeReport(std::ostream& output, std::ostream& errors
 ImplicitPicOverrides readImplicitPicOverrides()
 {
     ImplicitPicOverrides result;
-    result.initGeomSnapshotPath = nonemptyString("QUANTUM_IMPLICIT_INIT_GEOM_SNAPSHOT_PATH");
-    result.seeDebug = debugEnabled("QUANTUM_IMPLICIT_SEE_DEBUG");
-    result.packedFlushEvery = integer("QUANTUM_IMPLICIT_PACKED_FLUSH_EVERY");
-    result.amrGateEFieldRel = nonnegativeReal("QUANTUM_IMPLICIT_AMR_GATE_EFIELD_REL");
-    result.amrGateDebyeRel = nonnegativeReal("QUANTUM_IMPLICIT_AMR_GATE_DEBYE_REL");
-    result.amrMaxChanges = integer("QUANTUM_IMPLICIT_AMR_MAX_CHANGES");
-    result.initGeomSnapshot = boolean("QUANTUM_IMPLICIT_INIT_GEOM_SNAPSHOT");
-    result.periodicDiagDebug = boolean("QUANTUM_IMPLICIT_PERIODIC_DIAG_DEBUG");
-    result.consoleFallbackFracWarn = finiteReal("QUANTUM_IMPLICIT_CONSOLE_FALLBACK_FRAC_WARN");
-    result.consoleFallbackDebounceSteps = integer("QUANTUM_IMPLICIT_CONSOLE_FALLBACK_DEBOUNCE_STEPS");
-    result.consoleFallbackPrintRecover = boolean("QUANTUM_IMPLICIT_CONSOLE_FALLBACK_PRINT_RECOVER");
-    result.consoleDqrelWarn = finiteReal("QUANTUM_IMPLICIT_CONSOLE_DQREL_WARN");
-    result.consoleDqrelRecover = finiteReal("QUANTUM_IMPLICIT_CONSOLE_DQREL_RECOVER");
-    result.consoleDqrelDebounceSteps = integer("QUANTUM_IMPLICIT_CONSOLE_DQREL_DEBOUNCE_STEPS");
-    result.consoleDqrelEventCooldownSteps = integer("QUANTUM_IMPLICIT_CONSOLE_DQREL_EVENT_COOLDOWN_STEPS");
-    result.consoleDqrelPrintRecover = boolean("QUANTUM_IMPLICIT_CONSOLE_DQREL_PRINT_RECOVER");
-    result.consoleRgL2Warn = finiteReal("QUANTUM_IMPLICIT_CONSOLE_RG_L2_WARN");
-    result.consoleAmrSkipStreakWarn = positiveInteger("QUANTUM_IMPLICIT_CONSOLE_AMR_SKIP_STREAK_WARN");
-    result.consolePhysicsEnabled = boolean("QUANTUM_IMPLICIT_CONSOLE_PHYSICS_ENABLED");
-    result.consolePhysicsEvery = integer("QUANTUM_IMPLICIT_CONSOLE_PHYSICS_EVERY");
-    result.consolePhysicsShowCharge = boolean("QUANTUM_IMPLICIT_CONSOLE_PHYSICS_SHOW_CHARGE");
-    result.consolePhysicsShowCurrent = boolean("QUANTUM_IMPLICIT_CONSOLE_PHYSICS_SHOW_CURRENT");
-    result.consolePhysicsShowWall = boolean("QUANTUM_IMPLICIT_CONSOLE_PHYSICS_SHOW_WALL");
-    result.consolePhysicsShowMcc = boolean("QUANTUM_IMPLICIT_CONSOLE_PHYSICS_SHOW_MCC");
-    result.consolePhysicsShowPerf = boolean("QUANTUM_IMPLICIT_CONSOLE_PHYSICS_SHOW_PERF");
-    result.depositFillOmpMinParticles = integer("QUANTUM_IMPLICIT_DEPOSIT_FILL_OMP_MIN_PARTICLES");
-    result.orbitAvgFused = boolean("QUANTUM_IMPLICIT_ORBITAVG_FUSED");
-    result.resetTransientsOnAmr = boolean("QUANTUM_IMPLICIT_RESET_TRANSIENTS_ON_AMR");
-    result.cutcellStateDumpStep = integer("QUANTUM_IMPLICIT_CUTCELL_STATE_DUMP_STEP");
-    result.cutcellStateDumpPath = stringValue("QUANTUM_IMPLICIT_CUTCELL_STATE_DUMP_PATH");
-    result.cutcellStateDumpOnlyActive = boolean("QUANTUM_IMPLICIT_CUTCELL_STATE_DUMP_ONLY_ACTIVE");
-    result.movingTraceStep = integer("QUANTUM_IMPLICIT_MOVING_TRACE_STEP");
-    result.movingTraceAll = boolean("QUANTUM_IMPLICIT_MOVING_TRACE_ALL");
-    result.movingTracePath = stringValue("QUANTUM_IMPLICIT_MOVING_TRACE_PATH");
-    result.outputFastDensity = boolean("QUANTUM_IMPLICIT_OUTPUT_FAST_DENSITY");
-    result.outputCellConstant = boolean("QUANTUM_IMPLICIT_OUTPUT_CELL_CONSTANT");
-    result.outputDisableCellConstant = boolean("QUANTUM_IMPLICIT_OUTPUT_DISABLE_CELL_CONSTANT");
-    result.outputMaskDiag = boolean("QUANTUM_IMPLICIT_OUTPUT_MASK_DIAG");
-    result.packedBatchWithAmr = boolean("QUANTUM_IMPLICIT_PACKED_BATCH_WITH_AMR");
-    result.amrFastRemap = boolean("QUANTUM_IMPLICIT_AMR_FAST_REMAP");
-    result.amrGeomRefreshMode = stringValue("QUANTUM_IMPLICIT_AMR_GEOM_REFRESH_MODE");
-    result.amrGeomRefreshChangeRel = finiteReal("QUANTUM_IMPLICIT_AMR_GEOM_REFRESH_CHANGE_REL");
-    result.amrGeomRefreshVerbose = boolean("QUANTUM_IMPLICIT_AMR_GEOM_REFRESH_VERBOSE");
-    result.amrGeomRefreshAllowWithMovingEb = boolean("QUANTUM_IMPLICIT_AMR_GEOM_REFRESH_ALLOW_WITH_MOVINGEB");
-    result.amrAllowExactMovingEbRefresh = boolean("QUANTUM_IMPLICIT_AMR_ALLOW_EXACT_MOVINGEB_REFRESH");
-    result.amrMovingEbRefreshMode = stringValue("QUANTUM_IMPLICIT_AMR_MOVINGEB_REFRESH_MODE");
-    result.amrReinitActiveMovingOnly = boolean("QUANTUM_IMPLICIT_AMR_REINIT_ACTIVE_MOVING_ONLY");
-    result.amrReinitHybridSensitiveInactive = boolean("QUANTUM_IMPLICIT_AMR_REINIT_HYBRID_SENSITIVE_INACTIVE");
-    result.amrReinitHybridUseDelta = boolean("QUANTUM_IMPLICIT_AMR_REINIT_HYBRID_USE_DELTA");
-    result.amrReinitHybridNearZeroMin = positiveInteger("QUANTUM_IMPLICIT_AMR_REINIT_HYBRID_NEARZERO_MIN");
-    result.amrReinitHybridNarrowBandMin = positiveInteger("QUANTUM_IMPLICIT_AMR_REINIT_HYBRID_NARROWBAND_MIN");
-    result.amrReinitHybridNearZeroDeltaMin = positiveInteger("QUANTUM_IMPLICIT_AMR_REINIT_HYBRID_NEARZERO_DELTA_MIN");
-    result.amrReinitHybridNarrowBandDeltaMin = positiveInteger("QUANTUM_IMPLICIT_AMR_REINIT_HYBRID_NARROWBAND_DELTA_MIN");
-    result.amrReinitHybridIncludeMaxIter = boolean("QUANTUM_IMPLICIT_AMR_REINIT_HYBRID_INCLUDE_MAXITER");
-    result.amrReinitHybridMaxIterThreshold = positiveInteger("QUANTUM_IMPLICIT_AMR_REINIT_HYBRID_MAXITER_THRESHOLD");
-    result.amrReinitActiveMovingMaxStreak = positiveInteger("QUANTUM_IMPLICIT_AMR_REINIT_ACTIVE_MOVING_MAX_STREAK");
-    result.orbitAvgSpeciesPar = boolean("QUANTUM_IMPLICIT_ORBITAVG_SPECIES_PAR");
-    result.segmenterMaxSegments = integer("QUANTUM_IMPLICIT_SEGMENTER_MAXSEG");
-    result.segmenterMaxLevel = integer("QUANTUM_IMPLICIT_SEGMENTER_MAXLEVEL");
-    result.polarization.mode = stringValue("QUANTUM_IMPLICIT_POL_MODE");
-    result.polarization.temporalGuess = boolean("QUANTUM_IMPLICIT_POL_CG_TEMPORAL_GUESS");
-    result.polarization.reuseIterativePattern = boolean("QUANTUM_IMPLICIT_POL_CG_REUSE_PATTERN");
-    result.polarization.temporalOmega = nonnegativeReal("QUANTUM_IMPLICIT_POL_CG_TEMPORAL_OMEGA", 0.8);
+    result.initGeomSnapshotPath = nonemptyString("LAMP_IMPLICIT_INIT_GEOM_SNAPSHOT_PATH");
+    result.seeDebug = debugEnabled("LAMP_IMPLICIT_SEE_DEBUG");
+    result.packedFlushEvery = integer("LAMP_IMPLICIT_PACKED_FLUSH_EVERY");
+    result.amrGateEFieldRel = nonnegativeReal("LAMP_IMPLICIT_AMR_GATE_EFIELD_REL");
+    result.amrGateDebyeRel = nonnegativeReal("LAMP_IMPLICIT_AMR_GATE_DEBYE_REL");
+    result.amrMaxChanges = integer("LAMP_IMPLICIT_AMR_MAX_CHANGES");
+    result.initGeomSnapshot = boolean("LAMP_IMPLICIT_INIT_GEOM_SNAPSHOT");
+    result.periodicDiagDebug = boolean("LAMP_IMPLICIT_PERIODIC_DIAG_DEBUG");
+    result.consoleFallbackFracWarn = finiteReal("LAMP_IMPLICIT_CONSOLE_FALLBACK_FRAC_WARN");
+    result.consoleFallbackDebounceSteps = integer("LAMP_IMPLICIT_CONSOLE_FALLBACK_DEBOUNCE_STEPS");
+    result.consoleFallbackPrintRecover = boolean("LAMP_IMPLICIT_CONSOLE_FALLBACK_PRINT_RECOVER");
+    result.consoleDqrelWarn = finiteReal("LAMP_IMPLICIT_CONSOLE_DQREL_WARN");
+    result.consoleDqrelRecover = finiteReal("LAMP_IMPLICIT_CONSOLE_DQREL_RECOVER");
+    result.consoleDqrelDebounceSteps = integer("LAMP_IMPLICIT_CONSOLE_DQREL_DEBOUNCE_STEPS");
+    result.consoleDqrelEventCooldownSteps = integer("LAMP_IMPLICIT_CONSOLE_DQREL_EVENT_COOLDOWN_STEPS");
+    result.consoleDqrelPrintRecover = boolean("LAMP_IMPLICIT_CONSOLE_DQREL_PRINT_RECOVER");
+    result.consoleRgL2Warn = finiteReal("LAMP_IMPLICIT_CONSOLE_RG_L2_WARN");
+    result.consoleAmrSkipStreakWarn = positiveInteger("LAMP_IMPLICIT_CONSOLE_AMR_SKIP_STREAK_WARN");
+    result.consolePhysicsEnabled = boolean("LAMP_IMPLICIT_CONSOLE_PHYSICS_ENABLED");
+    result.consolePhysicsEvery = integer("LAMP_IMPLICIT_CONSOLE_PHYSICS_EVERY");
+    result.consolePhysicsShowCharge = boolean("LAMP_IMPLICIT_CONSOLE_PHYSICS_SHOW_CHARGE");
+    result.consolePhysicsShowCurrent = boolean("LAMP_IMPLICIT_CONSOLE_PHYSICS_SHOW_CURRENT");
+    result.consolePhysicsShowWall = boolean("LAMP_IMPLICIT_CONSOLE_PHYSICS_SHOW_WALL");
+    result.consolePhysicsShowMcc = boolean("LAMP_IMPLICIT_CONSOLE_PHYSICS_SHOW_MCC");
+    result.consolePhysicsShowPerf = boolean("LAMP_IMPLICIT_CONSOLE_PHYSICS_SHOW_PERF");
+    result.depositFillOmpMinParticles = integer("LAMP_IMPLICIT_DEPOSIT_FILL_OMP_MIN_PARTICLES");
+    result.orbitAvgFused = boolean("LAMP_IMPLICIT_ORBITAVG_FUSED");
+    result.resetTransientsOnAmr = boolean("LAMP_IMPLICIT_RESET_TRANSIENTS_ON_AMR");
+    result.cutcellStateDumpStep = integer("LAMP_IMPLICIT_CUTCELL_STATE_DUMP_STEP");
+    result.cutcellStateDumpPath = stringValue("LAMP_IMPLICIT_CUTCELL_STATE_DUMP_PATH");
+    result.cutcellStateDumpOnlyActive = boolean("LAMP_IMPLICIT_CUTCELL_STATE_DUMP_ONLY_ACTIVE");
+    result.movingTraceStep = integer("LAMP_IMPLICIT_MOVING_TRACE_STEP");
+    result.movingTraceAll = boolean("LAMP_IMPLICIT_MOVING_TRACE_ALL");
+    result.movingTracePath = stringValue("LAMP_IMPLICIT_MOVING_TRACE_PATH");
+    result.outputFastDensity = boolean("LAMP_IMPLICIT_OUTPUT_FAST_DENSITY");
+    result.outputCellConstant = boolean("LAMP_IMPLICIT_OUTPUT_CELL_CONSTANT");
+    result.outputDisableCellConstant = boolean("LAMP_IMPLICIT_OUTPUT_DISABLE_CELL_CONSTANT");
+    result.outputMaskDiag = boolean("LAMP_IMPLICIT_OUTPUT_MASK_DIAG");
+    result.packedBatchWithAmr = boolean("LAMP_IMPLICIT_PACKED_BATCH_WITH_AMR");
+    result.amrFastRemap = boolean("LAMP_IMPLICIT_AMR_FAST_REMAP");
+    result.amrGeomRefreshMode = stringValue("LAMP_IMPLICIT_AMR_GEOM_REFRESH_MODE");
+    result.amrGeomRefreshChangeRel = finiteReal("LAMP_IMPLICIT_AMR_GEOM_REFRESH_CHANGE_REL");
+    result.amrGeomRefreshVerbose = boolean("LAMP_IMPLICIT_AMR_GEOM_REFRESH_VERBOSE");
+    result.amrGeomRefreshAllowWithMovingEb = boolean("LAMP_IMPLICIT_AMR_GEOM_REFRESH_ALLOW_WITH_MOVINGEB");
+    result.amrAllowExactMovingEbRefresh = boolean("LAMP_IMPLICIT_AMR_ALLOW_EXACT_MOVINGEB_REFRESH");
+    result.amrMovingEbRefreshMode = stringValue("LAMP_IMPLICIT_AMR_MOVINGEB_REFRESH_MODE");
+    result.amrReinitActiveMovingOnly = boolean("LAMP_IMPLICIT_AMR_REINIT_ACTIVE_MOVING_ONLY");
+    result.amrReinitHybridSensitiveInactive = boolean("LAMP_IMPLICIT_AMR_REINIT_HYBRID_SENSITIVE_INACTIVE");
+    result.amrReinitHybridUseDelta = boolean("LAMP_IMPLICIT_AMR_REINIT_HYBRID_USE_DELTA");
+    result.amrReinitHybridNearZeroMin = positiveInteger("LAMP_IMPLICIT_AMR_REINIT_HYBRID_NEARZERO_MIN");
+    result.amrReinitHybridNarrowBandMin = positiveInteger("LAMP_IMPLICIT_AMR_REINIT_HYBRID_NARROWBAND_MIN");
+    result.amrReinitHybridNearZeroDeltaMin = positiveInteger("LAMP_IMPLICIT_AMR_REINIT_HYBRID_NEARZERO_DELTA_MIN");
+    result.amrReinitHybridNarrowBandDeltaMin = positiveInteger("LAMP_IMPLICIT_AMR_REINIT_HYBRID_NARROWBAND_DELTA_MIN");
+    result.amrReinitHybridIncludeMaxIter = boolean("LAMP_IMPLICIT_AMR_REINIT_HYBRID_INCLUDE_MAXITER");
+    result.amrReinitHybridMaxIterThreshold = positiveInteger("LAMP_IMPLICIT_AMR_REINIT_HYBRID_MAXITER_THRESHOLD");
+    result.amrReinitActiveMovingMaxStreak = positiveInteger("LAMP_IMPLICIT_AMR_REINIT_ACTIVE_MOVING_MAX_STREAK");
+    result.orbitAvgSpeciesPar = boolean("LAMP_IMPLICIT_ORBITAVG_SPECIES_PAR");
+    result.segmenterMaxSegments = integer("LAMP_IMPLICIT_SEGMENTER_MAXSEG");
+    result.segmenterMaxLevel = integer("LAMP_IMPLICIT_SEGMENTER_MAXLEVEL");
+    result.polarization.mode = stringValue("LAMP_IMPLICIT_POL_MODE");
+    result.polarization.temporalGuess = boolean("LAMP_IMPLICIT_POL_CG_TEMPORAL_GUESS");
+    result.polarization.reuseIterativePattern = boolean("LAMP_IMPLICIT_POL_CG_REUSE_PATTERN");
+    result.polarization.temporalOmega = nonnegativeReal("LAMP_IMPLICIT_POL_CG_TEMPORAL_OMEGA", 0.8);
     // Presence, including an empty value or "0", enabled these old debug flags.
-    result.segmenterTrace = std::getenv("QUANTUM_SEGMENTER_TRACE") != nullptr;
-    result.segmenterIgnoreHostHints = std::getenv("QUANTUM_SEGMENTER_NOHINT") != nullptr;
+    result.segmenterTrace = std::getenv("LAMP_SEGMENTER_TRACE") != nullptr;
+    result.segmenterIgnoreHostHints = std::getenv("LAMP_SEGMENTER_NOHINT") != nullptr;
     return result;
 }

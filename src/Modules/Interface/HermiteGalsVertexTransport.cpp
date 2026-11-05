@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 using Detail::requireFirstJet;
 
@@ -63,4 +63,4 @@ HermiteGalsVertexTransportResult transportHermiteGalsVertices(
             +"] "+stage+": "+error.what());
     }
 }
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

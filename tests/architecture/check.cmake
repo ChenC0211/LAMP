@@ -32,10 +32,10 @@ foreach(_target IN LISTS _architecture_targets)
     endforeach()
 endforeach()
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/architecture-$<CONFIG>.txt" CONTENT "${_architecture_graph}")
-add_executable(quantum_architecture_check "${CMAKE_CURRENT_LIST_DIR}/check.cpp")
-add_test(NAME architecture COMMAND quantum_architecture_check "${PROJECT_SOURCE_DIR}"
+add_executable(lamp_architecture_check "${CMAKE_CURRENT_LIST_DIR}/check.cpp")
+add_test(NAME architecture COMMAND lamp_architecture_check "${PROJECT_SOURCE_DIR}"
     "${CMAKE_CURRENT_BINARY_DIR}/architecture-$<CONFIG>.txt")
-add_test(NAME architecture_self_test COMMAND quantum_architecture_check --self-test
+add_test(NAME architecture_self_test COMMAND lamp_architecture_check --self-test
     "${PROJECT_SOURCE_DIR}/runs/checks/architecture_self_test/fixtures")
 unset(_architecture_graph)
 unset(_architecture_targets)

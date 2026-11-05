@@ -8,7 +8,7 @@
 #include <optional>
 #include <vector>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 class HermiteGalsIntegratedInventoryResult;
 class HermiteGalsCertifiedInventoryResult;
@@ -35,10 +35,10 @@ public:
         HermiteGalsIdentity arrivalGeometry, HermiteGalsTimeLayer arrivalTime, Vector2D value);
     static HermiteGalsTemporalVelocitySource polynomial(const HermiteGalsState& previousAccepted,
         HermiteGalsIdentity arrivalGeometry,HermiteGalsTimeLayer arrivalTime,
-        const Quantum::Geometry::PolynomialVelocityData& data);
+        const LAMP::Geometry::PolynomialVelocityData& data);
     // Null for opaque/constant sources. The returned immutable object is the
     // SAME owner captured by the actual endpoint/substage callbacks.
-    const Quantum::Geometry::PolynomialVelocitySlab* polynomialVelocity() const;
+    const LAMP::Geometry::PolynomialVelocitySlab* polynomialVelocity() const;
     HermiteGalsVelocityView polynomialArrivalView(HermiteGalsIdentity actualCandidate,
         HermiteGalsTimeLayer actualArrival) const;
     std::optional<Vector2D> constantValue() const;
@@ -126,7 +126,7 @@ class HermiteGalsCharacteristicEnclosure
 {
 public:
     const HermiteGalsPhaseFluxIntervalSource& interval() const;
-    const Quantum::Geometry::PolynomialRk2Bounds& bounds() const;
+    const LAMP::Geometry::PolynomialRk2Bounds& bounds() const;
     void validateMesh(const QuadtreeMesh&) const;
 private:
     struct Data;
@@ -283,7 +283,7 @@ class HermiteGalsBoundedFaceIntegral
 public:
     const HermiteGalsIntegratedFaceTransfer& transfer() const;
     const HermiteGalsSpaceTimeIntegralConfig& config() const;
-    const Quantum::Geometry::PolynomialFaceIntegralBounds& bounds() const;
+    const LAMP::Geometry::PolynomialFaceIntegralBounds& bounds() const;
     const HermiteGalsSpaceTimeIntegralReport& report() const;
     const HermiteGalsInventoryRegionSource* inventorySource() const;
     void validateMesh(const QuadtreeMesh&) const;

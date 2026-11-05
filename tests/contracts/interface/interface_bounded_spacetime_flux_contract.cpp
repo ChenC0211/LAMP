@@ -24,14 +24,14 @@
 
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 using Velocity=HermiteGalsTemporalVelocitySource;
 using Characteristic=HermiteGalsTemporalCharacteristicSource;
 using Interval=HermiteGalsPhaseFluxIntervalSource;
 using Coverage=HermiteGalsCharacteristicPhaseCoverage;
 using Phase=HermiteGalsCertifiedPhase;
 using Position=HermiteGalsTimeLayer::Position;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Jet=Patch::NodalDof;
 using Profile=std::function<Jet(Vector2D)>;
 using Inventory=std::function<double(int,Vector2D,Vector2D,double)>;
@@ -81,9 +81,9 @@ HermiteGalsState stateFor(const QuadtreeMesh& m,const Profile& f,bool radial,con
     for(std::size_t k=0;k<p.vertices.size();++k)patch.nodes[p.vertices[k].vertex].dxy=closure.vertexMixedDerivatives[k];
     candidate.bindGeometry(m,candidate.identity(),closure,LevelSetHermiteGeometry::Snapshot::fromNativeLeaves(m,patch,radial));return std::move(candidate).finish();
 }
-using Data=Quantum::Geometry::PolynomialVelocityData;
-using Slab=Quantum::Geometry::PolynomialVelocitySlab;
-using Bounds=Quantum::Geometry::PolynomialFaceIntegralBounds;
+using Data=LAMP::Geometry::PolynomialVelocityData;
+using Slab=LAMP::Geometry::PolynomialVelocitySlab;
+using Bounds=LAMP::Geometry::PolynomialFaceIntegralBounds;
 using Result=HermiteGalsBoundedFaceIntegral;
 static_assert(!std::is_default_constructible_v<Result>);
 static_assert(std::is_same_v<decltype(std::declval<Result&>().bounds()),const Bounds&>);
@@ -170,7 +170,7 @@ void coreMoments()
     const auto b=reverse.encloseNormalFaceIntegral({.5,.25},{.5,.5},oldTime,endTime,false,1,1);
     contains(b,{.25*.25*duration/4,.25*.25*duration/4,.25*.25*duration/4,.25*.25*duration/4});
     check(b.volumes[0].upper>0 && b.volumes[1].upper>0,"gross counterflow lost to mean velocity");
-    check(!Quantum::Geometry::polynomialFaceMidpoint(1,std::nextafter(1.,2.)),"one-ulp interval has false midpoint");
+    check(!LAMP::Geometry::polynomialFaceMidpoint(1,std::nextafter(1.,2.)),"one-ulp interval has false midpoint");
     rejects([&]{reverse.encloseNormalFaceIntegral({0,0},{1,1},oldTime,endTime,false);},"axis-aligned");
     rejects([&]{reverse.encloseNormalFaceIntegral({-.5,0},{-.5,1},oldTime,endTime,true);},"negative radius");
     rejects([&]{b.withContentRange(.5L,.4L);},"content");
@@ -529,7 +529,7 @@ void tangentZeroContract()
 void uniformReachableContract()
 {
     using History=HermiteGalsBoundaryPhaseSource;using P=HermiteGalsInflowPhase;
-    using Reach=Quantum::Geometry::PolynomialRk2Reachability;
+    using Reach=LAMP::Geometry::PolynomialRk2Reachability;
     static_assert(!std::is_default_constructible_v<Reach>);
     const std::array<P,4> gas{P::Gas,P::Gas,P::Gas,P::Gas};
     int cases=0,actual=0,hits=0,interior=0,mapRefusals=0,sourceBoxes=0;
@@ -639,7 +639,7 @@ void uniformReachableContract()
 }
 void certifiedCirculationContract()
 {
-    using Quantum::Discrete::BoundedCirculationArc;using Quantum::Discrete::solveBoundedCirculation;
+    using LAMP::Discrete::BoundedCirculationArc;using LAMP::Discrete::solveBoundedCirculation;
     using Arc=BoundedCirculationArc;int networks=0,batches=0;const int oldGuards=guards;
     const double eta=std::numeric_limits<double>::denorm_min();
     const std::vector<std::vector<Arc>> examples{

@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace Quantum::Geometry::Parametric {
+namespace LAMP::Geometry::Parametric {
 // One liquid region, expressed by disjoint material components. Each curve
 // is an effective oriented boundary (including its owned domain closure).
 // IDs survive smooth transport and remap; a topology operation must explicitly

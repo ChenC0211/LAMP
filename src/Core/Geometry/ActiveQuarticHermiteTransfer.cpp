@@ -17,9 +17,9 @@ namespace ActiveQuarticHermiteTransfer
 {
 namespace
 {
-using Patch = Quantum::Geometry::ActiveQuarticHermitePatch;
-namespace Scalar = Quantum::Geometry::Detail::LevelSetHermiteScalar;
-namespace Exact = Quantum::Geometry::Detail::ExactExpansion;
+using Patch = LAMP::Geometry::ActiveQuarticHermitePatch;
+namespace Scalar = LAMP::Geometry::Detail::LevelSetHermiteScalar;
+namespace Exact = LAMP::Geometry::Detail::ExactExpansion;
 using Source = Scalar::QuarticLeafData;
 using PointKey = std::array<double, 2>;
 using BoxKey = std::array<double, 4>;
@@ -69,7 +69,7 @@ struct Layout
     }
 };
 
-using DatumSampler = Quantum::Geometry::Detail::NativeHermiteTransfer::DatumSampler<Source>;}
+using DatumSampler = LAMP::Geometry::Detail::NativeHermiteTransfer::DatumSampler<Source>;}
 
 ProtectedPolynomialChange::ProtectedPolynomialChange(int sourceCell, int targetCell)
     : std::runtime_error("[ActiveQuarticHermiteTransfer] protected single-phase polynomial changed through shared constraints; source cell="

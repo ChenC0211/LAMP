@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 struct HermiteGalsAmrClosureReport
 {
@@ -16,6 +16,42 @@ struct HermiteGalsAmrClosureReport
     double algebraicResidual=0,compatibilityResidual=0,maxRelativeDirectionalDisagreement=0;
 };
 class HermiteGalsAmrClosureResult;
+
+// Sparse sensitivity of the actual compact mixed closure, including its
+// independent master edge normal derivatives. Ordinals index the retained
+// primary vertices (VertexDx/Dy) or edges (EdgeNormal), never mesh labels.
+enum class HermiteGalsPrimaryDerivative { VertexDx,VertexDy,EdgeNormal };
+struct HermiteGalsPrimaryDerivativeWeight
+{
+    HermiteGalsPrimaryDerivative component=HermiteGalsPrimaryDerivative::VertexDx;
+    std::size_t primaryOrdinal=0;
+    double weight=0;
+};
+class HermiteGalsAmrClosureSensitivity
+{
+public:
+    // Complete uniform nonhanging XY FirstJet only. Same DirectDirection
+    // five-point source and exact declared-symmetry constraints as closure.
+    static HermiteGalsAmrClosureSensitivity buildUniformFirstJet(const QuadtreeMesh&,
+        const HermiteGalsState&,
+        const std::vector<LevelSetInterfacePanels::SymmetryPlane>& symmetryPlanes={});
+    // Row slot is the retained primary vertex ordinal.
+    const std::vector<std::vector<HermiteGalsPrimaryDerivativeWeight>>& rows() const noexcept {return rows_;}
+    const std::vector<LevelSetInterfacePanels::SymmetryPlane>& symmetryPlanes() const noexcept {return symmetry_;}
+    HermiteGalsIdentity primaryIdentity() const noexcept {return primary_;}
+    HermiteGalsTimeLayer timeLayer() const noexcept {return time_;}
+    void validateFor(const QuadtreeMesh&,const HermiteGalsState&) const;
+    void validateFor(const QuadtreeMesh&,HermiteGalsIdentity,HermiteGalsTimeLayer) const;
+private:
+    HermiteGalsAmrClosureSensitivity(HermiteGalsState,
+        std::vector<std::vector<HermiteGalsPrimaryDerivativeWeight>>,
+        std::vector<LevelSetInterfacePanels::SymmetryPlane>);
+    HermiteGalsState source_;
+    HermiteGalsIdentity primary_;
+    HermiteGalsTimeLayer time_;
+    std::vector<std::vector<HermiteGalsPrimaryDerivativeWeight>> rows_;
+    std::vector<LevelSetInterfacePanels::SymmetryPlane> symmetry_;
+};
 
 // Same-revision compact closure + exact hanging constraints. No geometry
 // publication, cell interior, volume update or new independent transported jet.
@@ -29,19 +65,19 @@ class HermiteGalsAmrClosureResult
 {
 public:
     const std::vector<double>& vertexMixedDerivatives() const noexcept {return mixed_;}
-    const Quantum::Geometry::ActiveQuarticHermiteSkeleton& skeleton() const noexcept {return skeleton_;}
+    const LAMP::Geometry::ActiveQuarticHermiteSkeleton& skeleton() const noexcept {return skeleton_;}
     HermiteGalsIdentity primaryIdentity() const noexcept {return primary_;}
     HermiteGalsTimeLayer timeLayer() const noexcept {return time_;}
     const HermiteGalsAmrClosureReport& report() const noexcept {return report_;}
 private:
     HermiteGalsAmrClosureResult(HermiteGalsIdentity primary,HermiteGalsTimeLayer time,std::vector<double> mixed,
-        Quantum::Geometry::ActiveQuarticHermiteSkeleton skeleton,HermiteGalsAmrClosureReport report);
+        LAMP::Geometry::ActiveQuarticHermiteSkeleton skeleton,HermiteGalsAmrClosureReport report);
     HermiteGalsIdentity primary_;
     HermiteGalsTimeLayer time_;
     std::vector<double> mixed_;
-    Quantum::Geometry::ActiveQuarticHermiteSkeleton skeleton_;
+    LAMP::Geometry::ActiveQuarticHermiteSkeleton skeleton_;
     HermiteGalsAmrClosureReport report_;
     friend HermiteGalsAmrClosureResult closeHermiteGalsMixedAmr(const QuadtreeMesh&,const HermiteGalsCandidate&,
         const std::vector<LevelSetInterfacePanels::SymmetryPlane>&);
 };
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

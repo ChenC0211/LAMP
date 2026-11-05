@@ -122,7 +122,7 @@ public:
         int nativeCellIndex = -1;
         bool requiresNativeDofConstraints = false;
         using IndependentSensitivity=std::conditional_t<Count==16,
-            Quantum::Geometry::ActiveHermiteNodalSensitivity,Quantum::Geometry::ActiveQuarticHermiteSensitivity>;
+            LAMP::Geometry::ActiveHermiteNodalSensitivity,LAMP::Geometry::ActiveQuarticHermiteSensitivity>;
         std::vector<IndependentSensitivity> independentSensitivity;
     };
     using Arc = CellArc<16>;
@@ -184,6 +184,20 @@ public:
     static QuarticResult integrateQuartic(const LevelSetHermiteGeometry::Snapshot& source,
         const Graph& graph, const std::vector<const LevelSetMappedSegment*>& faceCuts,
         const std::vector<Region>& regions, bool axisymmetric, Vector2D greenOrigin);
+    // Optional caller-owned cumulative worker attribution. Each actual
+    // batch/group owns its profile; no global counters or atomics are used.
+    // Time fields are exclusive: isolation/refinement exclude restrictions.
+    // restrictionConstruction times only the actual layout.polynomial backend;
+    // coordinate and endpoint preparation belong to remainingIntegration.
+    // remainingIntegration includes graph/cut preparation, ownership, jets,
+    // quadrature, recovery and other work not assigned to a named segment.
+    struct NativeMomentWorkProfile
+    {
+        double restrictionConstruction=0,initialRootCacheLookup=0,initialRootCacheRemember=0;
+        double initialRootIsolation=0,rootMappingRefinement=0,fixedAndSetup=0,remainingIntegration=0,total=0;
+        std::size_t restrictionQueries=0,initialRootCacheQueries=0,initialRootCacheHits=0,initialRootCacheMisses=0;
+        std::size_t initialRootCacheRememberQueries=0,initialRootIsolations=0,rootMappings=0,rootRefinements=0;
+    };
     struct GraphMoments { long double radial=0, axial=0, errorEstimate=0; };
     // Geometry-only Green moments of a complete native cubic/Q4 graph. Uses the
     // original scalar and controlled rule, integrating the graph-aligned
@@ -211,6 +225,56 @@ public:
         long double coincidentAxialLiquid=0,coincidentRadialLiquid=0;
         std::size_t coincidentArcs=0,sourceRootIncidences=0,localRootRefinements=0;
     };
+    // Each target is an independent complete rectangular partition and keeps
+    // its own arithmetic Green gauge. Targets may overlap one another; their
+    // regions must individually cover the same native cell exactly once.
+    struct NativeMomentTarget
+    {
+        std::vector<Region> regions;
+        Vector2D greenOrigin{0,0};
+    };
+    // Only fixed/capacity fields exist for unselected regions. No missing
+    // phase/free integral is represented as a zero volume.
+    struct FixedRegionMoments
+    {
+        int regionId=-1;
+        long double capacity=0,fixedAxialLiquid=0,fixedRadialLiquid=0;
+    };
+    struct NativeSelectedMomentTarget
+    {
+        std::vector<Region> regions; // Complete original native-cell partition.
+        Vector2D greenOrigin{0,0};
+        std::vector<int> selectedRegionIds;
+    };
+    struct NativeSelectedRegionMoments
+    {
+        std::vector<RegionMoments> selectedRegions;
+        std::vector<FixedRegionMoments> fixedRegions;
+        long double exteriorFixedAxialLiquid=0,exteriorFixedRadialLiquid=0;
+        long double coincidentAxialLiquid=0,coincidentRadialLiquid=0;
+        std::size_t coincidentArcs=0,sourceRootIncidences=0,localRootRefinements=0;
+    };
+    // Same complete fixed/coincident partition and original per-target gauge.
+    // Free moments and controlled quadrature run only on selected owners.
+    static std::vector<NativeSelectedRegionMoments> integrateNativeQuarticSelectedRegionMomentsBatch(
+        const LevelSetHermiteGeometry::Snapshot& source,int nativeCellIndex,
+        const std::vector<Graph>& graphs,
+        const std::vector<const LevelSetMappedSegment::NativeQuarticTrace*>& faceCuts,
+        const std::vector<NativeSelectedMomentTarget>& targets,bool axisymmetric,
+        NativeMomentWorkProfile* work = nullptr);
+    // Shared native graph cuts/root/jet traversal, with direct moment channels
+    // for each target. faceCuts are common immutable input inventories; every
+    // RootResolutionError uses this one input's segment/event indices.
+    // Optional global moments consume each complete input graph at zero
+    // origin in the SAME traversal, independent of target clip ownership.
+    // Output is in input graph order and assigned only after full success.
+    static std::vector<NativeRegionMoments> integrateNativeQuarticRegionMomentsBatch(
+        const LevelSetHermiteGeometry::Snapshot& source,int nativeCellIndex,
+        const std::vector<Graph>& graphs,
+        const std::vector<const LevelSetMappedSegment::NativeQuarticTrace*>& faceCuts,
+        const std::vector<NativeMomentTarget>& targets,bool axisymmetric,
+        std::vector<GraphMoments>* nativeGraphMoments = nullptr,
+        NativeMomentWorkProfile* work = nullptr);
     // Geometry only: actual axis-aligned rectangular pieces inside ONE active
     // native Q4 cell, complete regular graphs and all actual typed boundary
     // cuts from this identical Snapshot. Each fixed side takes its inside
@@ -223,4 +287,13 @@ public:
         const std::vector<Graph>& graphs,
         const std::vector<const LevelSetMappedSegment::NativeQuarticTrace*>& faceCuts,
         const std::vector<Region>& regions,bool axisymmetric,Vector2D greenOrigin);
+private:
+    template<bool Selected>
+    static std::vector<std::conditional_t<Selected,NativeSelectedRegionMoments,NativeRegionMoments>>
+        nativeQuarticRegionMomentsBatchImpl(const LevelSetHermiteGeometry::Snapshot&,int,
+        const std::vector<Graph>&,
+        const std::vector<const LevelSetMappedSegment::NativeQuarticTrace*>&,
+        const std::vector<NativeMomentTarget>&,bool,std::vector<GraphMoments>*,
+        const std::vector<std::vector<int>>*,NativeMomentWorkProfile*);
+
 };

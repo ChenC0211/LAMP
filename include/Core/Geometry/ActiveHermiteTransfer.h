@@ -8,7 +8,7 @@ namespace ActiveHermiteTransfer
 {
 struct Result
 {
-    Quantum::Geometry::ActiveHermitePatch patch;
+    LAMP::Geometry::ActiveHermitePatch patch;
     std::vector<int> sourceToTargetVertex;
     // All old leaves with positive-area overlap, including inactive leaves.
     std::vector<std::vector<int>> sourceCellsByTarget;
@@ -38,7 +38,7 @@ struct Result
 // only proven pure descendants may reextend their scalar. All scalar defects
 // remain reported. Lost contacts, invalid phase or unsupported layouts reject.
 Result prepare(const QuadtreeMesh& sourceMesh,
-    const Quantum::Geometry::ActiveHermitePatch& source,
+    const LAMP::Geometry::ActiveHermitePatch& source,
     const QuadtreeMesh& targetMesh, const std::vector<std::uint8_t>& targetActive,
     bool axisymmetric);
 }

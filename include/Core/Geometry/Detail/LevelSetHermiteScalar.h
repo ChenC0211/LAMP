@@ -30,7 +30,7 @@
 // TU-local linkage. No type or inline definition here is a cross-TU public ABI.
 // Keep every include outside these namespaces; public callers use the opaque
 // out-of-line snapshot, while legacy tests may inspect this local engine.
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -110,7 +110,7 @@ public:
     // Explicit shared physical nodal DOFs: no Q4 refit and no values or
     // derivatives read outside the corners of active cells. The complete
     // native mesh still obeys the selected uniform-layout contract.
-    Snapshot(const QuadtreeMesh& mesh, const ::Quantum::Geometry::ActiveHermitePatch& patch,
+    Snapshot(const QuadtreeMesh& mesh, const ::LAMP::Geometry::ActiveHermitePatch& patch,
         bool radialAxisSymmetry = false, CartesianGridScope scope = CartesianGridScope::RootOnly)
         : radialAxisSymmetry_(radialAxisSymmetry), restrictedDomain_(true)
     {
@@ -515,7 +515,7 @@ private:
     }
 
     void initializeCornerSectors(const QuadtreeMesh& mesh, const UniformLeafGrid& grid,
-        const ::Quantum::Geometry::ActiveHermitePatch& patch)
+        const ::LAMP::Geometry::ActiveHermitePatch& patch)
     {
         std::vector<int> cellPosition(mesh.cellIndexNum(), -1), vertexPosition(mesh.vertIndexNum(), -1);
         for (std::size_t p = 0; p < grid.cells().size(); ++p)
@@ -693,4 +693,4 @@ private:
 };
 }
 } // TU-local engine
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

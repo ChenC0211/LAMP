@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface {
+namespace LAMP::Interface {
 namespace {
 constexpr auto roundoff=Detail::hermiteInventoryRoundoffBudget;
 void require(bool ok,const std::string& why){if(!ok)throw std::invalid_argument("[HermiteGalsInventoryRegion] "+why);}

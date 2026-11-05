@@ -1,5 +1,7 @@
 /build/
 /bin/
+/dist/
+/.portable/
 /runs/
 /cases/**/output/
 /docs/.build/

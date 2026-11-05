@@ -15,11 +15,11 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
-using Term=Quantum::Geometry::UnitPolynomialTerm;
+using Term=LAMP::Geometry::UnitPolynomialTerm;
 using Boundary=HermiteGalsFaceVelocity::Boundary;
 constexpr long double roundoffBudget=Detail::hermiteInventoryRoundoffBudget;
 void require(bool ok,HermiteGalsIdentity id,const std::string& message)
@@ -59,7 +59,7 @@ void validateFaces(const QuadtreeMesh& mesh,const NativeLeafDomain& domain,const
         const bool axis=domain.axisymmetric() && !face.horizontal && face.center.x==0;
         require(!axis || f.boundary==Boundary::Impermeable,id,"velocity: axis must be impermeable");
         for(const auto& half:f.halfPolynomial){for(double value:half)require(std::isfinite(value),id,"velocity: nonfinite coefficient");
-            if(f.boundary==Boundary::Impermeable){const auto bounds=Quantum::Geometry::encloseUnitPolynomial(velocityTerms(half));
+            if(f.boundary==Boundary::Impermeable){const auto bounds=LAMP::Geometry::encloseUnitPolynomial(velocityTerms(half));
                 require(bounds[0]==0 && bounds[1]==0,id,"velocity: impermeable polynomial must be identically zero");}}
     }
     require(index==input.size(),id,"velocity: foreign/inactive face entry");
@@ -135,11 +135,11 @@ HermiteGalsPhaseFluxResult advanceHermiteGalsPhaseVolumes(const QuadtreeMesh& me
             for(int half=0;half<2;++half){
                 auto terms=densityTerms(input.halfPolynomial[half],half==0?a:face.center,half==0?face.center:b,domain.axisymmetric());
                 auto negative=terms;for(auto& term:negative)term.factor=-term.factor;
-                const auto bounds=Quantum::Geometry::encloseUnitPolynomial(terms);
+                const auto bounds=LAMP::Geometry::encloseUnitPolynomial(terms);
                 const auto scale=std::max(std::abs(bounds[0]),std::abs(bounds[1]));
                 const long double tolerance=config.relativeIntegrationTolerance*scale;
                 const auto integrate=[&](const std::vector<Term>& polynomial,bool fromEnd,long double offset,long double length,long double* error=nullptr){
-                    const auto value=Quantum::Geometry::integratePositiveUnitPolynomialRange(polynomial,0,1,fromEnd,offset,length,tolerance*length);
+                    const auto value=LAMP::Geometry::integratePositiveUnitPolynomialRange(polynomial,0,1,fromEnd,offset,length,tolerance*length);
                     require(std::isfinite(value.value) && value.value>=0,id,"integrate: invalid gross flux face="+std::to_string(face.nativeRow));
                     if(error)*error+=value.absoluteError;
                     flux.integrationErrorEstimate+=value.absoluteError;return value.value;};

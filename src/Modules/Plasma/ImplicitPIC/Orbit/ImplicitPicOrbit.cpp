@@ -507,7 +507,7 @@ std::vector<ImplicitPicOrbit::SpeciesPerf> ImplicitPicOrbit::build(const std::ve
         catch (...)
         {
 #ifdef _OPENMP
-            #pragma omp critical(quantum_orbit_species_build_error)
+            #pragma omp critical(lamp_orbit_species_build_error)
             {
                 if (!orbitBuildError)
                     orbitBuildError = std::current_exception();

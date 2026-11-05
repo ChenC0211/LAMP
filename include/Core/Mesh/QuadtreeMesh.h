@@ -5,8 +5,26 @@
 #include <cmath>
 #include <memory>
 #include <cstdint>
+#include <cstddef>
+#include <array>
 #include "Core/Mesh/BackgroundMesh.h"
 
+// Snapshot of ONE most recent adapt call; not an App multi-sweep total.
+struct NativeAdaptationMaintenanceReport
+{
+    bool requested=false,eligible=false,actuallyUsed=false,fallback=false;
+    // Transfer slots count actual clear visits, never absent lazy default slots.
+    std::size_t journaledSlots=0,changedMembershipSlots=0,clearedTransferSlots=0;
+    std::size_t exportedIndexEntries=0,exportedFreeEntries=0,workspaceBytes=0;
+    std::size_t workspaceLimitBytes=64u*1024u*1024u;
+};
+// Actual slot object payload; excludes canonical default, tables, vector payload, RSS/commit.
+// Fixed order in entityPoolStorageReport(): Vert, horizontal Edge, vertical Edge, Cell.
+struct NativeEntityPoolStorageReport
+{
+    std::size_t logicalCapacity=0,constructedSlots=0,publishedChunks=0,entityPayloadBytes=0;
+    bool denseMode=false;
+};
 class QuadtreeMesh : public BackgroundMesh
 {
 public:    
@@ -57,6 +75,16 @@ public:
     template<typename LevelCellFieldT>
     bool mayAdaptToTargets(const LevelCellFieldT& targetLevel) const;
 
+    // Complete only the CURRENT topology's 2:1 prerequisites for explicit
+    // target refinement. A requested leaf whose actual face neighbor is
+    // coarser raises that neighbor's target to neighbor.level()+1, recursively.
+    // Never lowers a desire, changes mesh/flags, samples geometry or extrapolates
+    // target L into an L-1 background band. Returns distinct targets raised.
+    // Same current finite target/label contract as mayAdaptToTargets; all input
+    // validation and planning precede writes. Reapply on each changed topology.
+    template<typename LevelCellFieldT>
+    std::size_t completeRefinementPrerequisites(LevelCellFieldT& targetLevel) const;
+
     // Mesh-only diagnostic: output/fields/mesh_<name>.dat.
     void output(const std::string& name) const;
     template<typename VertField>
@@ -70,6 +98,9 @@ public:
     // are preserved; old inconsistent metrics are rejected, never repaired.
     void readCache(const std::string& filePath);
 
+    const NativeAdaptationMaintenanceReport& nativeAdaptationMaintenanceReport() const noexcept;
+    std::array<NativeEntityPoolStorageReport,4> entityPoolStorageReport() const noexcept;
+
     inline int maxInitialIterations() const { return maxInitialIterations_; }
     inline int maxLevel() const { return maxLevel_; }
 
@@ -77,6 +108,15 @@ private:
     QuadtreeMesh(const QuadtreeMesh& source, CopyMetadataTag);
 
     int maxLevel_;
+    NativeAdaptationMaintenanceReport nativeAdaptationReport_;
+    struct NativeAdaptWorkspace;
+    std::shared_ptr<NativeAdaptWorkspace> beginNativeAdaptationMaintenance(bool requested) noexcept;
+    void recordNativeWrite(NativeAdaptWorkspace*,Cell*) noexcept;
+    void recordNativeWrite(NativeAdaptWorkspace*,Vert*) noexcept;
+    void recordNativeWrite(NativeAdaptWorkspace*,Edge*) noexcept;
+    void recordNativeCellEdges(NativeAdaptWorkspace*,const Cell&) noexcept;
+    bool refreshNativeMembership(NativeAdaptWorkspace*);
+    bool updateNativeLabelSpaces(NativeAdaptWorkspace*) noexcept;
 
     int maxVertNum_;
     int maxHEdgeNum_;
@@ -123,24 +163,28 @@ private:
     // Interpolation stencils belong to this ONE pre-transfer index space:
     // discard older stencils before rebuilding, including surviving edges.
     void prepareTransferIndices();
+    void prepareTransferIndices(NativeAdaptWorkspace*);
     void subdivideCell(const int currentLevel);
     void submergeCell(const int currentLevel);
+    void subdivideCellWithWorkspace(int currentLevel,NativeAdaptWorkspace*);
+    void submergeCellWithWorkspace(int currentLevel,NativeAdaptWorkspace*);
 
-    void findSubdivideRelatedCells(Cell& cell);
-    void findSubmergeRelatedCells(Cell& cell);
+    void findSubdivideRelatedCells(Cell& cell,NativeAdaptWorkspace* workspace=nullptr);
+    void findSubmergeRelatedCells(Cell& cell,NativeAdaptWorkspace* workspace=nullptr);
 
-    void findSubdivideRelatedHEdges(const Cell& cell, Edge& hEdge0, Edge& hEdge1, Edge& hEdge2, const int direction, const bool isRightSide);
-    void findSubdivideRelatedVEdges(const Cell& cell, Edge& vEdge0, Edge& vEdge1, Edge& vEdge2, const int direction, const bool isUpSide);
-    void findSubmergeRelatedHEdges(Edge& hEdge, const Cell& sonCellA, const Cell& sonCellB);
-    void findSubmergeRelatedVEdges(Edge& vEdge, const Cell& sonCellA, const Cell& sonCellB);
+    void findSubdivideRelatedHEdges(const Cell& cell, Edge& hEdge0, Edge& hEdge1, Edge& hEdge2, const int direction, const bool isRightSide,NativeAdaptWorkspace* workspace=nullptr);
+    void findSubdivideRelatedVEdges(const Cell& cell, Edge& vEdge0, Edge& vEdge1, Edge& vEdge2, const int direction, const bool isUpSide,NativeAdaptWorkspace* workspace=nullptr);
+    void findSubmergeRelatedHEdges(Edge& hEdge, const Cell& sonCellA, const Cell& sonCellB,NativeAdaptWorkspace* workspace=nullptr);
+    void findSubmergeRelatedVEdges(Edge& vEdge, const Cell& sonCellA, const Cell& sonCellB,NativeAdaptWorkspace* workspace=nullptr);
 
     void statistics();
+    void statistics(NativeAdaptWorkspace*);
 
     template<typename T>
-    void updateLabelSpace(T*& list, int*& space, int& ptr, const int maxNum);
+    void updateLabelSpace(LAMP::Mesh::Detail::EntityPool<T>& list, int*& space, int& ptr, const int maxNum);
 
     template<typename T>
-    void count(T*& list, const int ptr, int& indexNum, int*& indexToLabel);
+    void count(LAMP::Mesh::Detail::EntityPool<T>& list, const int ptr, int& indexNum, int*& indexToLabel);
 
 };
 

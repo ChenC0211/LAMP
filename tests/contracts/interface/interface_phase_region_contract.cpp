@@ -5,6 +5,7 @@
 #include "Core/Mesh/FaceSegmentGraph.h"
 #include "Core/Mesh/NativeLeafDomain.h"
 #include "Core/Geometry/ActiveQuarticHermitePatch.h"
+#include "Core/Geometry/ActiveQuarticHermiteCompletion.h"
 #include "Core/Geometry/LevelSetHermiteGeometry.h"
 #include "Core/Geometry/LevelSetMappedInterface.h"
 #include "Core/Mesh/QuadtreeMesh.h"
@@ -21,8 +22,8 @@
 #include <string>
 #include <type_traits>
 namespace {
-using namespace Quantum::Interface;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using namespace LAMP::Interface;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Snapshot=LevelSetHermiteGeometry::Snapshot;
 using Jet=Patch::NodalDof;
 using Profile=std::function<Jet(Vector2D)>;
@@ -326,6 +327,62 @@ void coincidentClips(){
     }
     std::cout<<"COINCIDENT_CLIP,"<<scenarios<<','<<boxes<<','<<coreQueries<<','<<peak<<','<<ledgerPeak<<'\n';
 }
+void macroTraceDiscovery()
+{
+    constexpr int n=4;int scenarios=0;std::size_t graphCount=0,splitCells=0,pureCells=0;long double peak=0;
+    for(bool pure:{false,true})for(int sign:{-1,1}){
+        auto mesh=meshFor(n);const Circle disk{.53125,.515625,.203125};
+        const Profile f=[=](Vector2D p){auto j=pure?Jet{1,0,0,0}:circleJet(p,disk);
+            j.value*=sign;j.dx*=sign;j.dy*=sign;j.dxy*=sign;return j;};
+        Patch patch;patch.activeCells.assign(mesh->cellIndexNum(),1);
+        patch.nodes.resize(mesh->vertIndexNum());patch.cellCenters.resize(mesh->cellIndexNum());
+        for(int v=0;v<mesh->vertIndexNum();++v)patch.nodes[v]=f(point(*mesh,v));
+        for(const auto& key:sides(*mesh)){const auto a=point(*mesh,key[0]),b=point(*mesh,key[1]);const auto j=f(a+(b-a)*.5);
+            patch.edgeMidpoints.push_back({key,j.value,a.y==b.y?j.dy:j.dx});}
+        for(int c=0;c<mesh->cellIndexNum();++c)patch.cellCenters[c]=f(mesh->cells(mesh->cellIndexToLabel[c]).centerCoord()).value;
+        const auto completion=LAMP::Geometry::ActiveQuarticHermiteCompletion::fromUniformPatch(*mesh,patch);
+        const std::shared_ptr<const Snapshot> scalar=std::make_shared<const Snapshot>(Snapshot::fromUniformC2Completion(*mesh,completion));
+        FaceSegmentGraph faceGraph;faceGraph.build(*mesh);const auto domain=NativeLeafDomain::build(*mesh,faceGraph,false);
+        const auto context=[&](const char* stage,const std::exception& error){
+            return std::runtime_error(std::string("macro scene pure=")+(pure?"true":"false")+
+                " sign="+std::to_string(sign)+" stage="+stage+": "+error.what());};
+        const auto topology=[&]{try{return LevelSetInterfacePanels::discoverNativeTraceComponents(*mesh,scalar,false);}
+            catch(const std::exception& error){throw context("Core trace discovery",error);}}();
+        const auto trace=[&]{try{return InterfaceCellMeasure::discoverNativeTraceVolumes(*mesh,domain,scalar);}
+            catch(const std::exception& error){throw context("native trace volumes",error);}}();
+        check(scalar->usesC2Macro() && topology.curves.size()==(pure?0u:1u),"macro source/component inventory");
+        for(const auto& chain:topology.curves){
+            check(chain.usesSource(*scalar) && chain.closed() && chain.boundaryContacts().empty()
+                && chain.beginEndpointKind()==LevelSetInterfacePanels::EndpointKind::None
+                && chain.endEndpointKind()==LevelSetInterfacePanels::EndpointKind::None,
+                "macro half seam introduced an artificial physical boundary");
+            std::map<int,int> counts;
+            for(const auto& graph:chain.graphs()){
+                check(!graph.nativeSide && graph.controlledIntegration,"macro curve lost ordinary piece provenance");
+                check(!(graph.localLower.x<.5 && graph.localUpper.x>.5)
+                    && !(graph.localLower.y<.5 && graph.localUpper.y>.5),"macro graph crosses a real half-piece seam");
+                ++counts[graph.nativeCellIndex];++graphCount;
+            }
+            for(const auto& count:counts)if(count.second>1)++splitCells;
+        }
+        for(int c=0;c<mesh->cellIndexNum();++c){
+            const auto bounds=scalar->nativeCellBounds(c);const auto capacity=boxCapacity(bounds[0],bounds[1],false);
+            const auto diskPart=pure?capacity:diskVolume(bounds[0],bounds[1],disk,false);
+            const auto expected=sign>0?(pure?0.L:diskPart):(pure?capacity:capacity-diskPart);
+            const auto actual=trace.measure.negativeVolumeByCell.at(c);
+            check(actual>=0 && actual<=capacity,"macro phase measure violates physical capacity");
+            const auto error=std::abs(actual-expected)/capacity;peak=std::max(peak,error);
+            check(error<=1e-9L,"macro native cell differs from independent analytic disk area");
+            if(pure){check(topology.cellPhase.at(c)==sign && trace.cellPhase.at(c)==sign
+                && actual==(sign<0?capacity:0.L),"macro pure phase certificates/ledger were lost");++pureCells;}
+        }
+        check(trace.ledger.maxRelativeGreenDefect<=1e-10L
+            && trace.ledger.maxRelativeCapacityDefect<=1e-10L,"macro physical Green/capacity ledger");
+        ++scenarios;++checks;
+    }
+    check(scenarios==4 && splitCells>0 && graphCount>0 && pureCells==2*n*n,"macro piece and pure-cell coverage missing");
+    std::cout<<"MACRO_TRACE_DISCOVERY,"<<scenarios<<','<<graphCount<<','<<splitCells<<','<<pureCells<<','<<peak<<",PASS\n";
+}
 void nativeTraceVolumes()
 {
     int scenarios=0;std::size_t cells=0,halves=0,sides=0;long double peak=0;
@@ -363,7 +420,8 @@ void nativeTraceVolumes()
     std::cout<<"NATIVE_TRACE_VOLUMES,"<<scenarios<<','<<cells<<','<<halves<<','<<sides<<','<<peak<<",PASS\n";
 }
 }
-int main(int argc,char** argv){try{if(argc==2 && std::string(argv[1])=="--contracts"){contracts();coincidentClips();nativeTraceVolumes();}else{shapes();contracts();coincidentClips();nativeTraceVolumes();}
+int main(int argc,char** argv){try{if(argc==2 && std::string(argv[1])=="--macro-discovery-only"){macroTraceDiscovery();}
+else if(argc==2 && std::string(argv[1])=="--contracts"){contracts();coincidentClips();nativeTraceVolumes();macroTraceDiscovery();}else{shapes();contracts();coincidentClips();nativeTraceVolumes();macroTraceDiscovery();}
 if(sharedCutMeasures)std::cout<<"SHARED_LOCAL_VOLUME,PASS,cut_cells="<<sharedCutMeasures<<'\n';
 std::cout<<"I12a6 rectangular phase PASS cases="<<checks<<" rejections="<<rejections<<'\n';return 0;}
 catch(const std::exception& e){std::cerr<<"I12a6 rectangular phase FAIL: "<<e.what()<<'\n';return 1;}}

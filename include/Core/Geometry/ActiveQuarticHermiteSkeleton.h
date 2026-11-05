@@ -10,7 +10,7 @@
 
 class QuadtreeMesh;
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // Shared first/mixed jet inputs only. No cell centers, sectors, geometry,
 // transport, phase inventory or physical clock. Interface owns those roles.
@@ -65,4 +65,4 @@ private:
     std::shared_ptr<const Impl> impl_;
     const Impl& implementation() const;
 };
-} // namespace Quantum::Geometry
+} // namespace LAMP::Geometry

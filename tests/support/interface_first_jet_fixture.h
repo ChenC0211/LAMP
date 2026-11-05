@@ -34,8 +34,8 @@
 
 namespace
 {
-using namespace Quantum::Interface;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using namespace LAMP::Interface;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Jet=Patch::NodalDof;
 using Profile=std::function<Jet(Vector2D)>;
 using Key=std::array<int,2>;
@@ -144,9 +144,9 @@ struct Case
         const double k=speed*std::cos(double(pi)*t/period),r2=x*x+y*y;
         return {{-k*r2*y,k*r2*x},{-2*k*x*y,-k*(x*x+3*y*y),k*(3*x*x+y*y),2*k*x*y}};
     }
-    Quantum::Geometry::PolynomialVelocityData polynomialData(double previous,double arrival) const {
+    LAMP::Geometry::PolynomialVelocityData polynomialData(double previous,double arrival) const {
         check(!radial && (motion==2 || motion==3),"polynomial driver requires original XY rotation/vortex");
-        Quantum::Geometry::PolynomialVelocityData data;data.origin={.5,.5};
+        LAMP::Geometry::PolynomialVelocityData data;data.origin={.5,.5};
         const auto coefficients=[&](double time){std::array<Vector2D,16> c{};
             const double k=motion==2?speed:speed*std::cos(double(pi)*time/period);
             if(motion==2){c[1].x=-k;c[4].y=k;}

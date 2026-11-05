@@ -6,7 +6,7 @@
 #include <sstream>
 #include <iomanip>
 
-namespace Quantum::Geometry::QuadraticChordEvents
+namespace LAMP::Geometry::QuadraticChordEvents
 {
 namespace {
 namespace E=Detail::ExactExpansion;

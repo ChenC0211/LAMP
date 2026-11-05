@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 namespace
 {

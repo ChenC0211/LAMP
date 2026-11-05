@@ -16,7 +16,7 @@
 namespace {
 using I=LevelSetMappedInterface;
 using Snapshot=LevelSetHermiteGeometry::Snapshot;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Poly=std::vector<long double>;
 constexpr long double pi=3.1415926535897932384626433832795L;
 int cases=0,rejections=0;

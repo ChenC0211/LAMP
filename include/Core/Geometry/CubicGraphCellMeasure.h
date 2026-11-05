@@ -2,7 +2,7 @@
 #include "Core/Geometry/PlanarCellCut.h"
 #include <array>
 
-namespace Quantum::Geometry::CubicGraphCellMeasure
+namespace LAMP::Geometry::CubicGraphCellMeasure
 {
 // Rotated scaled graph n=sum(c[k]*t^k), liquid n<=H(t).
 // t=(-ny,nx).(x-origin)/scale, n=normal.(x-origin)/scale.

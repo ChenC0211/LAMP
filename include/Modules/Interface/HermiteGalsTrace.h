@@ -4,7 +4,7 @@
 #include "Core/Geometry/LevelSetBoundaryTrace.h"
 #include <optional>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 class HermiteGalsVelocityView;
 class HermiteGalsTraceResult;
@@ -70,4 +70,4 @@ private:
         const LevelSetBoundaryTrace::Domain&, Vector2D,
         const HermiteGalsVelocityView&, const HermiteGalsVelocityView&);
 };
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

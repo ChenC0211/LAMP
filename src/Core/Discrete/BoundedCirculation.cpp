@@ -6,11 +6,11 @@
 #include <stdexcept>
 #include <string>
 
-namespace Quantum::Discrete
+namespace LAMP::Discrete
 {
 namespace
 {
-namespace Exact=Quantum::Geometry::Detail::ExactExpansion;
+namespace Exact=LAMP::Geometry::Detail::ExactExpansion;
 using Number=Exact::Expansion;
 void require(bool ok,const char* why)
 {if(!ok)throw std::invalid_argument(std::string("[BoundedCirculation] ")+why);}

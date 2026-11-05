@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include "Core/Base/Vector2D.h"
+#include "Core/Base/TimeLayer.h"
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -8,11 +10,12 @@
 class QuadtreeMesh;
 namespace LevelSetHermiteGeometry { class Snapshot; }
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace Detail { struct HermiteGalsData; }
 class HermiteGalsBubbleResult;
 class HermiteGalsPublication;
+class HermiteGalsFirstJetLocalPreparation;
 struct HermiteGalsPublicationConfig;
 
 // Process-local identity of ONE immutable primary revision. Zero is unbound.
@@ -32,18 +35,12 @@ private:
     friend class HermiteGalsCandidate;
 };
 
-// Supplied by the App's clock, never advanced by the state container.
-struct HermiteGalsTimeLayer
-{
-    enum class Position { Initial, Midpoint, End };
-    std::int64_t step = 0;
-    double begin = 0.0, end = 0.0;
-    Position position = Position::Initial;
-    double time() const; // validates the interval; Initial permits restart time
-};
+// Compatibility name; the clock value has no Hermite state owner.
+using HermiteGalsTimeLayer = LAMP::TimeLayer;
 
 enum class HermiteGalsMeasure { CartesianArea, AxisymmetricVolume }; // dx dy / 2*pi*r dr dz
 enum class HermiteGalsTransport { ConservativeVolume, FirstJet };
+enum class HermiteGalsGradientUpdate { CharacteristicPullback, CompatibleIncrement };
 
 struct HermiteGalsVertexJet
 {
@@ -65,6 +62,7 @@ struct HermiteGalsCellVolume
 };
 struct HermiteGalsPrimaryState
 {
+    HermiteGalsGradientUpdate gradientUpdate = HermiteGalsGradientUpdate::CharacteristicPullback;
     HermiteGalsMeasure measure = HermiteGalsMeasure::CartesianArea;
     std::vector<HermiteGalsVertexJet> vertices; // ascending native indices
     std::vector<HermiteGalsEdgeJet> edges; // unique ordered endpoint pairs
@@ -148,6 +146,10 @@ public:
     HermiteGalsState finish() &&; // requires binding; consumes the candidate
 private:
     explicit HermiteGalsCandidate(std::unique_ptr<Detail::HermiteGalsData>) noexcept;
+    static HermiteGalsState bindPreparedLocal(const HermiteGalsState&,HermiteGalsTimeLayer,
+        const HermiteGalsPrimaryState&,const HermiteGalsClosure&,LevelSetHermiteGeometry::Snapshot&&,
+        const std::vector<int>&,const std::vector<Vector2D>&,const std::vector<unsigned char>&);
+    friend class HermiteGalsFirstJetLocalPreparation;
     // Private unpublished transaction branch; no second public identity/owner.
     HermiteGalsCandidate publicationCopy() const;
     void consumePublication() noexcept;
@@ -156,4 +158,4 @@ private:
     friend HermiteGalsPublication publishHermiteGalsGeometry(const QuadtreeMesh&,
         HermiteGalsCandidate&&, const HermiteGalsBubbleResult&, const HermiteGalsPublicationConfig&);
 };
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

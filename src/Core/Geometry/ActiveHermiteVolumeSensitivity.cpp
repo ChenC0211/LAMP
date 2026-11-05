@@ -60,7 +60,7 @@ long double weightedBasis(const std::array<long double, 5>& factors, long double
 Coefficients assemble(int cellI, int cellJ, Vector2D cellSize,
     const std::vector<LevelSetInterfacePanels::ArcSample>& samples)
 {
-    Quantum::Geometry::Detail::ExactExpansion::validateEnvironment();
+    LAMP::Geometry::Detail::ExactExpansion::validateEnvironment();
     require(cellI >= 0 && cellJ >= 0 && std::isfinite(cellSize.x) && cellSize.x > 0.0
         && std::isfinite(cellSize.y) && cellSize.y > 0.0,
         "[ActiveHermiteVolumeSensitivity] invalid cell or physical spacing");

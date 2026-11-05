@@ -4,7 +4,7 @@
 #include <array>
 #include <vector>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 class HermiteGalsEdgeTransportResult;
 
@@ -36,4 +36,4 @@ private:
         const HermiteGalsState&,const std::vector<std::array<int,2>>&,const LevelSetBoundaryTrace::Domain&,
         const HermiteGalsVelocityView&,const HermiteGalsVelocityView&);
 };
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

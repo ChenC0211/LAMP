@@ -286,7 +286,7 @@ void CutCellMetrics::build(
     // alpha_K
     // --------------------------------------------------------------------
     // Prefer to reuse existing cut-cell utilities if present. In the current
-    // QUANTUM infrastructure, we do not have a direct "cell volume fraction"
+    // LAMP infrastructure, we do not have a direct "cell volume fraction"
     // API exposed by ImmersedGeometry. We therefore approximate alpha_K by
     // sub-cell sampling of the level-set inside each active leaf cell.
     //

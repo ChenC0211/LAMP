@@ -4,10 +4,12 @@
 #include "Modules/Interface/HermiteGalsVertexTransport.h"
 #include "Modules/Interface/HermiteGalsEdgeTransport.h"
 #include "Core/Geometry/ActiveQuarticHermitePatch.h"
+#include "Core/Geometry/ActiveQuarticHermiteCompletion.h"
 #include "Core/Geometry/LevelSetHermiteGeometry.h"
 #include "Core/Mesh/QuadtreeMesh.h"
 #include <algorithm>
 #include <cstdint>
+#include <cfenv>
 #include <cmath>
 #include <functional>
 #include <iomanip>
@@ -22,11 +24,11 @@
 
 namespace
 {
-using namespace Quantum::Interface;
-using Skeleton=Quantum::Geometry::ActiveQuarticHermiteSkeleton;
-using Input=Quantum::Geometry::ActiveQuarticHermiteSkeletonInput;
-using Sensitivity=Quantum::Geometry::ActiveQuarticHermiteSensitivity;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using namespace LAMP::Interface;
+using Skeleton=LAMP::Geometry::ActiveQuarticHermiteSkeleton;
+using Input=LAMP::Geometry::ActiveQuarticHermiteSkeletonInput;
+using Sensitivity=LAMP::Geometry::ActiveQuarticHermiteSensitivity;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Jet=Patch::NodalDof;
 using Key=std::array<int,2>;
 using Profile=std::function<Jet(Vector2D)>;
@@ -304,7 +306,7 @@ void failures()
     bad=p;bad.vertices[0].dy=std::numeric_limits<double>::max();for(auto& e:bad.edges)e.dn=-std::numeric_limits<double>::max();fail(bad,"overflow");
     std::cout<<"AMR_REJECTIONS,coverage_support_identity_axis_overflow_isolation,PASS\n";
 }
-void declaredSymmetry()
+void declaredSymmetry(bool quick=false)
 {
     using Plane=LevelSetInterfacePanels::SymmetryPlane;
     int cases=0,guards=0;double maxMixed=0,maxTrace=0;
@@ -327,6 +329,14 @@ void declaredSymmetry()
         if(result.report().constrainedEdges)maxTrace=std::max(maxTrace,c1(m,result.skeleton()));unchanged(p,candidate.primary());
         check(candidate.identity()==id && !candidate.hasGeometry() && result.primaryIdentity()==id,"symmetry closure changed primary revision");++cases;
     };
+    if(quick){
+        auto m=makeMesh(4,0);const Profile field=[](Vector2D p){
+            const auto g=[](double t){return 1+t*t*(t-1)*(t-1);};const auto dg=[](double t){return 2*t*(t-1)*(2*t-1);};
+            return Jet{g(p.x)*g(p.y),dg(p.x)*g(p.y),g(p.x)*dg(p.y),dg(p.x)*dg(p.y)};};
+        verify(*m,field,false,{{0,0}});
+        check(cases==1 && guards==0,"incomplete short declared symmetry coverage");
+        std::cout<<"AMR_DECLARED_SYMMETRY_SHORT,PASS,cases="<<cases<<",max_mixed="<<maxMixed<<",max_c1="<<maxTrace<<'\n';return;
+    }
     // Independent nonplanar Q4 fields, even about each tested outer plane.
     for(bool shifted:{false,true})for(int pattern:{0,1,3})for(int axis=0;axis<2;++axis)for(int side=0;side<2;++side){
         auto m=makeMesh(4,pattern,false,shifted);const double wall=axis==0?(side?m->maxCoord.x:m->minCoord.x):(side?m->maxCoord.y:m->minCoord.y);
@@ -357,10 +367,567 @@ void declaredSymmetry()
     check(cases==30 && guards==8,"incomplete declared symmetry coverage");
     std::cout<<"AMR_DECLARED_SYMMETRY,PASS,cases="<<cases<<",rejects="<<guards<<",max_mixed="<<maxMixed<<",max_c1="<<maxTrace<<'\n';
 }
-}
-int main()
+HermiteGalsState sensitivityState(const QuadtreeMesh& mesh,const HermiteGalsPrimaryState& primary,
+    HermiteGalsTimeLayer time={},const std::vector<LevelSetInterfacePanels::SymmetryPlane>& planes={})
 {
-    try{std::cout<<std::setprecision(17);reproduction();arbitraryAndSensitivity();activeSupport();transport(false);transport(true);failures();convergence(false);convergence(true);declaredSymmetry();}
+    HermiteGalsCandidate candidate(mesh,time,primary);
+    const auto mixed=closeHermiteGalsMixedAmr(mesh,candidate,planes);
+    HermiteGalsClosure closure;closure.vertexMixedDerivatives=mixed.vertexMixedDerivatives();
+    Patch patch;patch.activeCells.assign(mesh.cellIndexNum(),0);patch.nodes.resize(mesh.vertIndexNum());
+    patch.cellCenters.resize(mesh.cellIndexNum());
+    for(const auto& v:mixed.skeleton().vertices()){const auto jet=mixed.skeleton().nodeJet(v.index);
+        patch.nodes[v.index]={jet[0],jet[1],jet[2],jet[3]};}
+    for(const auto& edge:primary.edges)patch.edgeMidpoints.push_back({edge.vertices,edge.phi,edge.dn});
+    for(int c:primary.geometryCells){patch.activeCells[c]=1;patch.cellCenters[c]=1;closure.cellBubbleCoefficients.push_back(1);}
+    auto snapshot=LevelSetHermiteGeometry::Snapshot::fromNativeLeaves(mesh,patch,primary.measure==HermiteGalsMeasure::AxisymmetricVolume);
+    candidate.bindGeometry(mesh,candidate.identity(),closure,std::move(snapshot));return std::move(candidate).finish();
+}
+void mixedSensitivityContract()
+{
+    using Component=HermiteGalsPrimaryDerivative;using Plane=LevelSetInterfacePanels::SymmetryPlane;
+    constexpr const char* owner="HermiteGalsAmrClosureSensitivity primary=";
+    static_assert(!std::is_default_constructible_v<HermiteGalsAmrClosureSensitivity>);
+    const HermiteGalsTimeLayer clock{9,.2,.3,HermiteGalsTimeLayer::Position::Midpoint};
+    std::size_t polynomialRows=0,perturbedRows=0,zeroRows=0,edgeTerms=0,guards=0;double peak=0;
+    const auto firstJet=[](HermiteGalsPrimaryState primary){primary.transport=HermiteGalsTransport::FirstJet;primary.phaseVolumes.clear();return primary;};
+    const auto value=[](const HermiteGalsPrimaryState& primary,const HermiteGalsPrimaryDerivativeWeight& term){
+        if(term.component==Component::EdgeNormal)return primary.edges.at(term.primaryOrdinal).dn;
+        const auto& vertex=primary.vertices.at(term.primaryOrdinal);return term.component==Component::VertexDx?vertex.dx:vertex.dy;
+    };
+    for(bool shifted:{false,true}){
+        auto mesh=makeMesh(4,0,false,shifted);
+        for(int term:{0,6,9,17,24}){const Profile field=[=](Vector2D p){return q4(p,term);};
+            const auto primary=firstJet(primaryFor(*mesh,field));const auto source=sensitivityState(*mesh,primary,clock);
+            const auto weights=HermiteGalsAmrClosureSensitivity::buildUniformFirstJet(*mesh,source);
+            weights.validateFor(*mesh,source);weights.validateFor(*mesh,source.identity(),clock);
+            check(weights.primaryIdentity()==source.identity()&&weights.rows().size()==primary.vertices.size()
+                &&weights.symmetryPlanes().empty(),"sensitivity source/row binding");
+            for(std::size_t row=0;row<weights.rows().size();++row){long double actual=0;
+                check(weights.rows()[row].size()<=10,"uniform five-point sensitivity lost sparse support");
+                for(const auto& weight:weights.rows()[row]){check(std::isfinite(weight.weight),"nonfinite sensitivity coefficient");
+                    actual+=static_cast<long double>(weight.weight)*value(primary,weight);edgeTerms+=weight.component==Component::EdgeNormal;}
+                peak=std::max({peak,close(static_cast<double>(actual),source.closure().vertexMixedDerivatives[row],"sparse sensitivity actual compact closure",1e-12),
+                    close(static_cast<double>(actual),field(point(*mesh,primary.vertices[row].vertex)).dxy,"sparse sensitivity Q4 reproduction")});++polynomialRows;}
+            unchanged(primary,source.primary());
+        }
+    }
+    auto mesh=makeMesh(4,0,false,true);const auto primary=firstJet(primaryFor(*mesh,[](Vector2D p){return q4(p);}));
+    const auto source=sensitivityState(*mesh,primary,clock);
+    const auto weights=HermiteGalsAmrClosureSensitivity::buildUniformFirstJet(*mesh,source);
+    for(Component component:{Component::VertexDx,Component::VertexDy,Component::EdgeNormal}){
+        std::vector<std::size_t> ordinals{0,primary.vertices.size()/2,primary.vertices.size()-1};
+        if(component==Component::EdgeNormal){ordinals.clear();
+            for(bool h:{false,true})for(std::size_t k=0;k<primary.edges.size();++k)if(horizontal(*mesh,primary.edges[k].vertices)==h){ordinals.push_back(k);break;}}
+        for(std::size_t ordinal:ordinals){auto changed=primary;constexpr double delta=.125;
+            if(component==Component::EdgeNormal)changed.edges[ordinal].dn+=delta;
+            else if(component==Component::VertexDx)changed.vertices[ordinal].dx+=delta;else changed.vertices[ordinal].dy+=delta;
+            HermiteGalsCandidate perturbed(*mesh,clock,changed);const auto actual=closeHermiteGalsMixedAmr(*mesh,perturbed);
+            for(std::size_t row=0;row<weights.rows().size();++row){long double predicted=0;
+                for(const auto& weight:weights.rows()[row])if(weight.component==component&&weight.primaryOrdinal==ordinal)predicted+=delta*weight.weight;
+                peak=std::max(peak,close(actual.vertexMixedDerivatives()[row]-source.closure().vertexMixedDerivatives[row],
+                    static_cast<double>(predicted),"sparse sensitivity independent primary perturbation",1e-12));++perturbedRows;}
+        }
+    }
+    const auto foreign=sensitivityState(*mesh,primary,clock);
+    rejects([&]{weights.validateFor(*mesh,foreign);},"different primary revision",owner);++guards;
+    for(int change=0;change<4;++change){auto wrong=clock;
+        if(change==0)++wrong.step;if(change==1)wrong.begin+=.01;if(change==2)wrong.end+=.01;
+        if(change==3)wrong.position=HermiteGalsTimeLayer::Position::End;
+        rejects([&]{weights.validateFor(*mesh,source.identity(),wrong);},"different full time layer",owner);++guards;}
+    auto changedMesh=mesh->clone();changedMesh->verts(changedMesh->vertIndexToLabel[0]).setCoord({-.1,0});
+    rejects([&]{weights.validateFor(*changedMesh,source.identity(),clock);},"mesh",owner);++guards;
+    auto symmetryMesh=makeMesh(4,0);const Profile even=[](Vector2D p){
+        const auto g=[](double t){return 1+t*t*(t-1)*(t-1);};const auto dg=[](double t){return 2*t*(t-1)*(2*t-1);};
+        return Jet{g(p.x)*g(p.y),dg(p.x)*g(p.y),g(p.x)*dg(p.y),dg(p.x)*dg(p.y)};};
+    const auto symmetricPrimary=firstJet(primaryFor(*symmetryMesh,even));const std::vector<Plane> planes{{0,0},{0,1},{1,0},{1,1}};
+    const auto symmetric=sensitivityState(*symmetryMesh,symmetricPrimary,clock,planes);
+    const auto symmetricWeights=HermiteGalsAmrClosureSensitivity::buildUniformFirstJet(*symmetryMesh,symmetric,planes);
+    check(symmetricWeights.symmetryPlanes()==planes,"sensitivity lost declared normal-rate constraints");
+    for(std::size_t row=0;row<symmetricPrimary.vertices.size();++row){const auto p=point(*symmetryMesh,symmetricPrimary.vertices[row].vertex);
+        long double predicted=0;for(const auto& weight:symmetricWeights.rows()[row])predicted+=static_cast<long double>(weight.weight)*value(symmetricPrimary,weight);
+        peak=std::max(peak,close(static_cast<double>(predicted),symmetric.closure().vertexMixedDerivatives[row],"symmetry sensitivity actual closure",1e-12));
+        if(p.x==0||p.x==1||p.y==0||p.y==1){check(symmetricWeights.rows()[row].empty()
+            &&symmetric.closure().vertexMixedDerivatives[row]==0,"symmetry sensitivity row not exact zero");++zeroRows;}}
+    for(bool edge:{false,true}){auto bad=symmetricPrimary;
+        if(edge){for(auto& e:bad.edges)if(point(*symmetryMesh,e.vertices[0]).x==0&&point(*symmetryMesh,e.vertices[1]).x==0){e.dn=1e-30;break;}}
+        else bad.vertices[0].dx=1e-30;
+        const auto badSource=sensitivityState(*symmetryMesh,bad,clock);
+        rejects([&]{HermiteGalsAmrClosureSensitivity::buildUniformFirstJet(*symmetryMesh,badSource,planes);},
+            edge?"exactly zero primary edge normal derivative":"exactly zero primary vertex normal derivative",owner);++guards;
+    }
+    auto rz=makeMesh(4,0,true);const auto radial=sensitivityState(*rz,firstJet(primaryFor(*rz,[](Vector2D p){return positive(p,true);},true)),clock);
+    rejects([&]{HermiteGalsAmrClosureSensitivity::buildUniformFirstJet(*rz,radial);},"RZ unsupported",owner);++guards;
+    auto adaptive=makeMesh(4,1);const auto amr=sensitivityState(*adaptive,firstJet(primaryFor(*adaptive,[](Vector2D p){return positive(p);})),clock);
+    rejects([&]{HermiteGalsAmrClosureSensitivity::buildUniformFirstJet(*adaptive,amr);},"same-level",owner);++guards;
+    const auto partial=sensitivityState(*mesh,subset(*mesh,primary,[](Vector2D p){return p.x<1.4;}),clock);
+    rejects([&]{HermiteGalsAmrClosureSensitivity::buildUniformFirstJet(*mesh,partial);},"complete uniform geometry cells",owner);++guards;
+    const auto historical=std::move(bound(*symmetryMesh)).finish();
+    rejects([&]{HermiteGalsAmrClosureSensitivity::buildUniformFirstJet(*symmetryMesh,historical);},"current FirstJet",owner);++guards;
+    unchanged(primary,source.primary());weights.validateFor(*mesh,source);
+    check(polynomialRows>0&&perturbedRows>0&&zeroRows>0&&edgeTerms>0&&guards==12,"incomplete sparse closure sensitivity coverage");
+    std::cout<<"AMR_MIXED_SENSITIVITY,"<<polynomialRows<<','<<perturbedRows<<','<<zeroRows<<','<<edgeTerms<<','<<guards<<','<<peak<<",PASS\n";
+}
+
+
+// Completion A exercises the neutral E operator only. It neither creates a
+// macro snapshot nor substitutes a typed Interface revision/full-clock owner.
+using Completion=LAMP::Geometry::ActiveQuarticHermiteCompletion;
+using CompletionSource=std::tuple<int,int,int>;
+static_assert(!std::is_default_constructible_v<Completion>);
+static_assert(std::is_same_v<decltype(std::declval<Completion&>().sourcePatch()),const Patch&>);
+static_assert(std::is_same_v<decltype(std::declval<Completion&>().rows()),const std::vector<Completion::Row>&>);
+CompletionSource sourceKey(Sensitivity::Kind kind,int index,int component)
+{return {static_cast<int>(kind),index,component};}
+CompletionSource sourceKey(const Sensitivity& source)
+{return sourceKey(source.kind,source.index,source.component);}
+long double formalSource(const Patch& patch,const CompletionSource& source)
+{
+    const auto [kind,index,component]=source;
+    if(kind==static_cast<int>(Sensitivity::Kind::Vertex)){
+        const auto& j=patch.nodes.at(index);
+        const std::array<double,4> v{{j.value,j.dx,j.dy,j.dxy}};
+        return v.at(component);
+    }
+    if(kind==static_cast<int>(Sensitivity::Kind::EdgeMidpoint)){
+        const auto& edge=patch.edgeMidpoints.at(index);
+        return component==0?edge.value:edge.normalDerivative;
+    }
+    return patch.cellCenters.at(index);
+}
+void addFormal(Patch& patch,const CompletionSource& source,double value)
+{
+    const auto [kind,index,component]=source;
+    if(kind==static_cast<int>(Sensitivity::Kind::Vertex)){
+        auto& j=patch.nodes.at(index);
+        if(component==0)j.value+=value;if(component==1)j.dx+=value;
+        if(component==2)j.dy+=value;if(component==3)j.dxy+=value;
+    }else if(kind==static_cast<int>(Sensitivity::Kind::EdgeMidpoint)){
+        auto& edge=patch.edgeMidpoints.at(index);
+        if(component==0)edge.value+=value;else edge.normalDerivative+=value;
+    }else patch.cellCenters.at(index)+=value;
+}
+std::vector<CompletionSource> formalSources(const Patch& patch)
+{
+    std::vector<CompletionSource> result;
+    for(int v=0;v<static_cast<int>(patch.nodes.size());++v)
+        for(int k=0;k<4;++k)result.push_back(sourceKey(Sensitivity::Kind::Vertex,v,k));
+    for(int e=0;e<static_cast<int>(patch.edgeMidpoints.size());++e)
+        for(int k=0;k<2;++k)result.push_back(sourceKey(Sensitivity::Kind::EdgeMidpoint,e,k));
+    for(int c=0;c<static_cast<int>(patch.cellCenters.size());++c)
+        result.push_back(sourceKey(Sensitivity::Kind::CellCenter,c,0));
+    return result;
+}
+std::unique_ptr<QuadtreeMesh> completionMesh(int nx,int ny,bool shifted=true)
+{
+    DictionaryMesh d;d.Nx=nx;d.Ny=ny;d.maxCellNum=1024;d.maxInitialIterations=0;
+    d.minCoord=shifted?Vector2D{.13,-.27}:Vector2D{0,0};
+    d.maxCoord=shifted?Vector2D{1.87,1.36}:Vector2D{1.7,1.5};
+    return std::make_unique<QuadtreeMesh>(d);
+}
+Patch completionPatch(const QuadtreeMesh& mesh,bool arbitrary)
+{
+    Patch patch;patch.activeCells.assign(mesh.cellIndexNum(),1);
+    patch.nodes.resize(mesh.vertIndexNum());patch.cellCenters.resize(mesh.cellIndexNum());
+    for(int v=0;v<mesh.vertIndexNum();++v)patch.nodes[v]=q4(point(mesh,v));
+    for(const auto& key:actualSides(mesh)){
+        const auto j=q4(point(mesh,key[0])+(point(mesh,key[1])-point(mesh,key[0]))*.5);
+        patch.edgeMidpoints.push_back({key,j.value,horizontal(mesh,key)?j.dy:j.dx});
+    }
+    // Source ordinal is deliberately unrelated to canonical side/face order.
+    std::reverse(patch.edgeMidpoints.begin(),patch.edgeMidpoints.end());
+    for(int c=0;c<mesh.cellIndexNum();++c)
+        patch.cellCenters[c]=q4(mesh.cells(mesh.cellIndexToLabel[c]).centerCoord()).value;
+    if(arbitrary){
+        std::uint32_t seed=287919;
+        const auto random=[&]{seed=1664525u*seed+1013904223u;
+            return static_cast<double>(seed)/4294967296.0-.5;};
+        for(const auto& source:formalSources(patch)){
+            addFormal(patch,source,static_cast<double>(-formalSource(patch,source)));
+            addFormal(patch,source,random());
+        }
+    }
+    return patch;
+}
+struct CompletionReference
+{
+    const QuadtreeMesh& mesh;
+    const Patch& patch;
+    int nx,ny;
+    double dx,dy;
+    using Lattice=std::pair<int,int>;
+    std::map<Lattice,CompletionSource> values,gx,gy,mixed;
+    CompletionReference(const QuadtreeMesh& m,const Patch& p,int x,int y)
+        :mesh(m),patch(p),nx(x),ny(y),
+         dx((m.maxCoord.x-m.minCoord.x)/(2*x)),
+         dy((m.maxCoord.y-m.minCoord.y)/(2*y))
+    {
+        const auto insert=[&](auto& table,Vector2D position,CompletionSource source){
+            const int i=static_cast<int>(std::llround((position.x-m.minCoord.x)/dx));
+            const int j=static_cast<int>(std::llround((position.y-m.minCoord.y)/dy));
+            close(position.x,m.minCoord.x+i*dx,"reference half-grid x position",1e-13);
+            close(position.y,m.minCoord.y+j*dy,"reference half-grid y position",1e-13);
+            check(table.emplace(Lattice{i,j},source).second,"duplicate independent half-grid source");
+        };
+        for(int v=0;v<m.vertIndexNum();++v){
+            const auto x0=point(m,v);insert(values,x0,sourceKey(Sensitivity::Kind::Vertex,v,0));
+            insert(gx,x0,sourceKey(Sensitivity::Kind::Vertex,v,1));
+            insert(gy,x0,sourceKey(Sensitivity::Kind::Vertex,v,2));
+            insert(mixed,x0,sourceKey(Sensitivity::Kind::Vertex,v,3));
+        }
+        for(int e=0;e<static_cast<int>(p.edgeMidpoints.size());++e){
+            const auto key=p.edgeMidpoints[e].vertices;
+            const auto x0=point(m,key[0])+(point(m,key[1])-point(m,key[0]))*.5;
+            insert(values,x0,sourceKey(Sensitivity::Kind::EdgeMidpoint,e,0));
+            insert(horizontal(m,key)?gy:gx,x0,sourceKey(Sensitivity::Kind::EdgeMidpoint,e,1));
+        }
+        for(int c=0;c<m.cellIndexNum();++c)
+            insert(values,m.cells(m.cellIndexToLabel[c]).centerCoord(),sourceKey(Sensitivity::Kind::CellCenter,c,0));
+        check(values.size()==static_cast<std::size_t>((2*nx+1)*(2*ny+1)),
+            "incomplete independent value half-grid");
+    }
+    // Independent moment-system solve in physical coordinates. Choose nearest
+    // support by distance, then order its coordinates; no production FD table.
+    std::vector<std::pair<int,long double>> weights(bool x,int target) const
+    {
+        const int n=2*(x?nx:ny)+1;const long double h=x?dx:dy;
+        std::vector<int> candidates;for(int i=0;i<n;++i)candidates.push_back(i);
+        std::sort(candidates.begin(),candidates.end(),[=](int a,int b){
+            return std::make_pair(std::abs(a-target),a)<std::make_pair(std::abs(b-target),b);});
+        candidates.resize(5);std::sort(candidates.begin(),candidates.end());
+        const long double scale=h*(candidates.back()-candidates.front());
+        long double a[5][6]{};
+        for(int column=0;column<5;++column){
+            const long double t=h*(candidates[column]-target)/scale;a[0][column]=1;
+            for(int row=1;row<5;++row)a[row][column]=a[row-1][column]*t;
+        }
+        a[2][5]=2/(scale*scale);
+        for(int k=0;k<5;++k){
+            int pivot=k;for(int i=k+1;i<5;++i)if(std::abs(a[i][k])>std::abs(a[pivot][k]))pivot=i;
+            check(a[pivot][k]!=0,"singular independent completion moment system");
+            for(int j=k;j<6;++j)std::swap(a[pivot][j],a[k][j]);
+            const auto d=a[k][k];for(int j=k;j<6;++j)a[k][j]/=d;
+            for(int i=0;i<5;++i)if(i!=k){const auto f=a[i][k];
+                for(int j=k;j<6;++j)a[i][j]-=f*a[k][j];}
+        }
+        std::vector<std::pair<int,long double>> result;
+        for(int i=0;i<5;++i)result.push_back({candidates[i],a[i][5]});
+        return result;
+    }
+    long double at(const std::map<Lattice,CompletionSource>& table,int i,int j) const
+    {return formalSource(patch,table.at({i,j}));}
+    long double derivative(const std::map<Lattice,CompletionSource>& table,bool x,int i,int j) const
+    {
+        long double result=0;for(const auto& w:weights(x,x?i:j))
+            result+=w.second*at(table,x?w.first:i,x?j:w.first);
+        return result;
+    }
+    std::array<long double,49> cell(int c) const
+    {
+        const auto lo=point(mesh,mesh.verts(mesh.cells(mesh.cellIndexToLabel[c]).cellToVert[0]).index());
+        const int baseX=static_cast<int>(std::llround((lo.x-mesh.minCoord.x)/dx));
+        const int baseY=static_cast<int>(std::llround((lo.y-mesh.minCoord.y)/dy));
+        constexpr int location[7]{0,1,2,0,2,0,2},order[7]{0,0,0,1,1,2,2};
+        std::array<long double,49> result{};
+        for(int y=0;y<7;++y)for(int x=0;x<7;++x){
+            const int i=baseX+location[x],j=baseY+location[y],a=order[x],b=order[y];
+            auto& value=result[x+7*y];
+            if(a==0 && b==0)value=at(values,i,j);
+            else if(a==1 && b==0)value=at(gx,i,j);
+            else if(a==0 && b==1)value=at(gy,i,j);
+            else if(a==1 && b==1)value=at(mixed,i,j);
+            else if(a==2 && b==0)value=derivative(values,true,i,j);
+            else if(a==0 && b==2)value=derivative(values,false,i,j);
+            else if(a==2 && b==1)value=derivative(gy,true,i,j);
+            else if(a==1 && b==2)value=derivative(gx,false,i,j);
+            else {
+                // One tensor contraction of original V, with no rounded
+                // intermediate D2 values or regenerated first derivative.
+                for(const auto& wx:weights(true,i))for(const auto& wy:weights(false,j))
+                    value+=wx.second*wy.second*at(values,wx.first,wy.first);
+            }
+        }
+        return result;
+    }
+};
+long double completionPolynomialDerivative(Vector2D p,int dx,int dy)
+{
+    long double result=0;
+    for(int a=dx;a<5;++a)for(int b=dy;b<5;++b){
+        long double coefficient=((a+b)%2?-1:1)*(a+2*b+1)/50.L;
+        for(int k=0;k<dx;++k)coefficient*=a-k;
+        for(int k=0;k<dy;++k)coefficient*=b-k;
+        result+=coefficient*std::pow(static_cast<long double>(p.x),a-dx)
+            *std::pow(static_cast<long double>(p.y),b-dy);
+    }
+    return result;
+}
+template<class F> void completionRejects(F action)
+{
+    try{action();}catch(const std::exception& e){
+        check(std::string(e.what()).find("ActiveQuarticHermiteCompletion")!=std::string::npos,
+            "completion rejection lacks responsible owner");return;}
+    throw std::runtime_error("missing completion preparation/owner rejection");
+}
+std::map<CompletionSource,long double> completionWeights(const std::vector<Sensitivity>& weights)
+{
+    std::map<CompletionSource,long double> result;
+    for(const auto& w:weights){
+        check(std::isfinite(w.coefficient)&&w.coefficient!=0,"invalid completion sparse weight");
+        check(result.emplace(sourceKey(w),w.coefficient).second,"duplicate unmerged completion source");
+    }
+    return result;
+}
+void c2CompletionContract()
+{
+    std::size_t cells=0,newRows=0,perturbations=0,transposeCases=0,nonlocalCenters=0,sharedReferences=0,guards=0,zeroRows=0;
+    double maximum=0;
+    for(const auto size:{std::array<int,2>{{2,2}},std::array<int,2>{{4,3}}}){
+        const int nx=size[0],ny=size[1];auto mesh=completionMesh(nx,ny);
+        const auto patch=completionPatch(*mesh,true);
+        const auto completion=Completion::fromUniformPatch(*mesh,patch);
+        completion.validateFor(*mesh,patch);
+        check(completion.symmetryPlanes().empty(),"completion invented scalar symmetry");
+        check(completion.rows().size()==9*patch.nodes.size()+3*patch.edgeMidpoints.size()+patch.cellCenters.size(),
+            "completion rows lack unique shared ownership");
+        std::map<CompletionSource,std::size_t> outputRows;std::set<std::size_t> usedRows;
+        for(std::size_t r=0;r<completion.rows().size();++r){
+            const auto& row=completion.rows()[r];check(outputRows.emplace(sourceKey(row.kind,row.index,row.component),r).second,
+                "completion repeated shared output identity");
+            completionWeights(row.sourceWeights);
+            long double predicted=0;for(const auto& weight:row.sourceWeights)
+                predicted+=weight.coefficient*formalSource(patch,sourceKey(weight));
+            maximum=std::max(maximum,close(row.value,static_cast<double>(predicted),"completion retained sparse value",1e-12));
+        }
+        const CompletionReference reference(*mesh,patch,nx,ny);
+        std::vector<long double> rowWeights(completion.rows().size(),0);
+        for(int c=0;c<mesh->cellIndexNum();++c){
+            const auto expected=reference.cell(c);const auto actual=completion.physicalCellDofs(c);
+            const auto& indices=completion.cellRows(c);std::array<long double,49> lambda{};
+            const auto& cell=mesh->cells(mesh->cellIndexToLabel[c]);const auto center=cell.centerCoord();
+            for(int k=0;k<49;++k){
+                check(indices[k]<completion.rows().size(),"cell references foreign completion row");
+                const auto& row=completion.rows()[indices[k]];
+                check(actual[k]==row.value,"cell copied a different shared completion value");
+                if(!usedRows.insert(indices[k]).second)++sharedReferences;
+                maximum=std::max(maximum,close(actual[k],static_cast<double>(expected[k]),
+                    "independent arbitrary completion datum",3e-11));
+                lambda[k]=((17*k+13*c)%23-11)/13.L;rowWeights[indices[k]]+=lambda[k];
+                if(k%7>=5 || k/7>=5){
+                    ++newRows;for(const auto& source:row.sourceWeights)
+                        if(source.kind==Sensitivity::Kind::CellCenter){
+                            const auto q=mesh->cells(mesh->cellIndexToLabel[source.index]).centerCoord();
+                            if(q.x!=center.x || q.y!=center.y)++nonlocalCenters;
+                        }
+                }else {
+                    check(row.sourceWeights.size()==1 && row.sourceWeights[0].coefficient==1,
+                        "completion changed original 25 selectors");
+                }
+            }
+            const auto transpose=completionWeights(completion.pullbackCell(c,lambda));
+            Patch rate=patch;for(const auto& source:formalSources(rate))
+                addFormal(rate,source,static_cast<double>(-formalSource(rate,source)));
+            for(const auto& source:formalSources(rate)){
+                const auto [kind,index,component]=source;
+                addFormal(rate,source,((kind*19+index*7+component*11)%29-14)/17.);
+            }
+            const auto direct=CompletionReference(*mesh,rate,nx,ny).cell(c);
+            long double left=0,right=0;for(int k=0;k<49;++k)left+=lambda[k]*direct[k];
+            for(const auto& weight:transpose)right+=weight.second*formalSource(rate,weight.first);
+            maximum=std::max(maximum,close(static_cast<double>(right),static_cast<double>(left),
+                "independent completion cell transpose",3e-11));++transposeCases;++cells;
+        }
+        check(usedRows.size()==completion.rows().size(),"completion retains unused shared output rows");
+        Patch rate=patch;for(const auto& source:formalSources(rate))
+            addFormal(rate,source,static_cast<double>(-formalSource(rate,source)));
+        for(const auto& source:formalSources(rate)){
+            const auto [kind,index,component]=source;
+            addFormal(rate,source,((kind*11+index*13+component*3)%31-15)/19.);
+        }
+        const auto rates=completion.applyRates(rate);
+        check(rates.size()==completion.rows().size(),"completion rate layout differs from value layout");
+        const auto transpose=completionWeights(completion.pullbackRows(rowWeights));
+        long double left=0,right=0;
+        for(int c=0;c<mesh->cellIndexNum();++c){
+            const auto direct=CompletionReference(*mesh,rate,nx,ny).cell(c);
+            const auto& indices=completion.cellRows(c);
+            for(int k=0;k<49;++k)maximum=std::max(maximum,close(rates[indices[k]],
+                static_cast<double>(direct[k]),"independent completion applied source rate",3e-11));
+        }
+        for(std::size_t r=0;r<rates.size();++r)left+=rowWeights[r]*rates[r];
+        for(const auto& weight:transpose)right+=weight.second*formalSource(rate,weight.first);
+        maximum=std::max(maximum,close(static_cast<double>(right),static_cast<double>(left),
+            "completion shared-row transpose",3e-11));++transposeCases;
+        const auto sources=formalSources(patch);
+        for(std::size_t ordinal=0;ordinal<sources.size();++ordinal){
+            // Exhaust all 64 minimal-mesh sources; larger support only needs a
+            // representative per-kind/component set in addition to full E/rate.
+            if(nx!=2 && ordinal%11!=0 && ordinal+1!=sources.size())continue;
+            auto changed=patch;addFormal(changed,sources[ordinal],.125);
+            const auto perturbed=Completion::fromUniformPatch(*mesh,changed);
+            Patch delta=patch;for(const auto& source:sources)
+                addFormal(delta,source,static_cast<double>(-formalSource(delta,source)));
+            addFormal(delta,sources[ordinal],static_cast<double>(formalSource(changed,sources[ordinal])-formalSource(patch,sources[ordinal])));
+            for(int c=0;c<mesh->cellIndexNum();++c){
+                const auto direct=CompletionReference(*mesh,delta,nx,ny).cell(c);
+                const auto before=completion.physicalCellDofs(c),after=perturbed.physicalCellDofs(c);
+                const auto& indices=completion.cellRows(c);
+                for(int k=0;k<49;++k){
+                    long double sparse=0;for(const auto& weight:completion.rows()[indices[k]].sourceWeights)
+                        if(sourceKey(weight)==sources[ordinal])sparse+=weight.coefficient*formalSource(delta,sources[ordinal]);
+                    maximum=std::max({maximum,close(after[k]-before[k],static_cast<double>(direct[k]),
+                        "independent completion unit source perturbation",3e-11),
+                        close(static_cast<double>(sparse),static_cast<double>(direct[k]),
+                        "completion sparse source perturbation",3e-11)});++perturbations;
+                }
+            }
+        }
+        auto ownedInput=patch;const auto frozen=Completion::fromUniformPatch(*mesh,ownedInput);
+        const auto frozenCell=frozen.physicalCellDofs(0);
+        ownedInput.nodes[0].value+=.125;ownedInput.edgeMidpoints[0].value+=.125;
+        ownedInput.cellCenters.back()+=.125;
+        for(const auto& source:formalSources(patch))check(formalSource(frozen.sourcePatch(),source)==formalSource(patch,source),
+            "immutable completion borrows mutable formal source");
+        check(frozen.physicalCellDofs(0)==frozenCell,"mutated caller data changes immutable completion");
+        auto changed=patch;changed.cellCenters.back()+=.125;
+        completionRejects([&]{completion.validateFor(*mesh,changed);});++guards;
+        changed=patch;std::swap(changed.edgeMidpoints[0],changed.edgeMidpoints[1]);
+        completionRejects([&]{completion.validateFor(*mesh,changed);});++guards;
+        auto foreign=mesh->clone();foreign->verts(foreign->vertIndexToLabel[0]).setCoord({-.19,-.27});
+        completionRejects([&]{completion.validateFor(*foreign,patch);});++guards;
+        completionRejects([&]{completion.validateFor(*mesh,patch,{{0,mesh->minCoord.x}});});++guards;
+        auto shortRates=rate;shortRates.cellCenters.pop_back();
+        completionRejects([&]{completion.applyRates(shortRates);});++guards;
+    }
+    // Tensor Q4 has independent analytic high derivative data at exact sites.
+    auto mesh=completionMesh(4,3);const auto polynomial=completionPatch(*mesh,false);
+    const auto completed=Completion::fromUniformPatch(*mesh,polynomial);
+    constexpr int location[7]{0,1,2,0,2,0,2},order[7]{0,0,0,1,1,2,2};
+    for(int c=0;c<mesh->cellIndexNum();++c){
+        const auto& cell=mesh->cells(mesh->cellIndexToLabel[c]);
+        const auto lo=point(*mesh,mesh->verts(cell.cellToVert[0]).index());
+        const auto hi=point(*mesh,mesh->verts(cell.cellToVert[2]).index());const auto values=completed.physicalCellDofs(c);
+        for(int y=0;y<7;++y)for(int x=0;x<7;++x){
+            const Vector2D q{lo.x+(hi.x-lo.x)*location[x]*.5,lo.y+(hi.y-lo.y)*location[y]*.5};
+            maximum=std::max(maximum,close(values[x+7*y],static_cast<double>(
+                completionPolynomialDerivative(q,order[x],order[y])),"completion analytic tensor Q4 reproduction",3e-11));
+        }
+    }
+    auto symmetricMesh=completionMesh(2,2,false);auto symmetric=completionPatch(*symmetricMesh,true);
+    using Plane=Completion::SymmetryPlane;
+    const std::vector<Plane> planes{{0,symmetricMesh->minCoord.x},{0,symmetricMesh->maxCoord.x},
+        {1,symmetricMesh->minCoord.y},{1,symmetricMesh->maxCoord.y}};
+    for(int v=0;v<symmetricMesh->vertIndexNum();++v){const auto q=point(*symmetricMesh,v);
+        const bool x=q.x==symmetricMesh->minCoord.x || q.x==symmetricMesh->maxCoord.x;
+        const bool y=q.y==symmetricMesh->minCoord.y || q.y==symmetricMesh->maxCoord.y;
+        if(x)symmetric.nodes[v].dx=0;if(y)symmetric.nodes[v].dy=0;if(x||y)symmetric.nodes[v].dxy=0;
+    }
+    for(auto& edge:symmetric.edgeMidpoints){const auto q=point(*symmetricMesh,edge.vertices[0]);
+        if(horizontal(*symmetricMesh,edge.vertices)
+            ?q.y==symmetricMesh->minCoord.y || q.y==symmetricMesh->maxCoord.y
+            :q.x==symmetricMesh->minCoord.x || q.x==symmetricMesh->maxCoord.x)edge.normalDerivative=0;
+    }
+    const auto symmetry=Completion::fromUniformPatch(*symmetricMesh,symmetric,planes);
+    symmetry.validateFor(*symmetricMesh,symmetric,planes);
+    check(symmetry.symmetryPlanes()==planes,"completion lost explicit scalar symmetry");
+    for(const auto& row:symmetry.rows()){
+        if(row.kind!=Sensitivity::Kind::Vertex)continue;
+        const auto q=point(*symmetricMesh,row.index);
+        const bool oddX=row.component==7 && (q.x==symmetricMesh->minCoord.x || q.x==symmetricMesh->maxCoord.x);
+        const bool oddY=row.component==6 && (q.y==symmetricMesh->minCoord.y || q.y==symmetricMesh->maxCoord.y);
+        if(oddX||oddY){check(row.symmetryConstrained && row.value==0 && row.sourceWeights.empty(),
+            "completion odd high derivative is not an exact zero row");++zeroRows;}
+    }
+    const auto symmetricRates=symmetry.applyRates(symmetric);
+    for(std::size_t r=0;r<symmetry.rows().size();++r)if(symmetry.rows()[r].symmetryConstrained
+        &&symmetry.rows()[r].sourceWeights.empty())check(symmetricRates[r]==0,"constrained completion rate not exact zero");
+    auto bad=symmetric;bad.nodes[0].dx=1e-30;
+    completionRejects([&]{Completion::fromUniformPatch(*symmetricMesh,bad,planes);});++guards;
+    completionRejects([&]{symmetry.applyRates(bad);});++guards;
+    bad=symmetric;bad.nodes[0].dxy=1e-30;
+    completionRejects([&]{Completion::fromUniformPatch(*symmetricMesh,bad,planes);});++guards;
+    bad=symmetric;
+    for(auto& edge:bad.edgeMidpoints)if(!horizontal(*symmetricMesh,edge.vertices)
+        &&point(*symmetricMesh,edge.vertices[0]).x==symmetricMesh->minCoord.x){edge.normalDerivative=1e-30;break;}
+    completionRejects([&]{Completion::fromUniformPatch(*symmetricMesh,bad,planes);});++guards;
+    auto invalid=polynomial;invalid.activeCells.back()=0;
+    completionRejects([&]{Completion::fromUniformPatch(*mesh,invalid);});++guards;
+    invalid=polynomial;invalid.cellCenters[0]=std::numeric_limits<double>::quiet_NaN();
+    completionRejects([&]{Completion::fromUniformPatch(*mesh,invalid);});++guards;
+    invalid=polynomial;invalid.edgeMidpoints.push_back(invalid.edgeMidpoints.front());
+    completionRejects([&]{Completion::fromUniformPatch(*mesh,invalid);});++guards;
+    invalid=polynomial;invalid.cornerSectors.push_back({});
+    completionRejects([&]{Completion::fromUniformPatch(*mesh,invalid);});++guards;
+    auto insufficient=completionMesh(1,2);
+    const auto shortPatch=completionPatch(*insufficient,true);
+    completionRejects([&]{Completion::fromUniformPatch(*insufficient,shortPatch);});++guards;
+    auto adaptive=makeMesh(4,1);
+    const auto adaptivePatch=completionPatch(*adaptive,true);
+    completionRejects([&]{Completion::fromUniformPatch(*adaptive,adaptivePatch);});++guards;
+    check(cells==16&&newRows==24*cells&&perturbations>12544&&transposeCases==18
+        &&nonlocalCenters>0&&sharedReferences>0&&guards==20&&zeroRows==12,
+        "incomplete completion/sensitivity/constraint coverage");
+    std::cout<<"C2_COMPLETION_A,PASS,cells="<<cells<<",new24="<<newRows
+        <<",perturbed_rows="<<perturbations<<",transpose="<<transposeCases
+        <<",neighbor_centers="<<nonlocalCenters<<",shared_refs="<<sharedReferences
+        <<",zero_rows="<<zeroRows<<",rejects="<<guards<<",max_absolute="<<maximum<<'\n';
+}
+
+void uncoupledClosureOnly()
+{
+    for(bool radial:{false,true})for(int pattern:{0,1}){
+        auto m=makeMesh(4,pattern,radial,true);const Profile field=[=](Vector2D p){return q4(p,-1,radial);};
+        const auto p=primaryFor(*m,field,radial);const HermiteGalsTimeLayer clock{9,.2,.3,HermiteGalsTimeLayer::Position::Midpoint};
+        HermiteGalsCandidate candidate(*m,clock,p);const auto id=candidate.identity();
+        const auto result=closeHermiteGalsMixedAmr(*m,candidate);double mixed=0,skeleton=0,native=0;std::size_t axis=0;
+        check(result.report().masterVertices==p.vertices.size() && result.report().masterEdges==p.edges.size(),"short closure master inventory");
+        check(pattern?result.report().hangingVertices>0 && result.report().constrainedEdges>0:
+            result.report().hangingVertices==0 && result.report().constrainedEdges==0,"short closure topology route witness");
+        Patch patch;patch.activeCells.assign(m->cellIndexNum(),1);patch.nodes.resize(m->vertIndexNum());patch.cellCenters.resize(m->cellIndexNum());
+        for(std::size_t k=0;k<p.vertices.size();++k){const auto& v=p.vertices[k];const auto jet=result.skeleton().nodeJet(v.vertex);
+            check(jet[0]==v.phi && jet[1]==v.dx && jet[2]==v.dy,"short closure changed original master first jet");
+            mixed=std::max(mixed,close(result.vertexMixedDerivatives()[k],field(point(*m,v.vertex)).dxy,"short closure analytic mixed"));
+            patch.nodes[v.vertex]={v.phi,v.dx,v.dy,result.vertexMixedDerivatives()[k]};}
+        for(const auto& e:p.edges){const auto midpoint=result.skeleton().edgeMidpoint(e.vertices);
+            check(midpoint[0]==e.phi && midpoint[1]==e.dn,"short closure changed original master midpoint");
+            patch.edgeMidpoints.push_back({e.vertices,e.phi,e.dn});}
+        for(const auto& v:result.skeleton().vertices()){const auto actual=result.skeleton().nodeJet(v.index);const auto exact=field(point(*m,v.index));
+            skeleton=std::max({skeleton,close(actual[0],exact.value,"short skeleton analytic phi"),close(actual[1],exact.dx,"short skeleton analytic dx"),
+                close(actual[2],exact.dy,"short skeleton analytic dy"),close(actual[3],exact.dxy,"short skeleton analytic mixed")});
+            if(radial && point(*m,v.index).x==0){check(actual[1]==0 && actual[3]==0,"short closure lost exact axis parity");++axis;}}
+        if(radial)check(axis>0,"short closure missed actual radial axis");
+        for(int c:p.geometryCells)patch.cellCenters[c]=field(m->cells(m->cellIndexToLabel[c]).centerCoord()).value;
+        const auto scalar=LevelSetHermiteGeometry::Snapshot::fromNativeLeaves(*m,patch,radial);
+        for(int c:p.geometryCells){const auto bounds=scalar.nativeCellBounds(c);const auto width=bounds[1]-bounds[0];
+            const auto center=m->cells(m->cellIndexToLabel[c]).centerCoord();
+            close(scalar.scalarJetInNativeCell(c,center).value,patch.cellCenters[c],"short native Q4 original center");
+            for(const Vector2D x:{center,bounds[0]+Vector2D{.3125*width.x,.6875*width.y}}){const auto actual=scalar.scalarJetInNativeCell(c,x);const auto exact=field(x);
+                native=std::max({native,close(actual.value,exact.value,"short final native Q4 phi"),close(actual.dx,exact.dx,"short final native Q4 dx"),
+                    close(actual.dy,exact.dy,"short final native Q4 dy"),close(actual.dxy,exact.dxy,"short final native Q4 mixed")});}}
+        const double compatibility=directCompatibility(*m,p,result),trace=pattern?c1(*m,result.skeleton()):0;
+        check(result.report().algebraicResidual<=1e-12 && result.report().compatibilityResidual<=1e-12,"short closure original residual gates");
+        unchanged(p,candidate.primary());check(candidate.identity()==id && result.primaryIdentity()==id && !candidate.hasGeometry()
+            && result.timeLayer().step==clock.step && result.timeLayer().time()==clock.time(),"short closure source/clock isolation");
+        std::cout<<"AMR_UNCOUPLED_Q4,"<<(radial?"RZ":"XY")<<','<<pattern<<','<<m->cellIndexNum()<<','<<mixed<<','<<skeleton<<','<<native
+            <<','<<compatibility<<','<<trace<<','<<result.report().compatibilityNonzeros<<",PASS\n";
+    }
+    declaredSymmetry(true);failures();
+    auto m=makeMesh(4,0);const auto p=primaryFor(*m,[](Vector2D x){return q4(x);});HermiteGalsCandidate candidate(*m,{},p);const auto id=candidate.identity();
+    const int rounding=std::fegetround();check(rounding==FE_TONEAREST,"short closure requires initial nearest rounding");
+    check(std::fesetround(FE_DOWNWARD)==0 && std::fegetround()==FE_DOWNWARD,"short closure could not set actual downward rounding");
+    try{rejects([&]{closeHermiteGalsMixedAmr(*m,candidate);},"round-to-nearest");}
+    catch(...){std::fesetround(rounding);throw;}
+    check(std::fesetround(rounding)==0 && std::fegetround()==rounding,"short closure could not restore rounding");
+    unchanged(p,candidate.primary());check(candidate.identity()==id && !candidate.hasGeometry(),"FP rejected closure polluted source");
+    std::cout<<"AMR_UNCOUPLED_FP,ACTUAL_DOWNWARD_REJECTED,SOURCE_UNCHANGED,PASS\n";
+}
+}
+int main(int argc,char** argv)
+{
+    try{std::cout<<std::setprecision(17);
+        if(argc==2 && std::string(argv[1])=="--c2-completion-only"){c2CompletionContract();return 0;}
+        if(argc==2 && std::string(argv[1])=="--mixed-sensitivity-only"){mixedSensitivityContract();return 0;}
+        if(argc==2 && std::string(argv[1])=="--uncoupled-closure-only"){uncoupledClosureOnly();std::cout<<"I06b uncoupled/general closure short contract PASS\n";return 0;}
+        reproduction();arbitraryAndSensitivity();activeSupport();transport(false);transport(true);failures();convergence(false);convergence(true);declaredSymmetry();mixedSensitivityContract();c2CompletionContract();}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
     std::cout<<"I06b AMR compact closure/master-only transport contract PASS; no phase/bubble/geometry publication\n";return 0;
 }

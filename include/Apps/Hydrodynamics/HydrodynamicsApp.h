@@ -1,18 +1,12 @@
 #pragma once
-
-#include "Runtime/IModule.h"
-#include "Runtime/RunConfig.h"
-#include <string>
-
-// Standalone Hydro driver registered through SingleModule for CLI compatibility.
-// Owns the main loop; no Runtime dependency remains in the numerical Hydro module.
-class HydrodynamicsApp : public IModule
-{
+#include "IApp.h"
+#include "RunConfig.h"
+// Formal native HYDRO / FirstJet App; clock, transactions and IO only.
+class HydrodynamicsApp final:public IApp {
 public:
-    explicit HydrodynamicsApp(const RunConfig& cfg) : cfg_(cfg) {}
-    std::string name() const override { return "Hydrodynamics"; }
-    int run() override;
-
+    explicit HydrodynamicsApp(const RunConfig& c):config_(c){}
+    std::string name()const override{return "Hydrodynamics";}
+    int run()override;
 private:
-    RunConfig cfg_;
+    RunConfig config_;
 };

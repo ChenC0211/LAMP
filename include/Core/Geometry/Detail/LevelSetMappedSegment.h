@@ -16,12 +16,13 @@
 #include <type_traits>
 #include <utility>
 
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
 namespace MappedHermiteSegment
 {
+struct CardinalQuarticLayout;
 struct Phase { Ratio begin, end; bool negative; };
 struct ZeroTrace {Chart chart;std::vector<CellAddress> cells;};
 struct RootRecord
@@ -108,7 +109,7 @@ public:
         const auto child=MappedHermiteRootRefinement::refine(parent.lower,parent.upper,
             [&](const Ratio& a,const Ratio& b) {
                 auto p=polynomial({parent.info.cellI,parent.info.cellJ,parent.info.nativeCellIndex},a,b);
-                if constexpr(std::is_same_v<Layout,NativeQuarticCellLayout>)
+                if constexpr(std::is_same_v<Layout,NativeQuarticCellLayout> || std::is_same_v<Layout,NativeC2MacroCellLayout> || std::is_same_v<Layout,CardinalQuarticLayout>)
                     if(hasMultipleRootCharts)p=PolynomialSquareFree::squareFree(p).polynomial;
                 // The simple-root refinement certificate belongs to the
                 // square-free factor here; only its same-root bracket is used.
@@ -281,7 +282,7 @@ private:
         try { return isolateEndpointRelative(p); }
         catch (const std::exception& outer)
         {
-            if constexpr(std::is_same_v<Layout,NativeQuarticCellLayout>) {
+            if constexpr(std::is_same_v<Layout,NativeQuarticCellLayout> || std::is_same_v<Layout,NativeC2MacroCellLayout> || std::is_same_v<Layout,CardinalQuarticLayout>) {
                 // Exact algebraic deflation supplies distinct zeros only.
                 // If bounded expansion arithmetic cannot certify a factor,
                 // retain the existing same-polynomial subdivision below.
@@ -372,7 +373,7 @@ private:
         }
         Chart chart{begin,end};
         auto p = polynomial(owner,chart.begin,chart.end);
-        if constexpr(std::is_same_v<Layout,NativeQuarticCellLayout>)if(permitZero_){
+        if constexpr(std::is_same_v<Layout,NativeQuarticCellLayout> || std::is_same_v<Layout,NativeC2MacroCellLayout>)if(permitZero_){
             const auto zero=[](const Polynomial& q){return std::all_of(q.begin(),q.end(),
                 [](const Expansion& v){return Exact::sign(v)==0;});};
             if(zero(p)){
@@ -490,6 +491,7 @@ using Query = BasicQuery<UniformCellLayout>;
 using QuarticQuery = BasicQuery<QuarticCellLayout>;
 using NativeQuery = BasicQuery<NativeCellLayout>;
 using NativeQuarticQuery = BasicQuery<NativeQuarticCellLayout>;
+using NativeC2MacroQuery = BasicQuery<NativeC2MacroCellLayout>;
 }
 }
 }

@@ -16,7 +16,7 @@ void PicCheckpointWriter::writeCollisions(const std::filesystem::path& directory
     const auto state = collisions.rngState();
     const auto path = directory / PicCheckpointStore::collisionName;
     auto out = FileIO::openOutputFile(path, std::ios::out | std::ios::trunc);
-    out << "QUANTUM_MCC_RNG 1\n" << static_cast<int>(state.mode) << ' ' << state.seed << ' ' << state.applyCount << '\n';
+    out << "LAMP_MCC_RNG 1\n" << static_cast<int>(state.mode) << ' ' << state.seed << ' ' << state.applyCount << '\n';
     FileIO::finishOutputFile(out, path);
 }
 

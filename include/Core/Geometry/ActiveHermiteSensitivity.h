@@ -2,7 +2,7 @@
 
 #include <array>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // A CornerSector owns a separate replacement jet, not a regular-node DOF.
 // HoldFixed differentiates shared patch data while ALL declared sector jets stay
@@ -37,4 +37,4 @@ struct ActiveQuarticHermiteSensitivity
     int component=0;
     long double coefficient=0.0L;
 };
-} // namespace Quantum::Geometry
+} // namespace LAMP::Geometry

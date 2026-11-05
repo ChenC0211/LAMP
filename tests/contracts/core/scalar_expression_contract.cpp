@@ -3,7 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 
-using E=Quantum::ScalarExpression;
+using E=LAMP::ScalarExpression;
 static void near(double value,double reference){if(std::abs(value-reference)>1e-12*std::max(1.,std::abs(reference)))throw std::runtime_error("expression value/chain-rule mismatch");}
 int main()
 {

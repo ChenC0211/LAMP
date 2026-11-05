@@ -1,7 +1,7 @@
 #include "Core/Geometry/ParametricBoundary.h"
 #include <set>
 
-namespace Quantum::Geometry::Parametric {
+namespace LAMP::Geometry::Parametric {
 namespace {
 struct Box {std::array<double,2> x,y;};
 Box box(const Arc& a){return {range(a.coordinate(0)),range(a.coordinate(1))};}

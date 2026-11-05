@@ -11,8 +11,233 @@
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
+#include <cfenv>
+#include <cerrno>
+#include <exception>
+#if defined(_M_X64) || defined(__SSE2__)
+#include <xmmintrin.h>
+#endif
 
 using namespace std;
+
+namespace
+{
+// Optional integer-only execution storage must not change the caller's FP/errno.
+class NativeMaintenanceEnvironment
+{
+    std::fenv_t native_{};int error_=errno;bool restore_=true;
+#if defined(_M_X64) || defined(__SSE2__)
+    unsigned csr_=_mm_getcsr();
+#endif
+public:
+    bool captured=std::fegetenv(&native_)==0;
+    void dismiss() noexcept {restore_=false;}
+    ~NativeMaintenanceEnvironment() noexcept
+    {
+        if(!restore_)return;
+        if(captured&&std::fesetenv(&native_)!=0)std::terminate();
+#if defined(_M_X64) || defined(__SSE2__)
+        _mm_setcsr(csr_);
+#endif
+        errno=error_;
+    }
+};
+}
+struct QuadtreeMesh::NativeAdaptWorkspace
+{
+    NativeAdaptationMaintenanceReport* report=nullptr;bool valid=true,transferStarted=false;
+    template<class T>struct Pool
+    {
+        LAMP::Mesh::Detail::EntityPool<T>* records=nullptr;const void* recordOwner=nullptr;int maximum=0,leafCount=0,freeCount=0,dirtyCount=0,priorCount=0,lastLive=-1;
+        std::unique_ptr<unsigned char[]> live,leaf,marked;
+        std::unique_ptr<int[]> leaves,free,dirty,scratch,prior;
+        void allocate(LAMP::Mesh::Detail::EntityPool<T>& objects,int capacity)
+        {
+            records=&objects;recordOwner=objects.identity();maximum=capacity;const auto n=static_cast<std::size_t>(capacity);
+            live=std::make_unique<unsigned char[]>(n);leaf=std::make_unique<unsigned char[]>(n);
+            marked=std::make_unique<unsigned char[]>(n);
+            leaves=std::unique_ptr<int[]>(new int[n]);free=std::unique_ptr<int[]>(new int[n]);
+            dirty=std::unique_ptr<int[]>(new int[n]);scratch=std::unique_ptr<int[]>(new int[n]);prior=std::unique_ptr<int[]>(new int[n]);
+        }
+        bool inspect(int ptr,int count,const int* indices,const int* labels) noexcept
+        {
+            if(!records||recordOwner!=records->identity()||records->capacity()!=maximum||!labels||ptr<0||ptr>maximum||count<0||count>maximum||(count&&!indices))return false;
+            for(int i=0;i<maximum;++i){const auto& t=records->peek(i);
+                if(t.label()!=-1){if(t.label()!=i||i>=ptr)return false;live[i]=1;lastLive=i;
+                    if(t.son[0]==-1){if(leafCount>=count||indices[leafCount]!=i||t.index()!=leafCount)return false;
+                        leaf[i]=1;leaves[leafCount++]=i;}}
+                else{if(labels[freeCount]!=i)return false;free[freeCount++]=i;}}
+            return leafCount==count;
+        }
+        bool touch(int i,NativeAdaptationMaintenanceReport& r) noexcept
+        {
+            if(i<0||i>=maximum)return false;
+            if(!marked[i]){if(dirtyCount>=maximum)return false;marked[i]=1;dirty[dirtyCount++]=i;++r.journaledSlots;}
+            return true;
+        }
+        int labelOf(const void* object) const noexcept
+        {return records&&recordOwner==records->identity()?records->labelOf(object):-1;}
+        void merge(bool forLeaf)
+        {
+            auto& list=forLeaf?leaves:free;auto& count=forLeaf?leafCount:freeCount;
+            int i=0,j=0,out=0;
+            while(i<count||j<dirtyCount){
+                const int a=i<count?list[i]:maximum,b=j<dirtyCount?dirty[j]:maximum,key=std::min(a,b);
+                const bool changed=b==key;
+                const bool keep=changed?(forLeaf?leaf[key]!=0:live[key]==0):true;
+                if(keep)scratch[out++]=key;
+                if(a==key)++i;if(b==key)++j;
+            }
+            list.swap(scratch);count=out;
+        }
+        bool refresh(int ptr,NativeAdaptationMaintenanceReport& r)
+        {
+            if(ptr<0||ptr>maximum)return false;
+            if(dirtyCount==0)return lastLive<ptr;
+            std::sort(dirty.get(),dirty.get()+dirtyCount);
+            for(int k=0;k<dirtyCount;++k){const int i=dirty[k];const auto& t=records->peek(i);
+                if(t.label()!=-1&&t.label()!=i)return false;
+                const bool nextLive=t.label()!=-1,nextLeaf=nextLive&&t.son[0]==-1;
+                if(nextLive!=(live[i]!=0)||nextLeaf!=(leaf[i]!=0))++r.changedMembershipSlots;
+                live[i]=static_cast<unsigned char>(nextLive);leaf[i]=static_cast<unsigned char>(nextLeaf);
+                if(nextLive)lastLive=std::max(lastLive,i);
+            }
+            while(lastLive>=0&&!live[lastLive])--lastLive;
+            if(lastLive>=ptr)return false; // Literal statistics handles an unproven binding.
+            merge(true);merge(false);return true;
+        }
+        void exportIndices(int& count,int*& indices,NativeAdaptationMaintenanceReport& r)
+        {
+            // Same allocation/publication order as the original count().
+            count=leafCount;int* next=new int[count];
+            for(int i=0;i<count;++i){next[i]=leaves[i];(*records)[leaves[i]].setIndex(i);}
+            delete[] indices;indices=next;r.exportedIndexEntries+=static_cast<std::size_t>(count);r.actuallyUsed=true;
+        }
+        void exportFree(int& ptr,int* labels,NativeAdaptationMaintenanceReport& r) noexcept
+        {
+            std::copy_n(free.get(),freeCount,labels);if(lastLive>=0)ptr=lastLive+1;
+            r.exportedFreeEntries+=static_cast<std::size_t>(freeCount);r.actuallyUsed=true;
+        }
+        void rememberIndices() noexcept
+        {std::copy_n(leaves.get(),leafCount,prior.get());priorCount=leafCount;}
+        void resetJournal() noexcept
+        {for(int k=0;k<dirtyCount;++k)marked[dirty[k]]=0;dirtyCount=0;}
+        void clearTransfer(NativeAdaptationMaintenanceReport& r) noexcept
+        {
+            if constexpr(!std::is_same_v<T,Vert>){
+                const auto clear=[&](int i){auto& t=(*records)[i];t.setPreIndex(-1);t.relatedPreIndex.clear();t.relatedPreCoord.clear();++r.clearedTransferSlots;};
+                for(int k=0;k<priorCount;++k){const int i=prior[k];clear(i);marked[i]=0;}
+                for(int k=0;k<dirtyCount;++k){const int i=dirty[k];if(marked[i]){clear(i);marked[i]=0;}}
+                for(int i=0;i<leafCount;++i)(*records)[leaves[i]].setPreIndex(i);
+            }
+            resetJournal();rememberIndices();
+        }
+        void release() noexcept
+        {live.reset();leaf.reset();marked.reset();leaves.reset();free.reset();dirty.reset();scratch.reset();prior.reset();}
+    };
+    Pool<Vert> vertices;Pool<Edge> horizontal,vertical;Pool<Cell> cells;
+    ~NativeAdaptWorkspace() noexcept
+    {
+        NativeMaintenanceEnvironment environment;
+        vertices.release();horizontal.release();vertical.release();cells.release();
+    }
+    void fail() noexcept
+    {
+        valid=false;if(report)report->fallback=true;
+        NativeMaintenanceEnvironment environment;
+        vertices.release();horizontal.release();vertical.release();cells.release();
+    }
+};
+std::shared_ptr<QuadtreeMesh::NativeAdaptWorkspace> QuadtreeMesh::beginNativeAdaptationMaintenance(bool requested) noexcept
+{
+    nativeAdaptationReport_=NativeAdaptationMaintenanceReport{};nativeAdaptationReport_.requested=requested;
+    if(!requested)return {};
+    NativeMaintenanceEnvironment environment;
+    if(!environment.captured){nativeAdaptationReport_.fallback=true;return {};}
+    try{
+        const int limits[]{maxVertNum_,maxHEdgeNum_,maxVEdgeNum_,maxCellNum_};
+        std::size_t bytes=sizeof(NativeAdaptWorkspace)+256u+4u*8u*64u;
+        constexpr std::size_t bytesPerSlot=3u*sizeof(unsigned char)+5u*sizeof(int);
+        if(bytes>nativeAdaptationReport_.workspaceLimitBytes){nativeAdaptationReport_.fallback=true;return {};}
+        // Eligibility includes required storage-owned address tables conservatively;
+        // these are shared persistent stock, not another workspace allocation.
+        const std::size_t addressMetadata[]{verts_.addressMetadataBytes(),hEdges_.addressMetadataBytes(),
+            vEdges_.addressMetadataBytes(),cells_.addressMetadataBytes()};
+        for(const auto n:addressMetadata){
+            if(n>nativeAdaptationReport_.workspaceLimitBytes-bytes){nativeAdaptationReport_.fallback=true;return {};}
+            bytes+=n;
+        }
+        for(int n:limits){if(n<=0||static_cast<std::size_t>(n)>(nativeAdaptationReport_.workspaceLimitBytes-bytes)/bytesPerSlot){nativeAdaptationReport_.fallback=true;return {};}
+            bytes+=static_cast<std::size_t>(n)*bytesPerSlot;}
+        auto w=std::make_shared<NativeAdaptWorkspace>();w->report=&nativeAdaptationReport_;
+        w->vertices.allocate(verts_,maxVertNum_);w->horizontal.allocate(hEdges_,maxHEdgeNum_);
+        w->vertical.allocate(vEdges_,maxVEdgeNum_);w->cells.allocate(cells_,maxCellNum_);
+        if(!w->vertices.inspect(vertPtr_,vertIndexNum_,vertIndexToLabel,vertLabelSpace_)
+            ||!w->horizontal.inspect(hEdgePtr_,hEdgeIndexNum_,hEdgeIndexToLabel,hEdgeLabelSpace_)
+            ||!w->vertical.inspect(vEdgePtr_,vEdgeIndexNum_,vEdgeIndexToLabel,vEdgeLabelSpace_)
+            ||!w->cells.inspect(cellPtr_,cellIndexNum_,cellIndexToLabel,cellLabelSpace_)){
+            nativeAdaptationReport_.fallback=true;return {};}
+        nativeAdaptationReport_.eligible=true;nativeAdaptationReport_.workspaceBytes=bytes;return w;
+    }catch(...){nativeAdaptationReport_.fallback=true;return {};}
+}
+const NativeAdaptationMaintenanceReport& QuadtreeMesh::nativeAdaptationMaintenanceReport() const noexcept
+{return nativeAdaptationReport_;}
+std::array<NativeEntityPoolStorageReport,4> QuadtreeMesh::entityPoolStorageReport() const noexcept
+{
+    const auto report=[](const auto& pool){
+        using Entity=typename std::decay_t<decltype(pool)>::value_type;
+        const auto stock=pool.storageStatistics();
+        return NativeEntityPoolStorageReport{stock[0],stock[1],stock[2],stock[1]*sizeof(Entity),pool.denseMode()};
+    };
+    return {report(verts_),report(hEdges_),report(vEdges_),report(cells_)};
+}
+void QuadtreeMesh::recordNativeWrite(NativeAdaptWorkspace* w,Cell* t) noexcept
+{if(w&&w->valid){const int label=w->cells.labelOf(t);if(label<0||!w->cells.touch(label,*w->report))w->fail();}}
+void QuadtreeMesh::recordNativeWrite(NativeAdaptWorkspace* w,Vert* t) noexcept
+{if(w&&w->valid){const int label=w->vertices.labelOf(t);if(label<0||!w->vertices.touch(label,*w->report))w->fail();}}
+void QuadtreeMesh::recordNativeWrite(NativeAdaptWorkspace* w,Edge* t) noexcept
+{
+    if(!w||!w->valid)return;
+    const int h=w->horizontal.labelOf(t);
+    if(h>=0){if(!w->horizontal.touch(h,*w->report))w->fail();}
+    else{const int v=w->vertical.labelOf(t);if(v<0||!w->vertical.touch(v,*w->report))w->fail();}
+}
+void QuadtreeMesh::recordNativeCellEdges(NativeAdaptWorkspace* w,const Cell& c) noexcept
+{
+    if(!w||!w->valid)return;
+    for(int side=0;side<2;++side)for(int half=0;half<2;++half){const int h=c.cellToHEdge[side][half],v=c.cellToVEdge[side][half];
+        if(h>=0){if(h>=maxHEdgeNum_)w->fail();else recordNativeWrite(w,&hEdges_[h]);}
+        if(v>=0){if(v>=maxVEdgeNum_)w->fail();else recordNativeWrite(w,&vEdges_[v]);}}
+}
+void QuadtreeMesh::prepareTransferIndices(NativeAdaptWorkspace* w)
+{
+    if(!w||!w->valid){prepareTransferIndices();return;}
+    if(!w->transferStarted){
+        prepareTransferIndices();w->vertices.rememberIndices();w->horizontal.rememberIndices();w->vertical.rememberIndices();w->cells.rememberIndices();
+        w->transferStarted=true;nativeAdaptationReport_.clearedTransferSlots+=cells_.materializedCount()+hEdges_.materializedCount()+vEdges_.materializedCount();return;
+    }
+    w->vertices.clearTransfer(nativeAdaptationReport_);w->horizontal.clearTransfer(nativeAdaptationReport_);
+    w->vertical.clearTransfer(nativeAdaptationReport_);w->cells.clearTransfer(nativeAdaptationReport_);
+    nativeAdaptationReport_.actuallyUsed=true;
+}
+bool QuadtreeMesh::updateNativeLabelSpaces(NativeAdaptWorkspace* w) noexcept
+{
+    if(!w||!w->valid)return false;
+    w->vertices.exportFree(vertPtr_,vertLabelSpace_,nativeAdaptationReport_);
+    w->horizontal.exportFree(hEdgePtr_,hEdgeLabelSpace_,nativeAdaptationReport_);
+    w->vertical.exportFree(vEdgePtr_,vEdgeLabelSpace_,nativeAdaptationReport_);
+    w->cells.exportFree(cellPtr_,cellLabelSpace_,nativeAdaptationReport_);return true;
+}
+bool QuadtreeMesh::refreshNativeMembership(NativeAdaptWorkspace* w)
+{
+    if(!w||!w->valid)return false;
+    if(!w->vertices.refresh(vertPtr_,nativeAdaptationReport_)
+        ||!w->horizontal.refresh(hEdgePtr_,nativeAdaptationReport_)
+        ||!w->vertical.refresh(vEdgePtr_,nativeAdaptationReport_)
+        ||!w->cells.refresh(cellPtr_,nativeAdaptationReport_)){w->fail();return false;}
+    return true;
+}
+
 
 QuadtreeMesh::QuadtreeMesh(const DictionaryMesh& dictMesh) : 
     BackgroundMesh(dictMesh),
@@ -23,7 +248,8 @@ QuadtreeMesh::QuadtreeMesh(const DictionaryMesh& dictMesh) :
     maxInitialIterations_(dictMesh.maxInitialIterations),
     C_Lipschitz(dictMesh.C_Lipschitz)
 {
-    setLevelSetCount(dictMesh.levelSetCount);
+    // BackgroundMesh already preserved the explicit zero-storage constructor opt-in.
+    if (dictMesh.levelSetCount != 0) setLevelSetCount(dictMesh.levelSetCount);
     minLevel_neg = dictMesh.minLevel_neg;
     minLevel_pos = dictMesh.minLevel_pos;
     maxLevel_local = dictMesh.maxLevel_local;
@@ -80,31 +306,34 @@ std::unique_ptr<QuadtreeMesh> QuadtreeMesh::clone() const
     // slots in the candidate are deliberately not copies of retired entities.
     // Rebuild the free-label PREFIX from occupancy; the unused suffix of the
     // source free-list may hold legacy/stale entries. Parent records are retained.
-    const auto copyEntities = [this](const auto* source, int capacity, auto*& destination,
-                                  int destinationCapacity, int*& freeLabels)
+    const auto copyEntities = [this](const auto& source, int capacity, auto& destination,
+                                   int destinationCapacity, int*& freeLabels)
     {
-        using Entity = std::remove_const_t<std::remove_pointer_t<decltype(source)>>;
-        auto records = std::make_unique<Entity[]>(destinationCapacity);
+        using Pool=std::decay_t<decltype(destination)>;
+        Pool records;
+        if(levelSetCount_==0)records.resetLazy(destinationCapacity,0);
+        else records.resetDense(destinationCapacity);
         auto labels = std::make_unique<int[]>(destinationCapacity);
         int freeCount = 0;
         for (int label = 0; label < destinationCapacity; ++label)
         {
-            if (label < capacity && source[label].label() != -1)
+            if (label < capacity && source.peek(label).label() != -1)
             {
-                if (source[label].label() != label)
+                if (source.peek(label).label() != label)
                     throw std::runtime_error("cannot clone inconsistent quadtree storage labels");
-                records[label] = source[label];
+                records[label] = source.peek(label);
             }
             else
             {
-                records[label].setLabel(-1);
-                records[label].ensureLevelSetSize(static_cast<std::size_t>(levelSetCount_));
+                if(levelSetCount_!=0){
+                    records[label].setLabel(-1);
+                    records[label].ensureLevelSetSize(static_cast<std::size_t>(levelSetCount_));
+                }
                 labels[freeCount++] = label;
             }
         }
-        // Publish this pair only when complete; result owns earlier pairs if
-        // allocation or an entity/vector copy throws later in the clone.
-        destination = records.release();
+        // Unique target chunks and complete free prefix publish together.
+        destination.swap(records);
         freeLabels = labels.release();
     };
     copyEntities(verts_, maxVertNum_, result->verts_, result->maxVertNum_, result->vertLabelSpace_);
@@ -174,8 +403,8 @@ void QuadtreeMesh::swapStorage(QuadtreeMesh& candidate)
         || Nx != candidate.Nx || Ny != candidate.Ny || levelSetCount_ != candidate.levelSetCount_)
         throw std::invalid_argument("quadtree storage exchange requires the same background domain, lattice and level-set count");
     using std::swap;
-    swap(verts_, candidate.verts_); swap(hEdges_, candidate.hEdges_);
-    swap(vEdges_, candidate.vEdges_); swap(cells_, candidate.cells_);
+    verts_.swap(candidate.verts_); hEdges_.swap(candidate.hEdges_);
+    vEdges_.swap(candidate.vEdges_); cells_.swap(candidate.cells_);
     swap(vertIndexToLabel, candidate.vertIndexToLabel); swap(hEdgeIndexToLabel, candidate.hEdgeIndexToLabel);
     swap(vEdgeIndexToLabel, candidate.vEdgeIndexToLabel); swap(cellIndexToLabel, candidate.cellIndexToLabel);
     swap(vertIndexNum_, candidate.vertIndexNum_); swap(hEdgeIndexNum_, candidate.hEdgeIndexNum_);
@@ -192,39 +421,50 @@ void QuadtreeMesh::swapStorage(QuadtreeMesh& candidate)
     swap(C_Lipschitz, candidate.C_Lipschitz);
     minLevel_neg.swap(candidate.minLevel_neg); minLevel_pos.swap(candidate.minLevel_pos);
     maxLevel_local.swap(candidate.maxLevel_local); nCellsPerLevel.swap(candidate.nCellsPerLevel);
+    swap(nativeAdaptationReport_,candidate.nativeAdaptationReport_);
     negFaceVerts.swap(candidate.negFaceVerts); posFaceVerts.swap(candidate.posFaceVerts);
 }
 
 void QuadtreeMesh::resizeMemory()
 {
-    Vert* tempVerts;
-    Edge* tempHEdges;
-    Edge* tempVEdges;
-    Cell* tempCells;
+    LAMP::Mesh::Detail::EntityPool<Vert> tempVerts;
+    LAMP::Mesh::Detail::EntityPool<Edge> tempHEdges;
+    LAMP::Mesh::Detail::EntityPool<Edge> tempVEdges;
+    LAMP::Mesh::Detail::EntityPool<Cell> tempCells;
 
-    tempVerts = new Vert[maxVertNum_];
-    tempHEdges = new Edge[maxHEdgeNum_];
-    tempVEdges = new Edge[maxVEdgeNum_];
-    tempCells = new Cell[maxCellNum_];
+    if (levelSetCount_ == 0)
+    {
+        tempVerts.resetLazy(maxVertNum_, 0);
+        tempHEdges.resetLazy(maxHEdgeNum_, 0);
+        tempVEdges.resetLazy(maxVEdgeNum_, 0);
+        tempCells.resetLazy(maxCellNum_, 0);
+    }
+    else
+    {
+        tempVerts.resetDense(maxVertNum_);
+        tempHEdges.resetDense(maxHEdgeNum_);
+        tempVEdges.resetDense(maxVEdgeNum_);
+        tempCells.resetDense(maxCellNum_);
+    }
 
     for (int i = 0; i < vertIndexNum_; i++)
     {
-        tempVerts[i] = verts_[i];
+        tempVerts[i] = verts_.peek(i);
     }
 
     for (int i = 0; i < hEdgeIndexNum_; i++)
     {
-        tempHEdges[i] = hEdges_[i];
+        tempHEdges[i] = hEdges_.peek(i);
     }
 
     for (int i = 0; i < vEdgeIndexNum_; i++)
     {
-        tempVEdges[i] = vEdges_[i];
+        tempVEdges[i] = vEdges_.peek(i);
     }
 
     for (int i = 0; i < cellIndexNum_; i++)
     {
-        tempCells[i] = cells_[i];
+        tempCells[i] = cells_.peek(i);
     }
 
     vertLabelSpace_ = new int[maxVertNum_]{};
@@ -257,15 +497,11 @@ void QuadtreeMesh::resizeMemory()
         cellLabelSpace_[i] = cellPtr_ + i;
     }
 
-    delete[] verts_;
-    delete[] hEdges_;
-    delete[] vEdges_;
-    delete[] cells_;
 
-    verts_ = tempVerts;
-    hEdges_ = tempHEdges;
-    vEdges_ = tempVEdges;
-    cells_ = tempCells;
+    verts_.swap(tempVerts);
+    hEdges_.swap(tempHEdges);
+    vEdges_.swap(tempVEdges);
+    cells_.swap(tempCells);
 
     // BackgroundMesh hint-based queries index cells_ by label, so keep an accurate
     // allocated label-space capacity after buffer growth.
@@ -274,20 +510,24 @@ void QuadtreeMesh::resizeMemory()
     vEdgeLabelCapacity_ = maxVEdgeNum_;
     cellLabelCapacity_ = maxCellNum_;
 
-    tempVerts = NULL;
-    tempHEdges = NULL;
-    tempVEdges = NULL;
-    tempCells = NULL;
+    tempVerts.clear();
+    tempHEdges.clear();
+    tempVEdges.clear();
+    tempCells.clear();
 
-    const std::size_t n = static_cast<std::size_t>(std::max(1, levelSetCount_));
-    for (int i = 0; i < maxVertNum_; ++i)
-        verts_[i].ensureLevelSetSize(n);
-    for (int i = 0; i < maxHEdgeNum_; ++i)
-        hEdges_[i].ensureLevelSetSize(n);
-    for (int i = 0; i < maxVEdgeNum_; ++i)
-        vEdges_[i].ensureLevelSetSize(n);
-    for (int i = 0; i < maxCellNum_; ++i)
-        cells_[i].ensureLevelSetSize(n);
+    // Accessing every LS-free label here would materialize the unused chunks.
+    if (levelSetCount_ != 0)
+    {
+        const std::size_t n = static_cast<std::size_t>(std::max(1, levelSetCount_));
+        for (int i = 0; i < maxVertNum_; ++i)
+            verts_[i].ensureLevelSetSize(n);
+        for (int i = 0; i < maxHEdgeNum_; ++i)
+            hEdges_[i].ensureLevelSetSize(n);
+        for (int i = 0; i < maxVEdgeNum_; ++i)
+            vEdges_[i].ensureLevelSetSize(n);
+        for (int i = 0; i < maxCellNum_; ++i)
+            cells_[i].ensureLevelSetSize(n);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -301,27 +541,33 @@ void QuadtreeMesh::prepareTransferIndices()
 #endif
     for (int i = 0; i < maxCellNum_; ++i)
     {
-        cells_[i].setPreIndex(-1);
-        cells_[i].relatedPreIndex.clear();
-        cells_[i].relatedPreCoord.clear();
+        if(auto* record=cells_.materialized(i)){
+            record->setPreIndex(-1);
+            record->relatedPreIndex.clear();
+            record->relatedPreCoord.clear();
+        }
     }
 #ifdef _OPENMP
 #pragma omp parallel for if(useOmp)
 #endif
     for (int i = 0; i < maxHEdgeNum_; ++i)
     {
-        hEdges_[i].setPreIndex(-1);
-        hEdges_[i].relatedPreIndex.clear();
-        hEdges_[i].relatedPreCoord.clear();
+        if(auto* record=hEdges_.materialized(i)){
+            record->setPreIndex(-1);
+            record->relatedPreIndex.clear();
+            record->relatedPreCoord.clear();
+        }
     }
 #ifdef _OPENMP
 #pragma omp parallel for if(useOmp)
 #endif
     for (int i = 0; i < maxVEdgeNum_; ++i)
     {
-        vEdges_[i].setPreIndex(-1);
-        vEdges_[i].relatedPreIndex.clear();
-        vEdges_[i].relatedPreCoord.clear();
+        if(auto* record=vEdges_.materialized(i)){
+            record->setPreIndex(-1);
+            record->relatedPreIndex.clear();
+            record->relatedPreCoord.clear();
+        }
     }
 #ifdef _OPENMP
 #pragma omp parallel for if(useOmp)
@@ -410,13 +656,16 @@ void QuadtreeMesh::applyRefineBoxes(const std::vector<DictionaryMesh::RefineBox>
     defineTypes();
 }
 
-void QuadtreeMesh::subdivideCell(const int currentLevel) 
+void QuadtreeMesh::subdivideCell(const int currentLevel)
+{subdivideCellWithWorkspace(currentLevel,nullptr);}
+void QuadtreeMesh::subdivideCellWithWorkspace(int currentLevel,NativeAdaptWorkspace* workspace)
 {
-    const Quantum::Mesh::DyadicGridCoordinates coordinates(minCoord, maxCoord, Nx, Ny);
+    const LAMP::Mesh::DyadicGridCoordinates coordinates(minCoord, maxCoord, Nx, Ny);
     // Fresh entities have empty LS vectors; enforce the mesh-wide storage
     // contract immediately, including the static refineBoxes path.
-    auto assignNewEntity = [this](auto& destination, const auto& source)
+    auto assignNewEntity = [this,workspace](auto& destination, const auto& source)
     {
+        recordNativeWrite(workspace,&destination);
         destination = source;
         destination.ensureLevelSetSize(static_cast<std::size_t>(levelSetCount_));
     };
@@ -456,8 +705,9 @@ void QuadtreeMesh::subdivideCell(const int currentLevel)
                 continue;
             }
             cell.needRefine = false;
+            recordNativeWrite(workspace,&cell);recordNativeCellEdges(workspace,cell);
 
-            const auto address = Quantum::Mesh::cellAddress(*this, cell);
+            const auto address = LAMP::Mesh::cellAddress(*this, cell);
             if (address.level != static_cast<unsigned>(currentLevel)
                 || address.level > std::numeric_limits<unsigned>::max() - 2
                 || address.i > (std::numeric_limits<std::uint64_t>::max() - 4) / 4
@@ -499,7 +749,7 @@ void QuadtreeMesh::subdivideCell(const int currentLevel)
             verts_[cell.cellToVert[2]].vertToCell[0] = cell.son[2];
             verts_[cell.cellToVert[3]].vertToCell[1] = cell.son[3];
 
-            findSubdivideRelatedCells(cell);
+            findSubdivideRelatedCells(cell,workspace);
 
             // New neighbor relations
             if (cell.neiCell[0][1] != -1)
@@ -858,10 +1108,10 @@ void QuadtreeMesh::subdivideCell(const int currentLevel)
 
             if (cell.neiCell[0][0] != -1)
             {
-                findSubdivideRelatedHEdges(cell, hEdge00, hEdge10, hEdge20, 0, false);
+                findSubdivideRelatedHEdges(cell, hEdge00, hEdge10, hEdge20, 0, false,workspace);
                 if (cell.neiCell[2][0] != -1)
                 {
-                    findSubdivideRelatedHEdges(cell, hEdge01, hEdge11, hEdge21, 2, true);
+                    findSubdivideRelatedHEdges(cell, hEdge01, hEdge11, hEdge21, 2, true,workspace);
                 }
                 else
                 {
@@ -875,7 +1125,7 @@ void QuadtreeMesh::subdivideCell(const int currentLevel)
             }
             else
             {
-                findSubdivideRelatedHEdges(cell, hEdge01, hEdge11, hEdge21, 2, true);
+                findSubdivideRelatedHEdges(cell, hEdge01, hEdge11, hEdge21, 2, true,workspace);
                 hEdge00.relatedPreIndex = hEdge01.relatedPreIndex;
                 hEdge00.relatedPreCoord = hEdge01.relatedPreCoord;
                 hEdge10.relatedPreIndex = hEdge11.relatedPreIndex;
@@ -886,10 +1136,10 @@ void QuadtreeMesh::subdivideCell(const int currentLevel)
 
             if (cell.neiCell[1][0] != -1)
             {
-                findSubdivideRelatedVEdges(cell, vEdge00, vEdge10, vEdge20, 1, false);
+                findSubdivideRelatedVEdges(cell, vEdge00, vEdge10, vEdge20, 1, false,workspace);
                 if (cell.neiCell[3][0] != -1)
                 {
-                    findSubdivideRelatedVEdges(cell, vEdge01, vEdge11, vEdge21, 3, true);
+                    findSubdivideRelatedVEdges(cell, vEdge01, vEdge11, vEdge21, 3, true,workspace);
                 }
                 else
                 {
@@ -903,7 +1153,7 @@ void QuadtreeMesh::subdivideCell(const int currentLevel)
             }
             else
             {
-                findSubdivideRelatedVEdges(cell, vEdge01, vEdge11, vEdge21, 3, true);
+                findSubdivideRelatedVEdges(cell, vEdge01, vEdge11, vEdge21, 3, true,workspace);
                 vEdge00.relatedPreIndex = vEdge01.relatedPreIndex;
                 vEdge00.relatedPreCoord = vEdge01.relatedPreCoord;
                 vEdge10.relatedPreIndex = vEdge11.relatedPreIndex;
@@ -1163,15 +1413,18 @@ void QuadtreeMesh::subdivideCell(const int currentLevel)
     for (int i = 0; i < remainCellNum; ++i)
         cellLabelSpace_[i] = cellPtr_ + i;
 
-    statistics();
+    statistics(workspace);
 }
 
 void QuadtreeMesh::submergeCell(const int currentLevel)
+{submergeCellWithWorkspace(currentLevel,nullptr);}
+void QuadtreeMesh::submergeCellWithWorkspace(int currentLevel,NativeAdaptWorkspace* workspace)
 {
     // Recycled slots remain part of fixed-width QMC2 storage. Initialize only
     // the reset entities; never clear surviving/reactivated parent metadata.
-    auto assignResetEntity = [this](auto& destination, const auto& source)
+    auto assignResetEntity = [this,workspace](auto& destination, const auto& source)
     {
+        recordNativeWrite(workspace,&destination);
         destination = source;
         destination.ensureLevelSetSize(static_cast<std::size_t>(levelSetCount_));
     };
@@ -1193,7 +1446,9 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
                 continue;
             }
 
-            findSubmergeRelatedCells(parentCell);
+            recordNativeWrite(workspace,&parentCell);recordNativeCellEdges(workspace,parentCell);
+            for(int k=0;k<4;++k)recordNativeCellEdges(workspace,cells_[parentCell.son[k]]);
+            findSubmergeRelatedCells(parentCell,workspace);
 
             Cell& sonCell0 = cells_[parentCell.son[0]];
             Cell& sonCell1 = cells_[parentCell.son[1]];
@@ -1223,7 +1478,7 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
 
                     vEdges_[newVEdgeL].setLabel(newVEdgeL);
 
-                    findSubmergeRelatedVEdges(vEdges_[newVEdgeL], sonCell0, sonCell3);
+                    findSubmergeRelatedVEdges(vEdges_[newVEdgeL], sonCell0, sonCell3,workspace);
 
                     Edge edge;
                     assignResetEntity(vEdges_[sonCell0.cellToVEdge[0][0]], edge);
@@ -1282,7 +1537,7 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
 
                 vEdges_[newVEdgeL].setLabel(newVEdgeL);
 
-                findSubmergeRelatedVEdges(vEdges_[newVEdgeL], sonCell0, sonCell3);
+                findSubmergeRelatedVEdges(vEdges_[newVEdgeL], sonCell0, sonCell3,workspace);
 
                 Edge edge;
                 assignResetEntity(vEdges_[sonCell0.cellToVEdge[0][0]], edge);
@@ -1324,7 +1579,7 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
 
                     hEdges_[newHEdgeL].setLabel(newHEdgeL);
 
-                    findSubmergeRelatedHEdges(hEdges_[newHEdgeL], sonCell1, sonCell0);
+                    findSubmergeRelatedHEdges(hEdges_[newHEdgeL], sonCell1, sonCell0,workspace);
 
                     Edge edge;
                     assignResetEntity(hEdges_[sonCell1.cellToHEdge[0][0]], edge);
@@ -1383,7 +1638,7 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
 
                 hEdges_[newHEdgeL].setLabel(newHEdgeL);
 
-                findSubmergeRelatedHEdges(hEdges_[newHEdgeL], sonCell1, sonCell0);
+                findSubmergeRelatedHEdges(hEdges_[newHEdgeL], sonCell1, sonCell0,workspace);
 
                 Edge edge;
                 assignResetEntity(hEdges_[sonCell1.cellToHEdge[0][0]], edge);
@@ -1425,7 +1680,7 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
 
                     vEdges_[newVEdgeL].setLabel(newVEdgeL);
 
-                    findSubmergeRelatedVEdges(vEdges_[newVEdgeL], sonCell2, sonCell1);
+                    findSubmergeRelatedVEdges(vEdges_[newVEdgeL], sonCell2, sonCell1,workspace);
 
                     Edge edge;
                     assignResetEntity(vEdges_[sonCell2.cellToVEdge[1][0]], edge);
@@ -1484,7 +1739,7 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
 
                 vEdges_[newVEdgeL].setLabel(newVEdgeL);
 
-                findSubmergeRelatedVEdges(vEdges_[newVEdgeL], sonCell2, sonCell1);
+                findSubmergeRelatedVEdges(vEdges_[newVEdgeL], sonCell2, sonCell1,workspace);
 
                 Edge edge;
                 assignResetEntity(vEdges_[sonCell2.cellToVEdge[1][0]], edge);
@@ -1526,7 +1781,7 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
 
                     hEdges_[newHEdgeL].setLabel(newHEdgeL);
 
-                    findSubmergeRelatedHEdges(hEdges_[newHEdgeL], sonCell3, sonCell2);
+                    findSubmergeRelatedHEdges(hEdges_[newHEdgeL], sonCell3, sonCell2,workspace);
 
                     Edge edge;
                     assignResetEntity(hEdges_[sonCell3.cellToHEdge[1][0]], edge);
@@ -1585,7 +1840,7 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
 
                 hEdges_[newHEdgeL].setLabel(newHEdgeL);
 
-                findSubmergeRelatedHEdges(hEdges_[newHEdgeL], sonCell3, sonCell2);
+                findSubmergeRelatedHEdges(hEdges_[newHEdgeL], sonCell3, sonCell2,workspace);
 
                 Edge edge;
                 assignResetEntity(hEdges_[sonCell3.cellToHEdge[1][0]], edge);
@@ -1626,17 +1881,20 @@ void QuadtreeMesh::submergeCell(const int currentLevel)
             }
         }
     }
-    statistics();
+    statistics(workspace);
 }
 
-void QuadtreeMesh::findSubdivideRelatedCells(Cell& cell)
+void QuadtreeMesh::findSubdivideRelatedCells(Cell& cell,NativeAdaptWorkspace* workspace)
 {
+    for(int k=0;k<4;++k)recordNativeWrite(workspace,&cells_[cell.son[k]]);
     for (int i = 0; i < 4; i++)
     {
         cells_[cell.son[i]].relatedPreIndex.push_back(cell.preIndex());
         cells_[cell.son[i]].relatedPreCoord.push_back(cell.centerCoord());
     }
 
+    // Thin background lattices can have no donor on either side. Each child
+    // already has its genuine parent above; never sample an absent (-1) cell.
     if (cell.neiCell[0][0] != -1)
     {
         if (cell.neiCell[0][1] == -1)
@@ -1667,7 +1925,7 @@ void QuadtreeMesh::findSubdivideRelatedCells(Cell& cell)
             }
         }
     }
-    else
+    else if (cell.neiCell[2][0] != -1)
     {
         if (cell.neiCell[2][1] == -1)
         {
@@ -1728,7 +1986,7 @@ void QuadtreeMesh::findSubdivideRelatedCells(Cell& cell)
             }
         }
     }
-    else
+    else if (cell.neiCell[3][0] != -1)
     {
         if (cell.neiCell[3][1] == -1)
         {
@@ -1789,7 +2047,7 @@ void QuadtreeMesh::findSubdivideRelatedCells(Cell& cell)
             }
         }
     }
-    else
+    else if (cell.neiCell[0][0] != -1)
     {
         if (cell.neiCell[0][1] == -1)
         {
@@ -1850,7 +2108,7 @@ void QuadtreeMesh::findSubdivideRelatedCells(Cell& cell)
             }
         }
     }
-    else
+    else if (cell.neiCell[1][0] != -1)
     {
         if (cell.neiCell[1][1] == -1)
         {
@@ -1882,8 +2140,9 @@ void QuadtreeMesh::findSubdivideRelatedCells(Cell& cell)
     }
 }
 
-void QuadtreeMesh::findSubmergeRelatedCells(Cell& cell)
+void QuadtreeMesh::findSubmergeRelatedCells(Cell& cell,NativeAdaptWorkspace* workspace)
 {
+    recordNativeWrite(workspace,&cell);
     cell.relatedPreIndex.clear();
     cell.relatedPreCoord.clear();
     for (int i = 0; i < 4; i++)
@@ -1893,8 +2152,44 @@ void QuadtreeMesh::findSubmergeRelatedCells(Cell& cell)
     }
 }
 
-void QuadtreeMesh::findSubdivideRelatedHEdges(const Cell& cell, Edge& hEdge0, Edge& hEdge1, Edge& hEdge2, const int direction, const bool isRightSide)
+void QuadtreeMesh::findSubdivideRelatedHEdges(const Cell& cell, Edge& hEdge0, Edge& hEdge1, Edge& hEdge2, const int direction, const bool isRightSide,NativeAdaptWorkspace* workspace)
 {
+    recordNativeWrite(workspace,&hEdge0);recordNativeWrite(workspace,&hEdge1);recordNativeWrite(workspace,&hEdge2);
+    // A real one-column/one-row background cell can have NO donor on
+    // either opposite side. Never interpret the exterior -1 as a cell label.
+    // Retain only actual old edge samples (or their one-level old parent).
+    if(cell.neiCell[0][0]==-1&&cell.neiCell[2][0]==-1)
+    {
+        if(cell.neiCell[0][1]!=-1||cell.neiCell[2][1]!=-1)
+            throw std::invalid_argument("QuadtreeMesh: incomplete thin-H neighbor pair");
+        const auto appendOwn=[&](Edge& target,int side){
+            for(int slot=0;slot<2;++slot){
+                const int label=cell.cellToHEdge[side][slot];if(label==-1)continue;
+                if(label<0||label>=hEdgeLabelCapacity_||hEdges_[label].label()!=label)
+                    throw std::invalid_argument("QuadtreeMesh: invalid thin-H own edge label");
+                const Edge* old=&hEdges_[label];
+                if(old->preIndex()==-1){
+                    const int parent=old->parent;
+                    if(parent<0||parent>=hEdgeLabelCapacity_||hEdges_[parent].label()!=parent)
+                        throw std::invalid_argument("QuadtreeMesh: missing thin-H old edge parent");
+                    old=&hEdges_[parent];
+                }
+                if(old->preIndex()<0)
+                    throw std::invalid_argument("QuadtreeMesh: thin-H edge has no actual old source");
+                const auto found=std::find(target.relatedPreIndex.begin(),target.relatedPreIndex.end(),old->preIndex());
+                if(found==target.relatedPreIndex.end()){target.relatedPreIndex.push_back(old->preIndex());target.relatedPreCoord.push_back(old->midpointCoord());}
+            }
+        };
+        appendOwn(hEdge1,0);appendOwn(hEdge1,1);
+        // Legacy edge fields average <3 samples. The internal midpoint uses
+        // both normal-side points; boundary child edges use only their own
+        // side, preserving constants and the identifiable normal linear field.
+        if(hEdge0.relatedPreIndex.empty())appendOwn(hEdge0,0);
+        if(hEdge2.relatedPreIndex.empty())appendOwn(hEdge2,1);
+        if(hEdge0.relatedPreIndex.empty()||hEdge1.relatedPreIndex.empty()||hEdge2.relatedPreIndex.empty())
+            throw std::invalid_argument("QuadtreeMesh: empty thin-H actual edge stencil");
+        return;
+    }
     if (hEdges_[cell.cellToHEdge[0][0]].preIndex() == -1)
     {
         hEdge1.relatedPreIndex.push_back(hEdges_[hEdges_[cell.cellToHEdge[0][0]].parent].preIndex());
@@ -2030,8 +2325,44 @@ void QuadtreeMesh::findSubdivideRelatedHEdges(const Cell& cell, Edge& hEdge0, Ed
     }
 }
 
-void QuadtreeMesh::findSubdivideRelatedVEdges(const Cell& cell, Edge& vEdge0, Edge& vEdge1, Edge& vEdge2, const int direction, const bool isUpSide)
+void QuadtreeMesh::findSubdivideRelatedVEdges(const Cell& cell, Edge& vEdge0, Edge& vEdge1, Edge& vEdge2, const int direction, const bool isUpSide,NativeAdaptWorkspace* workspace)
 {
+    recordNativeWrite(workspace,&vEdge0);recordNativeWrite(workspace,&vEdge1);recordNativeWrite(workspace,&vEdge2);
+    // A real one-column/one-row background cell can have NO donor on
+    // either opposite side. Never interpret the exterior -1 as a cell label.
+    // Retain only actual old edge samples (or their one-level old parent).
+    if(cell.neiCell[1][0]==-1&&cell.neiCell[3][0]==-1)
+    {
+        if(cell.neiCell[1][1]!=-1||cell.neiCell[3][1]!=-1)
+            throw std::invalid_argument("QuadtreeMesh: incomplete thin-V neighbor pair");
+        const auto appendOwn=[&](Edge& target,int side){
+            for(int slot=0;slot<2;++slot){
+                const int label=cell.cellToVEdge[side][slot];if(label==-1)continue;
+                if(label<0||label>=vEdgeLabelCapacity_||vEdges_[label].label()!=label)
+                    throw std::invalid_argument("QuadtreeMesh: invalid thin-V own edge label");
+                const Edge* old=&vEdges_[label];
+                if(old->preIndex()==-1){
+                    const int parent=old->parent;
+                    if(parent<0||parent>=vEdgeLabelCapacity_||vEdges_[parent].label()!=parent)
+                        throw std::invalid_argument("QuadtreeMesh: missing thin-V old edge parent");
+                    old=&vEdges_[parent];
+                }
+                if(old->preIndex()<0)
+                    throw std::invalid_argument("QuadtreeMesh: thin-V edge has no actual old source");
+                const auto found=std::find(target.relatedPreIndex.begin(),target.relatedPreIndex.end(),old->preIndex());
+                if(found==target.relatedPreIndex.end()){target.relatedPreIndex.push_back(old->preIndex());target.relatedPreCoord.push_back(old->midpointCoord());}
+            }
+        };
+        appendOwn(vEdge1,0);appendOwn(vEdge1,1);
+        // Legacy edge fields average <3 samples. The internal midpoint uses
+        // both normal-side points; boundary child edges use only their own
+        // side, preserving constants and the identifiable normal linear field.
+        if(vEdge0.relatedPreIndex.empty())appendOwn(vEdge0,0);
+        if(vEdge2.relatedPreIndex.empty())appendOwn(vEdge2,1);
+        if(vEdge0.relatedPreIndex.empty()||vEdge1.relatedPreIndex.empty()||vEdge2.relatedPreIndex.empty())
+            throw std::invalid_argument("QuadtreeMesh: empty thin-V actual edge stencil");
+        return;
+    }
     if (vEdges_[cell.cellToVEdge[0][0]].preIndex() == -1)
     {
         vEdge1.relatedPreIndex.push_back(vEdges_[vEdges_[cell.cellToVEdge[0][0]].parent].preIndex());
@@ -2167,8 +2498,9 @@ void QuadtreeMesh::findSubdivideRelatedVEdges(const Cell& cell, Edge& vEdge0, Ed
     }
 }
 
-void QuadtreeMesh::findSubmergeRelatedHEdges(Edge& hEdge, const Cell& sonCellA, const Cell& sonCellB)
+void QuadtreeMesh::findSubmergeRelatedHEdges(Edge& hEdge, const Cell& sonCellA, const Cell& sonCellB,NativeAdaptWorkspace* workspace)
 {
+    recordNativeWrite(workspace,&hEdge);
     hEdge.relatedPreIndex.clear();
     hEdge.relatedPreCoord.clear();
     hEdge.relatedPreIndex.push_back(hEdges_[sonCellA.cellToHEdge[0][0]].preIndex());
@@ -2181,8 +2513,9 @@ void QuadtreeMesh::findSubmergeRelatedHEdges(Edge& hEdge, const Cell& sonCellA, 
     hEdge.relatedPreCoord.push_back(hEdges_[sonCellB.cellToHEdge[1][0]].midpointCoord());
 }
 
-void QuadtreeMesh::findSubmergeRelatedVEdges(Edge& vEdge, const Cell& sonCellA, const Cell& sonCellB)
+void QuadtreeMesh::findSubmergeRelatedVEdges(Edge& vEdge, const Cell& sonCellA, const Cell& sonCellB,NativeAdaptWorkspace* workspace)
 {
+    recordNativeWrite(workspace,&vEdge);
     vEdge.relatedPreIndex.clear();
     vEdge.relatedPreCoord.clear();
     vEdge.relatedPreIndex.push_back(vEdges_[sonCellA.cellToVEdge[0][0]].preIndex());
@@ -2196,11 +2529,29 @@ void QuadtreeMesh::findSubmergeRelatedVEdges(Edge& vEdge, const Cell& sonCellA, 
 }
 
 void QuadtreeMesh::statistics()
+{statistics(nullptr);}
+void QuadtreeMesh::statistics(NativeAdaptWorkspace* workspace)
 {
-    count(verts_, vertPtr_, vertIndexNum_, vertIndexToLabel);
-    count(hEdges_, hEdgePtr_, hEdgeIndexNum_, hEdgeIndexToLabel);
-    count(vEdges_, vEdgePtr_, vEdgeIndexNum_, vEdgeIndexToLabel);
-    count(cells_, cellPtr_, cellIndexNum_, cellIndexToLabel);
+    bool completed=false;
+    if(refreshNativeMembership(workspace)){
+        // On optional-pressure allocation failure, free the workspace first
+        // and finish only original maintenance from this ALREADY mutated tree.
+        NativeMaintenanceEnvironment attempt;
+        try{
+            workspace->vertices.exportIndices(vertIndexNum_,vertIndexToLabel,nativeAdaptationReport_);
+            workspace->horizontal.exportIndices(hEdgeIndexNum_,hEdgeIndexToLabel,nativeAdaptationReport_);
+            workspace->vertical.exportIndices(vEdgeIndexNum_,vEdgeIndexToLabel,nativeAdaptationReport_);
+            workspace->cells.exportIndices(cellIndexNum_,cellIndexToLabel,nativeAdaptationReport_);
+            completed=true;attempt.dismiss();
+        }catch(const std::bad_alloc&){workspace->fail();}
+        catch(const std::length_error&){workspace->fail();}
+    }
+    if(!completed){
+        count(verts_, vertPtr_, vertIndexNum_, vertIndexToLabel);
+        count(hEdges_, hEdgePtr_, hEdgeIndexNum_, hEdgeIndexToLabel);
+        count(vEdges_, vEdgePtr_, vEdgeIndexNum_, vEdgeIndexToLabel);
+        count(cells_, cellPtr_, cellIndexNum_, cellIndexToLabel);
+    }
 
     nCellsPerLevel.clear();
     nCellsPerLevel.resize(maxLevel_ + 1, 0);
@@ -2273,20 +2624,20 @@ void QuadtreeMesh::writeCache(const string& filePath) const
                 "' cannot be written: " + kind + " " + std::to_string(label) +
                 " has inconsistent level-set storage; no cache file was created or changed.");
     };
-    requireStorage(levelSetCount_ > 0, "mesh", -1);
+    requireStorage(levelSetCount_ >= 0, "mesh", -1);
     for (int label = 0; label < maxVertNum_; ++label)
     {
-        const auto& vertex = verts_[label];
+        const auto& vertex = verts_.peek(label);
         requireStorage(vertex.onCutEdge.size() == levelSets && vertex.onCutCell.size() == levelSets &&
                        vertex.nearestNodeCoord.size() == levelSets && vertex.nearestNodeLabel.size() == levelSets,
                        "vertex", label);
     }
     for (int label = 0; label < maxHEdgeNum_; ++label)
-        requireStorage(hEdges_[label].isCut.size() == levelSets, "horizontal edge", label);
+        requireStorage(hEdges_.peek(label).isCut.size() == levelSets, "horizontal edge", label);
     for (int label = 0; label < maxVEdgeNum_; ++label)
-        requireStorage(vEdges_[label].isCut.size() == levelSets, "vertical edge", label);
+        requireStorage(vEdges_.peek(label).isCut.size() == levelSets, "vertical edge", label);
     for (int label = 0; label < maxCellNum_; ++label)
-        requireStorage(cells_[label].isCut.size() == levelSets, "cell", label);
+        requireStorage(cells_.peek(label).isCut.size() == levelSets, "cell", label);
 
     auto cache = FileIO::openOutputFile(fileName.str(), ios::binary | ios::out);
 
@@ -2320,11 +2671,11 @@ void QuadtreeMesh::writeCache(const string& filePath) const
     // QMC2 retains full-capacity arrays. Only the free prefix is meaningful;
     // never read old/stale suffix bytes or mutate the live allocation order.
     // Count occupied parents too, and include holes below the high-water mark.
-    const auto writeLabels = [&cache](const auto* objects, const int* labels, int capacity)
+    const auto writeLabels = [&cache](const auto& objects, const int* labels, int capacity)
     {
         int freeCount = 0;
         for (int i = 0; i < capacity; ++i)
-            if (objects[i].label() == -1) ++freeCount;
+            if (objects.peek(i).label() == -1) ++freeCount;
         MeshCacheIO::writeRawArray(cache, labels, static_cast<std::size_t>(freeCount));
         const std::array<int, 256> zeros{};
         for (int remaining = capacity - freeCount; remaining > 0;)
@@ -2340,13 +2691,13 @@ void QuadtreeMesh::writeCache(const string& filePath) const
     writeLabels(cells_, cellLabelSpace_, maxCellNum_);
 
     for (int i = 0; i < maxVertNum_; ++i)
-        MeshCacheIO::writeVert(cache, verts_[i], levelSetCount_);
+        MeshCacheIO::writeVert(cache, verts_.peek(i), levelSetCount_);
     for (int i = 0; i < maxHEdgeNum_; ++i)
-        MeshCacheIO::writeEdge(cache, hEdges_[i], levelSetCount_);
+        MeshCacheIO::writeEdge(cache, hEdges_.peek(i), levelSetCount_);
     for (int i = 0; i < maxVEdgeNum_; ++i)
-        MeshCacheIO::writeEdge(cache, vEdges_[i], levelSetCount_);
+        MeshCacheIO::writeEdge(cache, vEdges_.peek(i), levelSetCount_);
     for (int i = 0; i < maxCellNum_; ++i)
-        MeshCacheIO::writeCell(cache, cells_[i], levelSetCount_);
+        MeshCacheIO::writeCell(cache, cells_.peek(i), levelSetCount_);
 
     MeshCacheIO::writeVector(cache, minLevel_neg);
     MeshCacheIO::writeVector(cache, minLevel_pos);
@@ -2373,6 +2724,11 @@ void QuadtreeMesh::readCache(const std::string& filePath)
         staged.read(input, budget);
         staged.validate(*this);
 
+        // Prepare all entity owners before changing any receiving storage.
+        auto stagedVerts=decltype(verts_)::adoptDense(staged.vertices,staged.capacity[0],static_cast<std::size_t>(staged.levelSets));
+        auto stagedHEdges=decltype(hEdges_)::adoptDense(staged.hEdges,staged.capacity[1],static_cast<std::size_t>(staged.levelSets));
+        auto stagedVEdges=decltype(vEdges_)::adoptDense(staged.vEdges,staged.capacity[2],static_cast<std::size_t>(staged.levelSets));
+        auto stagedCells=decltype(cells_)::adoptDense(staged.cells,staged.capacity[3],static_cast<std::size_t>(staged.levelSets));
         // Everything that can allocate or reject has completed. Domain/Nx/Ny
         // are const and have been checked against all recovered root geometry.
         // Transfer ownership without copying/recomputing geometry or cut data.
@@ -2382,10 +2738,10 @@ void QuadtreeMesh::readCache(const std::string& filePath)
             destination = source.release();
             source.reset(previous);
         };
-        commitArray(verts_, staged.vertices);
-        commitArray(hEdges_, staged.hEdges);
-        commitArray(vEdges_, staged.vEdges);
-        commitArray(cells_, staged.cells);
+        verts_.swap(stagedVerts);
+        hEdges_.swap(stagedHEdges);
+        vEdges_.swap(stagedVEdges);
+        cells_.swap(stagedCells);
         commitArray(vertIndexToLabel, staged.indexToLabel[0]);
         commitArray(hEdgeIndexToLabel, staged.indexToLabel[1]);
         commitArray(vEdgeIndexToLabel, staged.indexToLabel[2]);

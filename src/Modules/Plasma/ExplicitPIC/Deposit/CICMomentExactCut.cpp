@@ -237,7 +237,7 @@ bool cutRectWeight2DFromPlane(double rect_xL,
     if (!(ixR > ixL) || !(iyR > iyL))
         return true; // empty overlap
 
-    // Start polygon = (rect âˆ?support) rectangle, CCW.
+    // Start polygon = (rect âˆ©support) rectangle, CCW.
     std::vector<Vector2D> poly;
     poly.reserve(8);
     poly.emplace_back(Vector2D{ixL, iyL});
@@ -463,7 +463,7 @@ bool cutCellWeight2D(const BackgroundMesh& mesh,
     if (!(ixR > ixL) || !(iyR > iyL))
         return true; // empty overlap -> weight 0
 
-    // Start polygon = (cell âˆ?support) rectangle, CCW.
+    // Start polygon = (cell âˆ©support) rectangle, CCW.
     std::vector<Vector2D> poly;
     poly.reserve(8);
     poly.emplace_back(Vector2D{ixL, iyL});

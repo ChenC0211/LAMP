@@ -8,7 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
-namespace Quantum::Geometry::ClosedCurveVolumeFit {
+namespace LAMP::Geometry::ClosedCurveVolumeFit {
 namespace {
 using Vec=Eigen::VectorXd;using Sparse=Eigen::SparseMatrix<double>;
 using Entry=Eigen::Triplet<double>;

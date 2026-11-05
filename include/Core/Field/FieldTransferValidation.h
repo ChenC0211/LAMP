@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace Quantum::FieldTransfer
+namespace LAMP::FieldTransfer
 {
 // Call before entering an interpolation OpenMP region. Saved source indices
 // refer to the PREVIOUS field, not the new mesh's active count or capacity.

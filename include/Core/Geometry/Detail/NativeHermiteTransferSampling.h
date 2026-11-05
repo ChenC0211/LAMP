@@ -1,7 +1,7 @@
 #pragma once
 // Implementation-only shared exact-chart sampling. Include after the native
 // scalar owner; its TU-local types never cross the public ABI.
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {

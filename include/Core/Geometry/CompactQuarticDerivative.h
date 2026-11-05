@@ -4,7 +4,7 @@
 #include <array>
 #include <cmath>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // Differentiate the degree-four interpolant on five consecutive skeleton
 // samples, centered where possible and one-sided at an endpoint. Actual
@@ -41,4 +41,4 @@ double compactQuarticDerivativeAtNode(int target,int count,const Coordinate& coo
     require(std::isfinite(result),"nonfinite compact mixed derivative");
     return result;
 }
-} // namespace Quantum::Geometry
+} // namespace LAMP::Geometry

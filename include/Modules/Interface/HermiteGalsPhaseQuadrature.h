@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 struct HermiteGalsPhaseQuadratureConfig
 {
@@ -17,7 +17,7 @@ struct HermiteGalsPhaseQuadratureConfig
 };
 struct HermiteGalsPhaseQuadraturePoint
 {
-    int cell = -1; // Native cell index, never a CCH DOF.
+    int cell = -1; // Native cell index, never a HYDRO DOF.
     Vector2D point{0,0};
     double physicalWeight = 0; // dV including 2*pi*r in RZ; strictly positive.
     bool liquid = false; // Certified phi<0 on the retained scalar.

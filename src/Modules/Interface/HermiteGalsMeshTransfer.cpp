@@ -14,13 +14,13 @@
 #include <utility>
 #include <vector>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
 using Snapshot = LevelSetHermiteGeometry::Snapshot;
 using Key = std::array<int,2>;
-using Chart = Quantum::Geometry::CellChartPoint;
+using Chart = LAMP::Geometry::CellChartPoint;
 void require(bool ok,const char* why) { if(!ok)throw std::invalid_argument(why); }
 bool same(Vector2D a,Vector2D b) { return a.x==b.x && a.y==b.y; }
 bool contains(const std::array<Vector2D,2>& a,const std::array<Vector2D,2>& b)
@@ -87,7 +87,7 @@ HermiteGalsMeshTransfer HermiteGalsMeshTransfer::prepare(const QuadtreeMesh& sou
             }else{require(!exact,"ExactRefinement cannot coarsen or span source leaves");++report.coarsenedCells;}
         }
         stage="target master topology";
-        Quantum::Geometry::ActiveQuarticHermiteSkeletonInput topology;
+        LAMP::Geometry::ActiveQuarticHermiteSkeletonInput topology;
         topology.activeCells.assign(targetMesh.cellIndexNum(),1);topology.nodes.resize(targetMesh.vertIndexNum());
         std::map<Key,int> edgeOwner;std::vector<int> vertexOwner(targetMesh.vertIndexNum(),-1);
         for(int c=0;c<targetMesh.cellIndexNum();++c){const auto& cell=targetMesh.cells(targetMesh.cellIndexToLabel[c]);
@@ -98,7 +98,7 @@ HermiteGalsMeshTransfer HermiteGalsMeshTransfer::prepare(const QuadtreeMesh& sou
         for(const auto& e:edgeOwner)topology.edgeMidpoints.push_back({e.first,0,0});
         // Zero data serve only to ask the existing constraint engine which
         // target entries are independent. This scalar is never published.
-        const Quantum::Geometry::ActiveQuarticHermiteSkeleton owners(targetMesh,topology,radial);
+        const LAMP::Geometry::ActiveQuarticHermiteSkeleton owners(targetMesh,topology,radial);
         std::optional<Snapshot> restricted;
         if(exact){stage="exact scalar restriction";restricted.emplace(Snapshot::refineNativeQuartic(targetMesh,scalar));}
         const auto sample=[&](int cell,Chart chart,Vector2D display){

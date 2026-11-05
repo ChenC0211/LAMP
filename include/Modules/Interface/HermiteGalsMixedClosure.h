@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 struct HermiteGalsMixedClosureReport
 {
@@ -38,4 +38,4 @@ private:
     HermiteGalsMixedClosureReport report_;
     friend HermiteGalsMixedClosureResult closeHermiteGalsMixedUniform(const QuadtreeMesh&,const HermiteGalsCandidate&);
 };
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

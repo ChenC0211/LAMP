@@ -21,10 +21,10 @@
 
 namespace
 {
-using namespace Quantum::Interface;
-using Data=Quantum::Geometry::PolynomialVelocityData;
-using Slab=Quantum::Geometry::PolynomialVelocitySlab;
-using Bounds=Quantum::Geometry::PolynomialVelocityBounds;
+using namespace LAMP::Interface;
+using Data=LAMP::Geometry::PolynomialVelocityData;
+using Slab=LAMP::Geometry::PolynomialVelocitySlab;
+using Bounds=LAMP::Geometry::PolynomialVelocityBounds;
 using Velocity=HermiteGalsTemporalVelocitySource;
 using Position=HermiteGalsTimeLayer::Position;
 using Jet=LevelSetBoundaryTrace::VelocityJet;
@@ -45,7 +45,7 @@ std::unique_ptr<QuadtreeMesh> makeMesh()
 // Structural source fixture only. No claim of advancing its interface or M.
 HermiteGalsState stateFor(const QuadtreeMesh& mesh,bool radial,HermiteGalsTimeLayer time={})
 {
-    Quantum::Geometry::ActiveQuarticHermitePatch patch;HermiteGalsPrimaryState p;HermiteGalsClosure closure;
+    LAMP::Geometry::ActiveQuarticHermitePatch patch;HermiteGalsPrimaryState p;HermiteGalsClosure closure;
     p.measure=radial?HermiteGalsMeasure::AxisymmetricVolume:HermiteGalsMeasure::CartesianArea;
     patch.activeCells.assign(mesh.cellIndexNum(),1);patch.cellCenters.resize(mesh.cellIndexNum());
     for(int v=0;v<mesh.vertIndexNum();++v){const auto q=mesh.verts(mesh.vertIndexToLabel[v]).coord();
@@ -69,7 +69,7 @@ std::array<double,6> components(Jet j)
 {return {j.value.x,j.value.y,j.derivative.xx,j.derivative.xy,j.derivative.yx,j.derivative.yy};}
 double difference(Jet a,Jet b)
 {const auto x=components(a),y=components(b);double error=0;for(int i=0;i<6;++i)error=std::max(error,std::abs(x[i]-y[i]));return error;}
-std::array<Quantum::Geometry::PolynomialVelocityRange,6> components(const Bounds& b)
+std::array<LAMP::Geometry::PolynomialVelocityRange,6> components(const Bounds& b)
 {return {b.value[0],b.value[1],b.derivative[0],b.derivative[1],b.derivative[2],b.derivative[3]};}
 struct Flow
 {

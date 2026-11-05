@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <array>
 #include <vector>
 #include <cstdint>
 #include <memory>
@@ -56,6 +57,21 @@ public:
         double constant = 0.0;
     };
 
+    // Uncompressed integrated face action for the explicit integrated-RHS
+    // port's SAME two fixed-operator defect corrections. One entry per original
+    // oriented segment; reverse incidences retain exactly opposite affine
+    // coefficients/constants and identical factors. The numerical action is
+    // h=RN(exact affine(phi)), flux=RN(primary*h)+weight*RN(secondary*h).
+    // This is borrowed only for this synchronous solve and is never cached.
+    struct IntegratedFluxFactor
+    {
+        SegmentFluxCorrection affine;
+        double primary = 1.0, secondary = 0.0, weight = 0.0;
+        // Explicit finite transfer action; other callers retain exact weight*J.
+        enum class SecondaryTransfer { Exact, MinimumBinary64QuantumNearestEven };
+        SecondaryTransfer secondaryTransfer = SecondaryTransfer::Exact;
+    };
+
     enum class FittedBoundaryType { Interior, Dirichlet, HomogeneousNeumann };
     struct FittedBoundary
     {
@@ -69,6 +85,13 @@ public:
         // Strict caller contract: require SuperLU at build/runtime and never
         // fall back to SparseLU or CG. Defaults preserve existing PIC callers.
         bool requireSuperLU = false;
+
+        // Explicit fitted integrated port: restarted GMRES with a fixed
+        // parallel block-Jacobi preconditioner, without any direct fallback.
+        // Other ports and their existing default backend remain unchanged.
+        bool useGMRES = false;
+        int gmresRestart = 80;
+        int gmresBlockRows = 256;
 
         // Iterative-solver knobs are kept for future CG-based solvers.
         bool useCG = true;
@@ -122,6 +145,8 @@ public:
         int N = 0;
         long long nnz = 0;
         bool usedSuperLU = false;
+        bool usedGMRES = false;
+        int gmresIterations = 0, gmresRestarts = 0, gmresMaximumWorkers = 0;
         bool usedCG = false;
         bool cgAttempted = false;
         bool cgFallbackToDirect = false;
@@ -133,6 +158,22 @@ public:
         bool directMatrixFrozen = false;
         bool fittedFactorizationReused = false;
         bool fittedRhsOnlySolve = false; // Explicit owned-operator RHS entry, not a full reassembly.
+        // Producer-only actual integratedFlux phases. No Field/App forwarding.
+        // Rows/workers count only complete successful parallel joins, never requests.
+        bool integratedOrderedRowsAvailable=false;
+        std::size_t integratedDefectPhases=0,integratedProjectionPhases=0;
+        std::size_t integratedParallelDefectRows=0,integratedParallelProjectionRows=0;
+        unsigned integratedRowsMaximumWorkers=0;
+        std::size_t integratedRowsFallbackPhases=0;
+        // Current complete-A three-term gate; no cross-solve route/value cache.
+        // Scratch is the accounted optional peak (route capacities plus bounded
+        // worker/buffer allowance), not process memory. Unavailable timings are NA.
+        bool integratedExpandedResidualAvailable=false;
+        bool integratedExpandedResidualParallelUsed=false,integratedExpandedResidualParallelFallback=false;
+        unsigned integratedExpandedResidualWorkers=0;
+        std::size_t integratedExpandedResidualRows=0,integratedExpandedResidualScratchBytes=0;
+        bool integratedExpandedResidualTimingAvailable=false;
+        double integratedExpandedResidualRouteSeconds=0,integratedExpandedResidualSeconds=0;
     };
 
     PolarizationPoissonFVSolverCellCentered();
@@ -224,6 +265,65 @@ public:
                const std::vector<SegmentFluxCorrection>& fluxCorrections,
                const Options& opt, SolveReport* report = nullptr) const;
 
+    // Explicit integrated native-cell RHS on the SAME corrected fitted operator.
+    // integratedRhs is already Q_i in the physical cell measure (including
+    // 2*pi*r in axisymmetric mode); it is used directly and never divided by
+    // cell measure or multiplied by it again. Segment corrections retain the
+    // same integrated-flux units and all fitted/correction validation applies.
+    // This one-shot entry requires reuseFittedFactorization=false; it neither
+    // prepares nor consumes the volumetric solvePreparedFittedRhs snapshot.
+    // Strict SuperLU or explicit useGMRES (fixed parallel block-Jacobi, no
+    // direct fallback) retain the same full corrected-residual gates and
+    // staged phi publication. Optional factors
+    // preserve the caller's uncompressed face arithmetic in the original two
+    // defect corrections; primary+weight*secondary must equal kappa, boundary
+    // constants must use the same fitted values, and reverse faces must match.
+    // Factors require the paired native potentialTerms output: its three
+    // binary64 terms retain the initial solve value and the original two
+    // same-operator defect deltas exactly as a sum. phi is the nearest RN projection;
+    // physical face actions consume all three terms. Both projected and exact
+    // expanded full assembled-A residuals retain relTol. On failure neither
+    // output changes. No extra defect pass or preconditioner setup is introduced.
+    // Any failure leaves
+    // all phi values, inactive payload, labels and storage unchanged.
+    bool solveFittedIntegratedBoundary(const QuadtreeMesh& mesh, const FaceSegmentGraph& graph,
+               const CellField<double>& integratedRhs, CellField<double>& phi,
+               const std::vector<double>& kappaBySegment,
+               const std::vector<FittedBoundary>& boundaryBySegment,
+               const std::vector<SegmentFluxCorrection>& fluxCorrections,
+               const Options& opt, SolveReport* report = nullptr,
+               const std::vector<IntegratedFluxFactor>* integratedFlux = nullptr,
+               std::vector<std::array<double,3>>* potentialTerms = nullptr) const;
+
+    // Owns one immutable actual graph and integer assembly/routing structure.
+    // No material, RHS, clock, matrix values or numerical factor is retained.
+    class PreparedIntegratedStructure
+    {
+    public:
+        const FaceSegmentGraph& graph() const noexcept;
+        PreparedIntegratedStructure(const PreparedIntegratedStructure&)=delete;
+        PreparedIntegratedStructure& operator=(const PreparedIntegratedStructure&)=delete;
+    private:
+        struct Data;
+        explicit PreparedIntegratedStructure(std::shared_ptr<const Data> data);
+        std::shared_ptr<const Data> data_;
+        friend class PolarizationPoissonFVSolverCellCentered;
+    };
+    static std::shared_ptr<const PreparedIntegratedStructure> prepareIntegratedStructure(
+        const QuadtreeMesh& mesh, std::unique_ptr<FaceSegmentGraph> graph,
+        const std::vector<FittedBoundaryType>& boundaryTypes,
+        const std::vector<std::vector<int>>& correctionColumns,
+        const std::vector<std::vector<int>>& affineColumns, bool axisymmetric);
+    bool solvePreparedIntegratedBoundary(const QuadtreeMesh& mesh,
+        const PreparedIntegratedStructure& structure,
+        const CellField<double>& integratedRhs, CellField<double>& phi,
+        const std::vector<double>& kappaBySegment,
+        const std::vector<FittedBoundary>& boundaryBySegment,
+        const std::vector<SegmentFluxCorrection>& fluxCorrections,
+        const Options& opt, SolveReport* report = nullptr,
+        const std::vector<IntegratedFluxFactor>* integratedFlux = nullptr,
+        std::vector<std::array<double,3>>* potentialTerms = nullptr) const;
+
     // Solve the EXACT owned operator from the latest successful fitted solve
     // with reuseFittedFactorization=true. Only volumetric RHS and correction
     // constants may change. No mesh/graph/material/boundary inputs are borrowed
@@ -244,6 +344,11 @@ public:
     void clearDirectCache() const;
 
 private:
+    bool solveFittedIntegratedBoundaryImpl(const QuadtreeMesh&, const FaceSegmentGraph&,
+        const CellField<double>&, CellField<double>&, const std::vector<double>&,
+        const std::vector<FittedBoundary>&, const std::vector<SegmentFluxCorrection>&,
+        const Options&, SolveReport*, const std::vector<IntegratedFluxFactor>*,
+        std::vector<std::array<double,3>>*, const PreparedIntegratedStructure*) const;
     bool solveImpl(const QuadtreeMesh& mesh, const FaceSegmentGraph& graph,
                    const PicDomainBC& bc, const CellField<double>& rhs,
                    CellField<double>& phi, const std::vector<double>* kappaBySegment,
@@ -251,7 +356,11 @@ private:
                    const Options& opt, const Solvers::Poisson::CutCellMetrics* cutMetrics,
                    const PicEmbeddedBC* embeddedBC, const PicEmbeddedBCMap* embeddedBCById,
                    const std::vector<SegmentFluxCorrection>* fluxCorrections,
-                   const std::vector<FittedBoundary>* fittedBoundaries = nullptr) const;
+                   const std::vector<FittedBoundary>* fittedBoundaries = nullptr,
+                   bool integratedRhs = false,
+                   const std::vector<IntegratedFluxFactor>* integratedFlux = nullptr,
+                   std::vector<std::array<double,3>>* potentialTerms = nullptr,
+                   const PreparedIntegratedStructure* prepared = nullptr) const;
 
     using CgNoPrecond = Eigen::ConjugateGradient<Eigen::SparseMatrix<double>, Eigen::Lower | Eigen::Upper>;
     using CgWithIC = Eigen::ConjugateGradient<Eigen::SparseMatrix<double>, Eigen::Lower | Eigen::Upper,

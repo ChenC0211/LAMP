@@ -16,10 +16,10 @@
 
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 using Key=std::array<int,2>;
-using Jet=Quantum::Geometry::ActiveHermitePatch::NodalDof;
-using Patch=Quantum::Geometry::ActiveQuarticHermitePatch;
+using Jet=LAMP::Geometry::ActiveHermitePatch::NodalDof;
+using Patch=LAMP::Geometry::ActiveQuarticHermitePatch;
 using Snapshot=LevelSetHermiteGeometry::Snapshot;
 using Query=HermiteGalsVelocityView::Query;
 using Position=HermiteGalsTimeLayer::Position;

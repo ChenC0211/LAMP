@@ -1,0 +1,16 @@
+{
+  "source": "cases/hydro_static_drop/system before the 2026-10-17 VOF case migration",
+  "source_backup": "D:\\Chen\\Codex\\temp\\lamp_vof_cases_20261017\\backup\\hydro_static_drop\\system",
+  "capture_date": "2026-10-17",
+  "copy_policy": "Byte-for-byte copy; no dictionary values or formatting changed.",
+  "purpose": "Fixed FirstJet formal Hydro App contract fixture, independent of production case method.",
+  "sha256": {
+    "fields.dict": "4c463541280060e81f0d3c47669149b9674be61e70c6855a18f7833757e76747",
+    "geometry.dict": "c078e960f850c0d41cff4b75463346d8fea3728a83a5d70a7e7099f0c95e8fdf",
+    "hydro.dict": "c52f6a74046fdc7f40b84d7813e63b4c47bde5299f3a47396e6e6eaf4ef6cdf5",
+    "interface.dict": "6aad51143b7ab866feba4e809a0a1804f6d2432abe0f834b546cf87f39877bfe",
+    "materials.dict": "96cc9fe0de7067927776f838dfa5b00a36de38fcff885ca6769087043a897690",
+    "mesh.dict": "b6623158b8ca43a07b269de0ccc6d1cedd18f3c4a14a97b284d9de1ad5a8622a",
+    "run.dict": "4942b483c575f6c36701b6f7796e9c2e1c82b8dd7f10502b2d6a585329e4802d"
+  }
+}

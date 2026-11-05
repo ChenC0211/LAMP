@@ -29,9 +29,9 @@ MaterialTable readMaterialTable(const std::string& path, DictionaryInput::Config
         };
         phase.densitySI = quantity("density", D::MassDensity, "kg/m^3", "Hydro cell/vertex density and pressure normalization", true);
         phase.dynamicViscositySI = quantity("dynamicViscosity", D::DynamicViscosity, "Pa*s", "Hydro cell/vertex dynamic viscosity", true);
-        phase.conductivitySI = quantity("conductivity", D::Conductivity, "S/m", "Electricity phase conduction current", false);
+        phase.conductivitySI = quantity("conductivity", D::Conductivity, "S/m", "Electric phase conduction current", false);
         const auto& epsilon = block.get("relativePermittivity");
-        phase.relativePermittivity = trace.record(epsilon, epsilon.number(), "dimensionless", "Electricity permittivity and Maxwell stress");
+        phase.relativePermittivity = trace.record(epsilon, epsilon.number(), "dimensionless", "Electric permittivity and Maxwell stress");
         if (phase.relativePermittivity <= 0.0) epsilon.fail("positive relative permittivity");
         result.phases.emplace(phase.phaseId, phase);
     }

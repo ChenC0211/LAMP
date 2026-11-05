@@ -1,0 +1,1 @@
+B1 zero-force wiring fixture: n16, original closed geometry, two dt=0.0001 steps. qs=0 and all electric boundaries=0; sigma=mu=body force=initial velocity=0. Checks actual two-stage Mid/End clocks, owner provenance, rollback, exact zero preservation and DAT publication. This is not a charged-motion qualification; the original physical cases retain their G1 failures.

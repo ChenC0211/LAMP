@@ -6,7 +6,7 @@
 class BackgroundMesh;
 class Cell;
 
-namespace Quantum::Mesh
+namespace LAMP::Mesh
 {
 struct DyadicCellAddress
 {

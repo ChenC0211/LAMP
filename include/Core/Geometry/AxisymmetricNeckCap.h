@@ -2,7 +2,7 @@
 #include <array>
 #include <optional>
 
-namespace Quantum::Geometry
+namespace LAMP::Geometry
 {
 // Local terminal model, not a pinch-time detector. Two equal axial cells in
 // 0<=r<=radialWidth retain their SEPARATE revolved liquid volumes. The radial

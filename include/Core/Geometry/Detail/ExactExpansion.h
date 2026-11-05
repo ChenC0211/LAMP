@@ -28,7 +28,7 @@
 // TU-local linkage. No type or inline definition here is a cross-TU public ABI.
 // Keep every include outside these namespaces; public callers use the opaque
 // out-of-line snapshot, while legacy tests may inspect this local engine.
-namespace Quantum::Geometry::Detail
+namespace LAMP::Geometry::Detail
 {
 namespace
 {
@@ -104,7 +104,26 @@ private:
 
 struct Interval {double lo=0.,hi=0.;};
 
-inline void validateEnvironment()
+namespace Detail
+{
+inline bool& nativeQuarticQueryActive()
+{
+    // TU-local and actual-thread-local, with stack lifetime only. This flag
+    // never grants permission to a later query or another worker thread.
+    static thread_local bool active=false;
+    return active;
+}
+inline bool& preparedUnitPolynomialQueryActive()
+{
+    // Separate permission for one synchronous immutable prepared-polynomial
+    // call. No callback, later query, worker or TU inherits this stack scope.
+    static thread_local bool active=false;
+    return active;
+}
+}
+
+// Always inspect the actual environment, including inside a nested scope.
+inline void validateActualEnvironment()
 {
     static_assert(sizeof(double)==sizeof(std::uint64_t)
         &&std::numeric_limits<double>::is_iec559
@@ -131,6 +150,50 @@ inline void validateEnvironment()
         "exact arithmetic requires gradual underflow with FTZ/DAZ disabled; the floating-point mode was not changed");
 #endif
 }
+inline void validateEnvironment()
+{
+    if(!Detail::nativeQuarticQueryActive()&&!Detail::preparedUnitPolynomialQueryActive())validateActualEnvironment();
+}
+// Only the synchronous, immutable native-Q4 point-query entries use this
+// internal scope. They invoke no motion/boundary/user callbacks. Arithmetic,
+// component ordering and every finite/range/tail check remain unchanged;
+// internal FP checks delegate to the actual entry check until validateReturn.
+class NativeQuarticQueryScope
+{
+public:
+    NativeQuarticQueryScope():previous_(Detail::nativeQuarticQueryActive())
+    {
+        validateActualEnvironment();
+        Detail::nativeQuarticQueryActive()=true;
+    }
+    NativeQuarticQueryScope(const NativeQuarticQueryScope&)=delete;
+    NativeQuarticQueryScope& operator=(const NativeQuarticQueryScope&)=delete;
+    ~NativeQuarticQueryScope() noexcept
+    {Detail::nativeQuarticQueryActive()=previous_;}
+    void validateReturn() const {validateActualEnvironment();}
+private:
+    bool previous_;
+};
+// Only PreparedUnitPolynomial's constructor/isolate/enclose use this scope.
+// Their complete bodies contain pure arithmetic/container work, no callbacks
+// or FP-mode mutation. Entry and return inspect the CURRENT actual environment;
+// every finite/range/tail guard still executes inside the original kernels.
+class PreparedUnitPolynomialQueryScope
+{
+public:
+    PreparedUnitPolynomialQueryScope():previous_(Detail::preparedUnitPolynomialQueryActive())
+    {
+        validateActualEnvironment();
+        Detail::preparedUnitPolynomialQueryActive()=true;
+    }
+    PreparedUnitPolynomialQueryScope(const PreparedUnitPolynomialQueryScope&)=delete;
+    PreparedUnitPolynomialQueryScope& operator=(const PreparedUnitPolynomialQueryScope&)=delete;
+    ~PreparedUnitPolynomialQueryScope() noexcept
+    {Detail::preparedUnitPolynomialQueryActive()=previous_;}
+    void validateReturn() const {validateActualEnvironment();}
+private:
+    bool previous_;
+};
 
 namespace Detail
 {
@@ -194,6 +257,16 @@ inline int leastBitExponent(double value)
 #endif
     return exponent;
 }
+// Exponent of the most significant nonzero bit. A normal binary64's
+// encoded exponent already provides ilogb exactly; retain the CRT path for
+// subnormals and every value outside that finite-normal case.
+inline int mostBitExponent(double value)
+{
+    std::uint64_t bits=0;std::memcpy(&bits,&value,sizeof bits);
+    const int encoded=static_cast<int>((bits>>52)&0x7ffu);
+    if(encoded>0&&encoded<0x7ff)return encoded-1023;
+    return std::ilogb(value);
+}
 inline Pair twoProduct(double a,double b)
 {
     if(a==0.||b==0.) return {};
@@ -249,6 +322,19 @@ inline Expansion fromDouble(double value)
 }
 inline Expansion add(const Expansion& a,const Expansion& b)
 {validateEnvironment();return Detail::sum(a,b,false);}
+// Accumulate into query-local scratch with the original add component order.
+// No published input is mutated: callers discard partial scratch on failure.
+// Self-aliasing retains the original term before append can invalidate it.
+inline void accumulate(Expansion& target,const Expansion& term)
+{
+    validateEnvironment();
+    if(&target==&term) {
+        const auto retained=term;
+        for(double value:retained.components())Detail::append(target,value);
+    } else {
+        for(double value:term.components())Detail::append(target,value);
+    }
+}
 inline Expansion subtract(const Expansion& a,const Expansion& b)
 {validateEnvironment();return Detail::sum(a,b,true);}
 inline Expansion multiply(const Expansion& a,const Expansion& b)
@@ -260,14 +346,38 @@ inline Expansion scalePow2(const Expansion& value,int exponent)
     for(double component:value.components())
     {
         const auto lowest=static_cast<long long>(Detail::leastBitExponent(component))+exponent;
-        const auto highest=static_cast<long long>(std::ilogb(component))+exponent;
+        const auto highest=static_cast<long long>(Detail::mostBitExponent(component))+exponent;
         Detail::require(lowest>=-1074&&highest<=1023,
             "power-of-two scaling would discard or overflow expansion bits; unsupported arithmetic scale");
-        // These representability bounds also constrain exponent to [-2097,
-        // 2097], so negating it for the independent round-trip check is safe.
-        const double scaled=Detail::checked(std::scalbn(component,exponent));
-        Detail::require(scaled!=0.&&std::scalbn(scaled,-exponent)==component,
-            "power-of-two scaling would discard expansion bits; unsupported arithmetic scale");
+        std::uint64_t bits=0;std::memcpy(&bits,&component,sizeof bits);
+        const int encoded=static_cast<int>((bits>>52)&0x7ffu);
+        const auto scaledEncoded=static_cast<long long>(encoded)+static_cast<long long>(exponent);
+        double scaled=0.;
+        if(encoded>0&&encoded<0x7ff&&scaledEncoded>0&&scaledEncoded<0x7ff)
+        {
+            // Normal-to-normal power-of-two scaling changes only the encoded
+            // exponent. Preserve every sign/significand bit, with no rounding
+            // or arithmetic reassociation. Verify the inverse on those bits
+            // instead of invoking the CRT for an exact scale and round trip.
+            constexpr auto exponentMask=UINT64_C(0x7ff0000000000000);
+            const auto scaledBits=(bits&~exponentMask)
+                |(static_cast<std::uint64_t>(scaledEncoded)<<52);
+            std::memcpy(&scaled,&scaledBits,sizeof scaled);
+            scaled=Detail::checked(scaled);
+            const auto restoredBits=(scaledBits&~exponentMask)
+                |(static_cast<std::uint64_t>(scaledEncoded-static_cast<long long>(exponent))<<52);
+            Detail::require(scaled!=0.&&restoredBits==bits,
+                "power-of-two scaling would discard expansion bits; unsupported arithmetic scale");
+        }
+        else
+        {
+            // The representability bounds constrain exponent to [-2097,
+            // 2097], so negating it for this original round trip is safe.
+            // Keep the original arithmetic for subnormal sources or results.
+            scaled=Detail::checked(std::scalbn(component,exponent));
+            Detail::require(scaled!=0.&&std::scalbn(scaled,-exponent)==component,
+                "power-of-two scaling would discard expansion bits; unsupported arithmetic scale");
+        }
         Detail::Access::push(result,scaled);
     }
     return result;
@@ -284,7 +394,7 @@ struct ExponentRange
     {
         for(double component:value.components()) {
             lowest=std::min(lowest,Detail::leastBitExponent(component));
-            highest=std::max(highest,std::ilogb(component));
+            highest=std::max(highest,Detail::mostBitExponent(component));
         }
     }
     int centeredShift() const
@@ -351,4 +461,4 @@ inline Expansion evaluate(const std::array<Expansion,Count>& coefficients,double
 }
 }
 } // TU-local engine
-} // namespace Quantum::Geometry::Detail
+} // namespace LAMP::Geometry::Detail

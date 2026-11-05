@@ -1,0 +1,6 @@
+Electric { method vofSharpSurface;
+Initial { surfaceChargeDensity "chargeAmplitude*(x-centerX)"; }
+Boundary { W { type Dirichlet; value 0; } S { type Neumann; value 0; }
+E { type Dirichlet; value 0; } N { type Neumann; value 0; } }
+Solver { relativeLinearTolerance 1e-11; relativeConservationTolerance 1e-10; }
+}

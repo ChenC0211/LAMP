@@ -2,7 +2,7 @@
 
 #include <limits>
 
-namespace Quantum::Interface::Detail
+namespace LAMP::Interface::Detail
 {
 // One relative volume budget shared by inventory assembly and the working
 // accuracy of geometry closure. This is a floating roundoff allowance, not

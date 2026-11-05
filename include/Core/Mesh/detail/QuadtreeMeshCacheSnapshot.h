@@ -55,7 +55,7 @@ struct Snapshot
         MeshCacheIO::readRaw(input, version);
         require(version == 2, "unsupported mesh cache version " + std::to_string(version));
         MeshCacheIO::readRaw(input, levelSets);
-        require(levelSets > 0, "level-set count must be positive");
+        require(levelSets >= 0, "level-set count must be nonnegative");
         for (int& value : count)
         {
             MeshCacheIO::readRaw(input, value);
@@ -150,7 +150,7 @@ struct Snapshot
     // No coordinate, cut data or history is repaired when reading an old cache.
     void validateDyadicCoordinates(const QuadtreeMesh& mesh) const
     {
-        using Quantum::Mesh::DyadicGridCoordinates;
+        using LAMP::Mesh::DyadicGridCoordinates;
         using Index = std::uint64_t;
         struct Address
         {

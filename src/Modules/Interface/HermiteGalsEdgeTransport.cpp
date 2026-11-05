@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-namespace Quantum::Interface
+namespace LAMP::Interface
 {
 namespace
 {
@@ -109,4 +109,4 @@ HermiteGalsEdgeTransportResult transportHermiteGalsEdges(const QuadtreeMesh& mes
             +","+std::to_string(edge[1])+")] "+stage+": "+error.what());
     }
 }
-} // namespace Quantum::Interface
+} // namespace LAMP::Interface

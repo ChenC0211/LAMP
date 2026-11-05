@@ -16,6 +16,8 @@
 #include "Modules/Plasma/PicStepSession.h"
 #include "Modules/Plasma/PicCaseInput.h"
 #include "Modules/Plasma/Physics/CollisionsConfig.h"
+#include "Modules/Plasma/Physics/PicCollisions.h"
+#include "Modules/Plasma/Physics/BuiltInCrossSections.h"
 #include "Modules/Plasma/Physics/PicDomain.h"
 #include "Modules/Plasma/Boundary/PicMovingGeometry.h"
 #include "Core/Units/NormalizationContext.h"
@@ -121,7 +123,7 @@ void checkCoefficientSerialization(const std::filesystem::path& root) {
     check(std::memcmp(&restored.discOpr[0],&negativeZero,sizeof(double))==0 &&
           std::memcmp(&restored.rhs,&nanPayload,sizeof(double))==0,"legacy raw reader lost signed zero or NaN payload");
     const auto first=root/"coefficient_roundtrip",second=root/"coefficient_roundtrip_twice";
-    meshFixtures(first,QUANTUM_MESH_COEFFICIENT_FIXTURE_DIR);
+    meshFixtures(first,LAMP_MESH_COEFFICIENT_FIXTURE_DIR);
     meshFixtures(second,first,true);
     for(const auto file:{"qmc/mesh_cache.bin","bmc/cache/mesh_cache.bin"})
         check(bytes(first/file)==bytes(second/file),"mesh coefficient roundtrip must be byte stable");
@@ -367,8 +369,29 @@ void checkExplicitPreflight(const std::filesystem::path& root) {
     CollisionsConfig config;config.enabled=true;config.rng_mode=CollisionsRngMode::kCounterBased;config.rng_seed=42;
     rejects([&]{resumeStep(&config,true);},"counter state validated before output resume");
     check(resumeStep(&config,false)==7,"disabled RNG restore bypasses counter validation");
-    {std::ofstream file(dir/PicCheckpointStore::collisionName);file<<"QUANTUM_MCC_RNG 1\n2 42 9\n";}
+    {std::ofstream file(dir/PicCheckpointStore::collisionName);file<<"LAMP_MCC_RNG 1\n2 42 9\n";}
     check(resumeStep(&config,true)==7,"matching counter preflight");
+    // Previously saved checkpoints retain their wire header; new writes use LAMP.
+    {std::ofstream file(dir/PicCheckpointStore::collisionName);file<<"QUANTUM_MCC_RNG 1\n2 42 9\n";}
+    check(resumeStep(&config,true)==7,"legacy counter header remains readable");
+    BackgroundGas gas("Ar",1000.,300.);gas.SetParticleMassKg(6.6335209e-26);
+    auto xs=std::make_shared<CrossSectionDB>();std::string error;
+    check(BuiltInCrossSections::RegisterArV1(xs.get(),"",false,&error),"counter fixture cross sections");
+    auto reactions=std::make_shared<ReactionDatabase>();ReactionSet set;
+    set.name="electron-Ar";set.projectile="electron";set.target="Ar";
+    ReactionChannel channel;channel.name="elastic";channel.cross_section_key="e-Ar:ELASTIC";channel.scatter_model="isotropic";
+    set.channels.push_back(channel);check(reactions->Register(set,false,&error),"counter fixture reaction set");
+    auto collisionConfig=std::make_shared<CollisionsConfig>(config);
+    collisionConfig->parallel=false;collisionConfig->mappings.push_back({"electron","electron-Ar"});
+    PlasmaCollisionInputs collisionInputs{std::make_shared<GasState>(gas.Evaluate()),xs,reactions,collisionConfig};
+    SpeciesConfig electron;electron.name="electron";electron.m=9.1093837015e-31;electron.q=-1.602176634e-19;electron.weight=1.;
+    auto collisions=PicCollisions::create(collisionInputs,{electron},1.,error,&*reader,true);
+    check(collisions && collisions->rngState().seed==42 && collisions->rngState().applyCount==9,
+        "legacy header restores actual collision RNG state");
+    std::mt19937_64 rng(42);PicCheckpointWriter(store,rng,true,0,"ContractPIC").writeCollisions(dir,*collisions);
+    check(bytes(dir/PicCheckpointStore::collisionName).rfind("LAMP_MCC_RNG 1",0)==0,
+        "new collision checkpoint writer emits LAMP header");
+    check(resumeStep(&config,true)==7,"new writer preserves readable counter state");
     config.rng_seed=43;rejects([&]{resumeStep(&config,true);},"counter seed mismatch preflight");
     check(PicCheckpointStore::writeMetadata(dir,-2,0.,.125),"preflight negative metadata");
     check(resumeStep(nullptr,false)==0,"preflight clamps negative output step");
@@ -450,6 +473,11 @@ int main(int argc,char** argv) try
     if(argc==4 && std::string(argv[1])=="--roundtrip-label-fixtures") { labelFixtures(argv[3],argv[2]);return 0; }
     const auto root=std::filesystem::current_path()/
         ("checkpoint_contract_"+std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+    if(argc==2 && std::string(argv[1])=="--rng-format-only") {
+        checkExplicitPreflight(root/"explicit_preflight");
+        std::cout<<"PIC collision RNG legacy-read, LAMP-write and preflight checks passed\n";
+        return 0;
+    }
     checkCoefficientSerialization(root);
     checkLabelSerialization(root);
     checkRunRequirements(root/"run_requirements");

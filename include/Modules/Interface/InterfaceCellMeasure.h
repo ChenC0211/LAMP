@@ -15,6 +15,7 @@ class NativeLeafDomain;
 class InterfaceState;
 class LevelSetInterfacePanels;
 namespace LevelSetHermiteGeometry { class Snapshot; }
+namespace LAMP::Interface { class HermiteGalsPhaseVolumeResult; namespace Detail { class PublicationTracePermit; } }
 
 namespace InterfaceCellMeasure
 {
@@ -34,7 +35,7 @@ template<std::size_t Count> struct CellArc
     // The retained scalar has applied its hanging-node chain rule here.
     int nativeSourceCell = -1;
     using IndependentSensitivity=std::conditional_t<Count==16,
-        Quantum::Geometry::ActiveHermiteNodalSensitivity,Quantum::Geometry::ActiveQuarticHermiteSensitivity>;
+        LAMP::Geometry::ActiveHermiteNodalSensitivity,LAMP::Geometry::ActiveQuarticHermiteSensitivity>;
     std::vector<IndependentSensitivity> independentSensitivity;
 };
 using Arc=CellArc<16>;
@@ -91,8 +92,22 @@ DiscoveredVolumes discoverVolumes(const QuadtreeMesh& mesh, const NativeLeafDoma
 // their free moments belong only to the actual available liquid incident CV.
 // The complete topology certifies its interior phase, independent of the
 // canonical graph owner. Both Green ledgers retain the original global origin.
+// Caller durations and summed independent cell-worker durations. Worker
+// fields can overlap in wall time and must not be added to caller durations.
+struct NativeTraceTimings
+{
+    double topologyValidation = 0, fixedBoundary = 0, ordinarySetup = 0;
+    double ordinaryPrepare = 0, ordinaryMerge = 0, graphMomentsWorker = 0;
+    double localRegionsWorker = 0, pureCellsWorker = 0, cutSetupWorker = 0;
+    double sideMoments = 0, finalLedger = 0, total = 0;
+    std::size_t activeCells = 0, cutCells = 0, pureCells = 0;
+    std::size_t ordinaryGraphs = 0, faceHalves = 0;
+    // Actual joint global/local Core work, merged in original native-cell order.
+    LevelSetMappedInterface::NativeMomentWorkProfile coreWork;
+};
 struct NativeTraceLedger
 {
+    NativeTraceTimings timings;
     std::vector<long double> fixedRadialByCell, freeRadialByCell, axialVolumeByCell, radialVolumeByCell, radialCapacityByCell;
     long double exteriorFixedRadial = 0, fixedRadialClosure = 0;
     long double maxRelativeGreenDefect = 0, maxRelativeCapacityDefect = 0;
@@ -104,6 +119,17 @@ DiscoveredNativeTraceVolumes measureNativeTraceVolumes(const QuadtreeMesh& mesh,
     const LevelSetInterfacePanels::NativeComponents& topology,
     const std::vector<Vector2D>& boundaryContacts = {},
     const std::vector<LevelSetInterfacePanels::SymmetryPlane>& symmetryPlanes = {});
+namespace Detail
+{
+class PublicationTraceVolumeAccess
+{
+    friend class ::LAMP::Interface::HermiteGalsPhaseVolumeResult;
+    static DiscoveredNativeTraceVolumes measure(const QuadtreeMesh&,const NativeLeafDomain&,
+        const InterfacePhaseGeometry::MappedFacePartitions&,const LevelSetInterfacePanels::NativeComponents&,
+        const std::vector<Vector2D>&,const std::vector<LevelSetInterfacePanels::SymmetryPlane>&,
+        const ::LAMP::Interface::Detail::PublicationTracePermit&);
+};
+}
 DiscoveredNativeTraceVolumes discoverNativeTraceVolumes(const QuadtreeMesh& mesh, const NativeLeafDomain& domain,
     std::shared_ptr<const LevelSetHermiteGeometry::Snapshot> source,
     const std::vector<Vector2D>& boundaryContacts = {},

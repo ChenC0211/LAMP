@@ -14,7 +14,7 @@
 
 namespace
 {
-using namespace Quantum::Interface;
+using namespace LAMP::Interface;
 using Velocity = HermiteGalsTemporalVelocitySource;
 using Characteristic = HermiteGalsTemporalCharacteristicSource;
 using Interval = HermiteGalsPhaseFluxIntervalSource;
@@ -49,7 +49,7 @@ std::unique_ptr<QuadtreeMesh> meshFor(int n = 1)
 // Structural state fixture, not a production initializer or temporal sample.
 HermiteGalsState stateFor(const QuadtreeMesh& mesh, bool radial, HermiteGalsTimeLayer time = {})
 {
-    Quantum::Geometry::ActiveQuarticHermitePatch patch;
+    LAMP::Geometry::ActiveQuarticHermitePatch patch;
     HermiteGalsPrimaryState p; HermiteGalsClosure closure;
     p.measure = radial ? HermiteGalsMeasure::AxisymmetricVolume : HermiteGalsMeasure::CartesianArea;
     patch.activeCells.assign(mesh.cellIndexNum(), 1);

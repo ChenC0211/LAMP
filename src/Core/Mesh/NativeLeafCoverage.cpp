@@ -15,7 +15,7 @@ NativeLeafCoverage::NativeLeafCoverage(const QuadtreeMesh& mesh,const NativeLeaf
 
 bool NativeLeafCoverage::covers(Vector2D a,Vector2D b) const
 {
-    namespace R=Quantum::Geometry::Detail::MappedHermiteSegment;
+    namespace R=LAMP::Geometry::Detail::MappedHermiteSegment;
     R::Exact::validateEnvironment();
     const auto lower=mesh_.minCoord,upper=mesh_.maxCoord;
     const auto inside=[&](Vector2D p) {

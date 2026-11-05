@@ -18,7 +18,6 @@
 #include <cstdio>
 #endif
 
-#include "Runtime/IO/DictionaryRun.h"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -130,25 +129,19 @@ void applyDefaultOpenMPEnv()
     setIfMissing("OMP_MAX_ACTIVE_LEVELS", "1");
     setIfMissing("OMP_DYNAMIC", "false");
 
-    // Mirror the environment defaults in the runtime API so the process stays
-    // on a single active OpenMP level and does not shrink/grow teams
-    // unexpectedly on larger shared-memory machines.
-    omp_set_dynamic(0);
-#if _OPENMP >= 200805
-    omp_set_max_active_levels(1);
-#endif
+
 #endif
 }
 
 void printUsage(const char* exe)
 {
     cout
-        << "Usage: " << exe << " [--case <caseDir>] [--check-case] [--start ask|new|resume] [--help]\n\n"
+        << "Usage: " << exe << " [--case <caseDir>] [--check-case] [--threads <N>] [--help]\n\n"
         << "Options:\n"
         << "  --case <caseDir>   Run from the specified case directory.\n"
         << "                    A case directory must contain a 'system/' subdirectory.\n"
-        << "  --check-case       Validate a supported Hydro/EHD, Interface, Electricity or schema-2 spray case without writing.\n"
-        << "  --start <mode>     Electrospray: ask, new (overwrite output/), or resume (not yet supported).\n"
+        << "  --check-case       Validate formal Hydrodynamics, Interface or Electric inputs without writing.\n"
+        << "  --threads <N>     Override run.dict Parallel.threads (1..256; default 2).\n"
         << "  --help, -h         Show this help and exit.\n\n"
         << "Notes:\n"
         << "  - If --case is not provided and './system' is missing:\n"
@@ -159,7 +152,7 @@ void printUsage(const char* exe)
 }
 
 // Resolve the case directory from CLI args. Returns empty string if not set.
-string parseCaseArg(int argc, char** argv, bool& showHelp, bool& checkCase, RunStartMode& startMode)
+string parseCaseArg(int argc, char** argv, bool& showHelp, bool& checkCase, std::optional<int>& threads)
 {
     showHelp = false;
     checkCase = false;
@@ -167,18 +160,16 @@ string parseCaseArg(int argc, char** argv, bool& showHelp, bool& checkCase, RunS
     for (int i = 1; i < argc; ++i)
     {
         const string a = argv[i];
-        if (a == "--start" || a.rfind("--start=", 0) == 0)
+        if (a == "--threads" || a.rfind("--threads=",0)==0)
         {
-            if (startMode != RunStartMode::Automatic)
-                throw std::invalid_argument("--start 不允许重复设置");
-            if (a == "--start" && i + 1 >= argc)
-                throw std::invalid_argument("--start 后需要 ask、new 或 resume");
-            const string mode = a == "--start" ? argv[++i] : a.substr(8);
-            if (mode == "ask") startMode = RunStartMode::Ask;
-            else if (mode == "new") startMode = RunStartMode::New;
-            else if (mode == "resume") startMode = RunStartMode::Resume;
-            else throw std::invalid_argument("--start 只接受 ask、new 或 resume");
-            continue;
+            if(threads)throw std::invalid_argument("Duplicate --threads option");
+            const std::string value=a=="--threads"
+                ?(i+1<argc?argv[++i]:std::string{}):a.substr(10);
+            if(value.empty() || value.find_first_not_of("0123456789")!=std::string::npos
+                || value.size()>3)throw std::invalid_argument("--threads requires an integer in [1,256]");
+            const int count=std::stoi(value);
+            if(count<1 || count>256)throw std::invalid_argument("--threads requires an integer in [1,256]");
+            threads=count;continue;
         }
         if (a == "--check-case")
         {
@@ -207,7 +198,7 @@ string parseCaseArg(int argc, char** argv, bool& showHelp, bool& checkCase, RunS
             caseDir = a.substr(prefix.size());
             continue;
         }
-
+        throw std::invalid_argument("Unknown option: "+a);
     }
     return caseDir;
 }
@@ -385,8 +376,8 @@ int main(int argc, char** argv) try
 
     bool showHelp = false;
     bool checkCase = false;
-    RunStartMode startMode = RunStartMode::Automatic;
-    const string caseDir = parseCaseArg(argc, argv, showHelp, checkCase, startMode);
+    std::optional<int> threadsOverride;
+    const string caseDir = parseCaseArg(argc, argv, showHelp, checkCase, threadsOverride);
     if (showHelp)
     {
         printUsage(argv[0]);
@@ -412,39 +403,8 @@ int main(int argc, char** argv) try
     SetUnhandledExceptionFilter(quantumUnhandledExceptionFilter);
 #endif
 
-    // Thin entry: enter a case directory, read run.dict and dispatch to the selected App.
-    DictionaryRun dictRun;
-    if (!dictRun.readDict())
-    {
-        cerr << "[LAMP] ERROR: Cannot read ./system/run.dict. Expected:\n"
-             << "        Run { app <AppName> }\n";
-        return 2;
-    }
-
-    RunConfig cfg = dictRun.config();
-    if (cfg.app.empty())
-    {
-        cerr << "[LAMP] ERROR: Empty app selection in ./system/run.dict. Expected:\n"
-             << "        Run { app <AppName> }\n";
-        return 2;
-    }
-
-    // The versioned spray App must decide new/resume/cancel before any output.
-    if (!checkCase && cfg.app != "Interface" && cfg.app != "MeshVerification" && !(cfg.schemaVersion == 2 && cfg.app == "Electrospray")
-        && startMode == RunStartMode::Automatic)
-    {
-        std::filesystem::create_directories("./output");
-        std::filesystem::create_directories("./cache");
-    }
-
-    if (stdinIsTTY())
-    {
-        cout << "LAMP — Levelsetbased Adaptive Multiphysics Platform\n";
-        cout << "App from run.dict: " << cfg.app << "\n";
-    }
-
-    const int rc = runCase(checkCase, startMode);
-    return rc;
+    // Thin entry: enter a case directory and hand over to the App dispatcher.
+    return runCase(checkCase, threadsOverride);
 }
 catch (const std::exception& e)
 {
